@@ -2,15 +2,19 @@ import {
   ComputeBudgetProgram,
   Connection,
   Keypair,
+  LAMPORTS_PER_SOL,
   PublicKey,
+  SystemProgram,
   TransactionMessage,
   VersionedTransaction,
 } from '@solana/web3.js';
 import {
   createAssociatedTokenAccountIdempotentInstruction,
   createCloseAccountInstruction,
+  createSyncNativeInstruction,
   getAccount,
   getAssociatedTokenAddress,
+  NATIVE_MINT,
   RawAccount,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
@@ -90,6 +94,24 @@ export class Bot {
   }
 
   async validate() {
+    // For WSOL (native SOL), check native balance instead of token account
+    if (this.config.quoteToken.mint.equals(NATIVE_MINT)) {
+      const balance = await this.connection.getBalance(this.config.wallet.publicKey);
+      const requiredLamports = Math.ceil(parseFloat(this.config.quoteAmount.toFixed()) * LAMPORTS_PER_SOL);
+      const minBalance = requiredLamports + 0.05 * LAMPORTS_PER_SOL; // Add buffer for fees
+
+      if (balance < minBalance) {
+        logger.error(
+          `Insufficient SOL balance. Have: ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL, Need: ${(minBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL (${this.config.quoteAmount.toFixed()} for trading + 0.05 for fees)`,
+        );
+        return false;
+      }
+
+      logger.info(`SOL balance: ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL (sufficient for trading)`);
+      return true;
+    }
+
+    // For other tokens (like USDC), check the token account exists
     try {
       await getAccount(this.connection, this.config.quoteAta, this.connection.commitment);
     } catch (error) {
@@ -323,28 +345,67 @@ export class Bot {
       poolKeys.version,
     );
 
+    // Build pre-swap instructions
+    const preInstructions = [];
+    const postInstructions = [];
+
+    // Add compute budget instructions if not using Warp/Jito
+    if (!this.isWarp && !this.isJito) {
+      preInstructions.push(
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: this.config.unitPrice }),
+        ComputeBudgetProgram.setComputeUnitLimit({ units: this.config.unitLimit }),
+      );
+    }
+
+    // Handle WSOL wrapping for buy direction
+    if (direction === 'buy') {
+      // Create output token account
+      preInstructions.push(
+        createAssociatedTokenAccountIdempotentInstruction(
+          wallet.publicKey,
+          ataOut,
+          wallet.publicKey,
+          tokenOut.mint,
+        ),
+      );
+
+      // If input token is WSOL (native SOL), wrap SOL to WSOL
+      if (tokenIn.mint.equals(NATIVE_MINT)) {
+        // Create WSOL account if needed
+        preInstructions.push(
+          createAssociatedTokenAccountIdempotentInstruction(
+            wallet.publicKey,
+            ataIn,
+            wallet.publicKey,
+            NATIVE_MINT,
+          ),
+        );
+        // Transfer SOL to the WSOL account
+        preInstructions.push(
+          SystemProgram.transfer({
+            fromPubkey: wallet.publicKey,
+            toPubkey: ataIn,
+            lamports: BigInt(amountIn.raw.toString()),
+          }),
+        );
+        // Sync native to update the WSOL balance
+        preInstructions.push(createSyncNativeInstruction(ataIn));
+      }
+    }
+
+    // Handle sell direction
+    if (direction === 'sell') {
+      // Close the input token account after selling to recover rent
+      postInstructions.push(createCloseAccountInstruction(ataIn, wallet.publicKey, wallet.publicKey));
+    }
+
     const messageV0 = new TransactionMessage({
       payerKey: wallet.publicKey,
       recentBlockhash: latestBlockhash.blockhash,
       instructions: [
-        ...(this.isWarp || this.isJito
-          ? []
-          : [
-              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: this.config.unitPrice }),
-              ComputeBudgetProgram.setComputeUnitLimit({ units: this.config.unitLimit }),
-            ]),
-        ...(direction === 'buy'
-          ? [
-              createAssociatedTokenAccountIdempotentInstruction(
-                wallet.publicKey,
-                ataOut,
-                wallet.publicKey,
-                tokenOut.mint,
-              ),
-            ]
-          : []),
+        ...preInstructions,
         ...innerTransaction.instructions,
-        ...(direction === 'sell' ? [createCloseAccountInstruction(ataIn, wallet.publicKey, wallet.publicKey)] : []),
+        ...postInstructions,
       ],
     }).compileToV0Message();
 
