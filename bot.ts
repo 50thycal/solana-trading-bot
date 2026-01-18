@@ -27,6 +27,12 @@ import { Mutex } from 'async-mutex';
 import BN from 'bn.js';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
+import {
+  getBlacklist,
+  getExposureManager,
+  getPnlTracker,
+  getPositionMonitor,
+} from './risk';
 
 export interface BotConfig {
   wallet: Keypair;
@@ -126,10 +132,30 @@ export class Bot {
 
   public async buy(accountId: PublicKey, poolState: LiquidityStateV4) {
     logger.trace({ mint: poolState.baseMint }, `Processing new pool...`);
+    const tokenMint = poolState.baseMint.toString();
 
-    if (this.config.useSnipeList && !this.snipeListCache?.isInList(poolState.baseMint.toString())) {
-      logger.debug({ mint: poolState.baseMint.toString() }, `Skipping buy because token is not in a snipe list`);
+    // === RISK CHECK 1: Blacklist ===
+    const blacklist = getBlacklist();
+    if (blacklist.isTokenBlacklisted(tokenMint)) {
+      logger.debug({ mint: tokenMint }, `Skipping buy - token is blacklisted`);
       return;
+    }
+
+    if (this.config.useSnipeList && !this.snipeListCache?.isInList(tokenMint)) {
+      logger.debug({ mint: tokenMint }, `Skipping buy because token is not in a snipe list`);
+      return;
+    }
+
+    // === RISK CHECK 2: Exposure and balance ===
+    const exposureManager = getExposureManager();
+    if (exposureManager) {
+      const tradeAmount = parseFloat(this.config.quoteAmount.toFixed());
+      const exposureCheck = await exposureManager.canTrade(tradeAmount);
+
+      if (!exposureCheck.allowed) {
+        logger.warn({ mint: tokenMint, reason: exposureCheck.reason }, `Skipping buy - risk limit exceeded`);
+        return;
+      }
     }
 
     if (this.config.autoBuyDelay > 0) {
@@ -140,7 +166,7 @@ export class Bot {
     if (this.config.oneTokenAtATime) {
       if (this.mutex.isLocked() || this.sellExecutionCount > 0) {
         logger.debug(
-          { mint: poolState.baseMint.toString() },
+          { mint: tokenMint },
           `Skipping buy because one token at a time is turned on and token is already being processed`,
         );
         return;
@@ -168,7 +194,7 @@ export class Bot {
       for (let i = 0; i < this.config.maxBuyRetries; i++) {
         try {
           logger.info(
-            { mint: poolState.baseMint.toString() },
+            { mint: tokenMint },
             `Send buy transaction attempt: ${i + 1}/${this.config.maxBuyRetries}`,
           );
           const tokenOut = new Token(TOKEN_PROGRAM_ID, poolKeys.baseMint, poolKeys.baseDecimals);
@@ -187,30 +213,63 @@ export class Bot {
           if (result.confirmed) {
             logger.info(
               {
-                mint: poolState.baseMint.toString(),
+                mint: tokenMint,
                 signature: result.signature,
                 url: `https://solscan.io/tx/${result.signature}?cluster=${NETWORK}`,
               },
               `Confirmed buy tx`,
             );
 
+            // === Record trade and register position ===
+            const entryAmountSol = parseFloat(this.config.quoteAmount.toFixed());
+
+            // Record with P&L tracker
+            const pnlTracker = getPnlTracker();
+            pnlTracker.recordBuy({
+              tokenMint,
+              amountSol: entryAmountSol,
+              amountToken: 0, // Will be updated when we know the exact amount
+              poolId: accountId.toString(),
+              txSignature: result.signature,
+            });
+
+            // Record trade with exposure manager
+            if (exposureManager) {
+              exposureManager.recordTrade();
+            }
+
+            // Register position with monitor for persistent TP/SL
+            const positionMonitor = getPositionMonitor();
+            if (positionMonitor) {
+              // We need to fetch the actual token amount received
+              // For now, estimate based on pool info
+              const tokenAmount = new TokenAmount(tokenOut, 0, true);
+              positionMonitor.addPosition({
+                tokenMint,
+                poolId: accountId.toString(),
+                poolKeys,
+                tokenAmount,
+                entryAmountSol,
+              });
+            }
+
             break;
           }
 
           logger.info(
             {
-              mint: poolState.baseMint.toString(),
+              mint: tokenMint,
               signature: result.signature,
               error: result.error,
             },
             `Error confirming buy tx`,
           );
         } catch (error) {
-          logger.debug({ mint: poolState.baseMint.toString(), error }, `Error confirming buy transaction`);
+          logger.debug({ mint: tokenMint, error }, `Error confirming buy transaction`);
         }
       }
     } catch (error) {
-      logger.error({ mint: poolState.baseMint.toString(), error }, `Failed to buy token`);
+      logger.error({ mint: tokenMint, error }, `Failed to buy token`);
     } finally {
       if (this.config.oneTokenAtATime) {
         this.mutex.release();
@@ -223,13 +282,15 @@ export class Bot {
       this.sellExecutionCount++;
     }
 
+    const tokenMint = rawAccount.mint.toString();
+
     try {
       logger.trace({ mint: rawAccount.mint }, `Processing new token...`);
 
-      const poolData = await this.poolStorage.get(rawAccount.mint.toString());
+      const poolData = await this.poolStorage.get(tokenMint);
 
       if (!poolData) {
-        logger.trace({ mint: rawAccount.mint.toString() }, `Token pool data is not found, can't sell`);
+        logger.trace({ mint: tokenMint }, `Token pool data is not found, can't sell`);
         return;
       }
 
@@ -237,7 +298,7 @@ export class Bot {
       const tokenAmountIn = new TokenAmount(tokenIn, rawAccount.amount, true);
 
       if (tokenAmountIn.isZero()) {
-        logger.info({ mint: rawAccount.mint.toString() }, `Empty balance, can't sell`);
+        logger.info({ mint: tokenMint }, `Empty balance, can't sell`);
         return;
       }
 
@@ -249,7 +310,14 @@ export class Bot {
       const market = await this.marketStorage.get(poolData.state.marketId.toString());
       const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(new PublicKey(poolData.id), poolData.state, market);
 
-      await this.priceMatch(tokenAmountIn, poolKeys);
+      // Check if position monitor is managing this position
+      const positionMonitor = getPositionMonitor();
+      const isMonitoredPosition = positionMonitor?.hasPosition(tokenMint);
+
+      // Only run legacy priceMatch if position monitor is not handling this position
+      if (!isMonitoredPosition) {
+        await this.priceMatch(tokenAmountIn, poolKeys);
+      }
 
       for (let i = 0; i < this.config.maxSellRetries; i++) {
         try {
@@ -273,30 +341,54 @@ export class Bot {
           if (result.confirmed) {
             logger.info(
               {
-                dex: `https://dexscreener.com/solana/${rawAccount.mint.toString()}?maker=${this.config.wallet.publicKey}`,
-                mint: rawAccount.mint.toString(),
+                dex: `https://dexscreener.com/solana/${tokenMint}?maker=${this.config.wallet.publicKey}`,
+                mint: tokenMint,
                 signature: result.signature,
                 url: `https://solscan.io/tx/${result.signature}?cluster=${NETWORK}`,
               },
               `Confirmed sell tx`,
             );
+
+            // === Record sell with P&L tracker ===
+            const pnlTracker = getPnlTracker();
+            // Estimate SOL received (actual amount comes from tx, but we estimate here)
+            const tokenAmount = parseFloat(tokenAmountIn.toFixed());
+            pnlTracker.recordSell({
+              tokenMint,
+              amountSol: 0, // Will be calculated from entry price
+              amountToken: tokenAmount,
+              poolId: poolData.id,
+              txSignature: result.signature,
+            });
+
+            // Remove from position monitor
+            if (positionMonitor) {
+              positionMonitor.removePosition(tokenMint);
+            }
+
+            // Remove from exposure manager
+            const exposureManager = getExposureManager();
+            if (exposureManager) {
+              exposureManager.removePosition(tokenMint);
+            }
+
             break;
           }
 
           logger.info(
             {
-              mint: rawAccount.mint.toString(),
+              mint: tokenMint,
               signature: result.signature,
               error: result.error,
             },
             `Error confirming sell tx`,
           );
         } catch (error) {
-          logger.debug({ mint: rawAccount.mint.toString(), error }, `Error confirming sell transaction`);
+          logger.debug({ mint: tokenMint, error }, `Error confirming sell transaction`);
         }
       }
     } catch (error) {
-      logger.error({ mint: rawAccount.mint.toString(), error }, `Failed to sell token`);
+      logger.error({ mint: tokenMint, error }, `Failed to sell token`);
     } finally {
       if (this.config.oneTokenAtATime) {
         this.sellExecutionCount--;
