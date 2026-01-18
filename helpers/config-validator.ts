@@ -60,6 +60,12 @@ export interface ValidatedConfig {
   preLoadExistingMarkets: boolean;
   cacheNewMarkets: boolean;
 
+  // Risk Controls (Phase 2)
+  maxTotalExposureSol: number;
+  maxTradesPerHour: number;
+  minWalletBufferSol: number;
+  maxHoldDurationMs: number;
+
   // Operational
   healthPort: number;
   dataDir: string;
@@ -262,6 +268,28 @@ export function validateConfig(): ValidatedConfig {
   const preLoadExistingMarkets = requireBoolean('PRE_LOAD_EXISTING_MARKETS', false);
   const cacheNewMarkets = requireBoolean('CACHE_NEW_MARKETS', false);
 
+  // === RISK CONTROLS (Phase 2) ===
+  const maxTotalExposureSol = requireNumber('MAX_TOTAL_EXPOSURE_SOL', 0.5);
+  if (maxTotalExposureSol <= 0) {
+    errors.push({ variable: 'MAX_TOTAL_EXPOSURE_SOL', message: 'MAX_TOTAL_EXPOSURE_SOL must be greater than 0' });
+  }
+
+  const maxTradesPerHour = requireNumber('MAX_TRADES_PER_HOUR', 10);
+  if (maxTradesPerHour <= 0) {
+    errors.push({ variable: 'MAX_TRADES_PER_HOUR', message: 'MAX_TRADES_PER_HOUR must be greater than 0' });
+  }
+
+  const minWalletBufferSol = requireNumber('MIN_WALLET_BUFFER_SOL', 0.05);
+  if (minWalletBufferSol < 0) {
+    errors.push({ variable: 'MIN_WALLET_BUFFER_SOL', message: 'MIN_WALLET_BUFFER_SOL cannot be negative' });
+  }
+
+  // Max hold duration (0 = disabled)
+  const maxHoldDurationMs = requireNumber('MAX_HOLD_DURATION_MS', 0);
+  if (maxHoldDurationMs < 0) {
+    errors.push({ variable: 'MAX_HOLD_DURATION_MS', message: 'MAX_HOLD_DURATION_MS cannot be negative' });
+  }
+
   // === OPERATIONAL ===
   const healthPort = requireNumber('HEALTH_PORT', 8080);
   const dataDir = getEnv('DATA_DIR', './data');
@@ -341,6 +369,10 @@ export function validateConfig(): ValidatedConfig {
     snipeListRefreshInterval,
     preLoadExistingMarkets,
     cacheNewMarkets,
+    maxTotalExposureSol,
+    maxTradesPerHour,
+    minWalletBufferSol,
+    maxHoldDurationMs,
     healthPort,
     dataDir,
   };

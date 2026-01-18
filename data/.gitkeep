@@ -1,0 +1,2 @@
+# This file ensures the data directory is tracked by git
+# Runtime data files (blacklist.json, positions.json, trades.json) are ignored

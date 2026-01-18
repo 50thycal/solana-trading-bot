@@ -95,6 +95,14 @@ export const USE_SNIPE_LIST = config.useSnipeList;
 export const SNIPE_LIST_REFRESH_INTERVAL = config.snipeListRefreshInterval;
 
 // ============================================================================
+// RISK CONTROLS (Phase 2)
+// ============================================================================
+export const MAX_TOTAL_EXPOSURE_SOL = config.maxTotalExposureSol;
+export const MAX_TRADES_PER_HOUR = config.maxTradesPerHour;
+export const MIN_WALLET_BUFFER_SOL = config.minWalletBufferSol;
+export const MAX_HOLD_DURATION_MS = config.maxHoldDurationMs;
+
+// ============================================================================
 // OPERATIONAL
 // ============================================================================
 export const HEALTH_PORT = config.healthPort;

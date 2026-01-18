@@ -49,6 +49,10 @@ import {
   DRY_RUN,
   FILTER_PRESET,
   HEALTH_PORT,
+  MAX_TOTAL_EXPOSURE_SOL,
+  MAX_TRADES_PER_HOUR,
+  MIN_WALLET_BUFFER_SOL,
+  MAX_HOLD_DURATION_MS,
   logFilterPresetInfo,
 } from './helpers';
 import { initRpcManager } from './helpers/rpc-manager';
@@ -56,10 +60,19 @@ import { startHealthServer, HealthServer } from './health';
 import { version } from './package.json';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
+import {
+  getBlacklist,
+  initExposureManager,
+  getPnlTracker,
+  initPositionMonitor,
+  getPositionMonitor,
+  TriggerEvent,
+} from './risk';
 
 // Global references for graceful shutdown
 let listeners: Listeners | null = null;
 let healthServer: HealthServer | null = null;
+let bot: Bot | null = null;
 let isShuttingDown = false;
 
 /**
@@ -159,6 +172,13 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
     logger.info(`Consecutive filter matches: ${botConfig.consecutiveMatchCount}`);
   }
 
+  logger.info('- Risk Controls -');
+  logger.info(`Max total exposure: ${MAX_TOTAL_EXPOSURE_SOL} SOL`);
+  logger.info(`Max trades per hour: ${MAX_TRADES_PER_HOUR}`);
+  logger.info(`Min wallet buffer: ${MIN_WALLET_BUFFER_SOL} SOL`);
+  logger.info(`Max hold duration: ${MAX_HOLD_DURATION_MS > 0 ? `${MAX_HOLD_DURATION_MS}ms` : 'disabled'}`);
+  logger.info(`Persistent stop-loss monitoring: enabled`);
+
   logger.info('------- CONFIGURATION END -------');
 
   logger.info('Bot is running! Press CTRL + C to stop it.');
@@ -177,11 +197,24 @@ async function gracefulShutdown(signal: string): Promise<void> {
   logger.info({ signal }, 'Received shutdown signal, cleaning up...');
 
   try {
-    // Stop listeners first
+    // Stop position monitor first
+    const positionMonitor = getPositionMonitor();
+    if (positionMonitor) {
+      logger.info('Stopping position monitor...');
+      positionMonitor.stop();
+    }
+
+    // Stop listeners
     if (listeners) {
       logger.info('Stopping WebSocket listeners...');
       await listeners.stop();
     }
+
+    // Save P&L data
+    const pnlTracker = getPnlTracker();
+    logger.info('Saving P&L data...');
+    await pnlTracker.forceSave();
+    pnlTracker.logSessionSummary();
 
     // Stop health server
     if (healthServer) {
@@ -268,13 +301,60 @@ const runListener = async () => {
     consecutiveMatchCount: CONSECUTIVE_FILTER_MATCHES,
   };
 
-  const bot = new Bot(connection, marketCache, poolCache, txExecutor, botConfig);
+  bot = new Bot(connection, marketCache, poolCache, txExecutor, botConfig);
   const valid = await bot.validate();
 
   if (!valid) {
     logger.info('Bot is exiting...');
     process.exit(1);
   }
+
+  // === Initialize Risk Systems (Phase 2) ===
+  logger.info('Initializing risk control systems...');
+
+  // Initialize blacklist
+  const blacklist = getBlacklist();
+  await blacklist.init();
+
+  // Initialize exposure manager
+  initExposureManager(connection, wallet.publicKey, {
+    maxTotalExposureSol: MAX_TOTAL_EXPOSURE_SOL,
+    maxTradesPerHour: MAX_TRADES_PER_HOUR,
+    minWalletBufferSol: MIN_WALLET_BUFFER_SOL,
+  });
+
+  // Initialize P&L tracker
+  const pnlTracker = getPnlTracker();
+  await pnlTracker.init();
+
+  // Initialize position monitor (independent monitoring loop)
+  const positionMonitor = initPositionMonitor(connection, quoteToken, {
+    checkIntervalMs: PRICE_CHECK_INTERVAL,
+    takeProfit: TAKE_PROFIT,
+    stopLoss: STOP_LOSS,
+    maxHoldDurationMs: MAX_HOLD_DURATION_MS,
+  });
+
+  // Set up position monitor trigger handler
+  positionMonitor.on('trigger', async (event: TriggerEvent) => {
+    logger.info(
+      {
+        type: event.type,
+        tokenMint: event.position.tokenMint,
+        pnlPercent: `${event.pnlPercent >= 0 ? '+' : ''}${event.pnlPercent.toFixed(2)}%`,
+        currentValue: `${event.currentValueSol.toFixed(4)} SOL`,
+      },
+      `Position trigger: ${event.type}`,
+    );
+
+    // The sell will be triggered by wallet balance change detection
+    // Position monitor just logs the trigger, the wallet listener handles the actual sell
+    // This is because the sell needs the actual token balance from the wallet
+  });
+
+  // Start position monitor
+  positionMonitor.start();
+  logger.info('Risk control systems initialized');
 
   if (PRE_LOAD_EXISTING_MARKETS) {
     await marketCache.init({ quoteToken });
@@ -334,7 +414,7 @@ const runListener = async () => {
       healthServer.recordWebSocketActivity();
     }
 
-    if (!exists && poolOpenTime > runTimestamp) {
+    if (!exists && poolOpenTime > runTimestamp && bot) {
       poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
       await bot.buy(updatedAccountInfo.accountId, poolState);
     }
@@ -352,10 +432,12 @@ const runListener = async () => {
       return;
     }
 
-    await bot.sell(updatedAccountInfo.accountId, accountData);
+    if (bot) {
+      await bot.sell(updatedAccountInfo.accountId, accountData);
+    }
   });
 
-  printDetails(wallet, quoteToken, bot);
+  printDetails(wallet, quoteToken, bot!);
 };
 
 // Register graceful shutdown handlers

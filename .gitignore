@@ -135,5 +135,10 @@ pnpm-lock.yaml
 # JetBrains
 .idea
 
-# Visual Studio Code 
+# Visual Studio Code
 *.code-workspace
+
+# Data directory (Phase 2 persistence)
+# Keep directory structure but ignore runtime data
+data/*.json
+!data/.gitkeep
