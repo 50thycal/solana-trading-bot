@@ -145,22 +145,32 @@ export function validateConfig(): ValidatedConfig {
     return value.split(',').map(e => e.trim()).filter(e => e.length > 0);
   };
 
-  // Resolve quote mint (handle aliases like WSOL, USDC)
-  const resolveQuoteMint = (value: string): string => {
-    if (KNOWN_QUOTE_MINTS[value.toUpperCase()]) {
-      return KNOWN_QUOTE_MINTS[value.toUpperCase()];
+  // Validate quote mint (accepts WSOL, USDC aliases or mint addresses)
+  // Returns the normalized alias (WSOL/USDC) for compatibility with getToken()
+  const validateQuoteMint = (value: string): string => {
+    const upperValue = value.toUpperCase();
+
+    // If it's a known alias, return the uppercase alias (not the address)
+    if (KNOWN_QUOTE_MINTS[upperValue]) {
+      return upperValue;
     }
-    // Validate as public key
-    try {
-      new PublicKey(value);
-      return value;
-    } catch {
-      errors.push({
-        variable: 'QUOTE_MINT',
-        message: `Invalid QUOTE_MINT: "${value}". Use WSOL, USDC, or a valid Solana public key`
-      });
-      return value;
+
+    // Check if it's the actual mint address for a known token
+    const mintAddressToAlias: Record<string, string> = {
+      'So11111111111111111111111111111111111111112': 'WSOL',
+      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 'USDC',
+    };
+
+    if (mintAddressToAlias[value]) {
+      return mintAddressToAlias[value];
     }
+
+    // Not a known token - error
+    errors.push({
+      variable: 'QUOTE_MINT',
+      message: `Invalid QUOTE_MINT: "${value}". Supported values are WSOL or USDC`
+    });
+    return value;
   };
 
   // === CORE CONFIGURATION ===
@@ -183,7 +193,7 @@ export function validateConfig(): ValidatedConfig {
 
   // === TRADING PARAMETERS ===
   const quoteMintRaw = requireEnv('QUOTE_MINT');
-  const quoteMint = resolveQuoteMint(quoteMintRaw);
+  const quoteMint = validateQuoteMint(quoteMintRaw);
   const quoteAmount = getEnv('QUOTE_AMOUNT', '0.01');
 
   // Validate quote amount is a positive number
