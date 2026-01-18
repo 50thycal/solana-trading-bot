@@ -35,6 +35,7 @@ COPY --from=builder /app/filters ./filters
 COPY --from=builder /app/helpers ./helpers
 COPY --from=builder /app/listeners ./listeners
 COPY --from=builder /app/transactions ./transactions
+COPY --from=builder /app/risk ./risk
 
 # Copy health server
 COPY --from=builder /app/health.ts ./
