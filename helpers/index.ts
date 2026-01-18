@@ -4,4 +4,7 @@ export * from './logger';
 export * from './constants';
 export * from './token';
 export * from './wallet';
-export * from './promises'
+export * from './promises';
+export * from './config-validator';
+export * from './filter-presets';
+export * from './rpc-manager';

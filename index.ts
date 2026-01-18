@@ -12,6 +12,7 @@ import {
   COMMITMENT_LEVEL,
   RPC_ENDPOINT,
   RPC_WEBSOCKET_ENDPOINT,
+  RPC_BACKUP_ENDPOINTS,
   PRE_LOAD_EXISTING_MARKETS,
   LOG_LEVEL,
   CHECK_IF_MUTABLE,
@@ -45,44 +46,73 @@ import {
   FILTER_CHECK_INTERVAL,
   FILTER_CHECK_DURATION,
   CONSECUTIVE_FILTER_MATCHES,
+  DRY_RUN,
+  FILTER_PRESET,
+  HEALTH_PORT,
+  logFilterPresetInfo,
 } from './helpers';
+import { initRpcManager } from './helpers/rpc-manager';
+import { startHealthServer, HealthServer } from './health';
 import { version } from './package.json';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
 
-const connection = new Connection(RPC_ENDPOINT, {
-  wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
-  commitment: COMMITMENT_LEVEL,
-});
+// Global references for graceful shutdown
+let listeners: Listeners | null = null;
+let healthServer: HealthServer | null = null;
+let isShuttingDown = false;
 
+/**
+ * Initialize RPC Manager with failover support
+ */
+function initializeRpcManager(): Connection {
+  const rpcManager = initRpcManager({
+    primaryEndpoint: RPC_ENDPOINT,
+    primaryWsEndpoint: RPC_WEBSOCKET_ENDPOINT,
+    backupEndpoints: RPC_BACKUP_ENDPOINTS,
+    commitment: COMMITMENT_LEVEL,
+  });
+
+  return rpcManager.getConnection();
+}
+
+/**
+ * Print bot configuration details
+ */
 function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
-  logger.info(`  
-                                        ..   :-===++++-     
-                                .-==+++++++- =+++++++++-    
-            ..:::--===+=.=:     .+++++++++++:=+++++++++:    
-    .==+++++++++++++++=:+++:    .+++++++++++.=++++++++-.    
-    .-+++++++++++++++=:=++++-   .+++++++++=:.=+++++-::-.    
-     -:+++++++++++++=:+++++++-  .++++++++-:- =+++++=-:      
-      -:++++++=++++=:++++=++++= .++++++++++- =+++++:        
-       -:++++-:=++=:++++=:-+++++:+++++====--:::::::.        
-        ::=+-:::==:=+++=::-:--::::::::::---------::.        
-         ::-:  .::::::::.  --------:::..                    
-          :-    .:.-:::.                                    
+  logger.info(`
+                                        ..   :-===++++-
+                                .-==+++++++- =+++++++++-
+            ..:::--===+=.=:     .+++++++++++:=+++++++++:
+    .==+++++++++++++++=:+++:    .+++++++++++.=++++++++-.
+    .-+++++++++++++++=:=++++-   .+++++++++=:.=+++++-::-.
+     -:+++++++++++++=:+++++++-  .++++++++-:- =+++++=-:
+      -:++++++=++++=:++++=++++= .++++++++++- =+++++:
+       -:++++-:=++=:++++=:-+++++:+++++====--:::::::.
+        ::=+-:::==:=+++=::-:--::::::::::---------::.
+         ::-:  .::::::::.  --------:::..
+          :-    .:.-:::.
 
-          WARP DRIVE ACTIVATED 🚀🐟
-          Made with ❤️ by humans.
-          Version: ${version}                                          
+          WARP DRIVE ACTIVATED
+          Made with love by humans.
+          Version: ${version}
   `);
 
   const botConfig = bot.config;
 
   logger.info('------- CONFIGURATION START -------');
+
+  // Mode indicator
+  if (DRY_RUN) {
+    logger.warn('*** DRY RUN MODE - Transactions will be logged but NOT executed ***');
+  }
+
   logger.info(`Wallet: ${wallet.publicKey.toString()}`);
 
   logger.info('- Bot -');
 
   logger.info(
-    `Using ${TRANSACTION_EXECUTOR} executer: ${bot.isWarp || bot.isJito || (TRANSACTION_EXECUTOR === 'default' ? true : false)}`,
+    `Using ${TRANSACTION_EXECUTOR} executor: ${bot.isWarp || bot.isJito || (TRANSACTION_EXECUTOR === 'default' ? true : false)}`,
   );
   if (bot.isWarp || bot.isJito) {
     logger.info(`${TRANSACTION_EXECUTOR} fee: ${CUSTOM_FEE}`);
@@ -95,12 +125,12 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Pre load existing markets: ${PRE_LOAD_EXISTING_MARKETS}`);
   logger.info(`Cache new markets: ${CACHE_NEW_MARKETS}`);
   logger.info(`Log level: ${LOG_LEVEL}`);
+  logger.info(`Health check port: ${HEALTH_PORT}`);
 
   logger.info('- Buy -');
   logger.info(`Buy amount: ${botConfig.quoteAmount.toFixed()} ${botConfig.quoteToken.name}`);
   logger.info(`Auto buy delay: ${botConfig.autoBuyDelay} ms`);
   logger.info(`Max buy retries: ${botConfig.maxBuyRetries}`);
-  logger.info(`Buy amount (${quoteToken.symbol}): ${botConfig.quoteAmount.toFixed()}`);
   logger.info(`Buy slippage: ${botConfig.buySlippage}%`);
 
   logger.info('- Sell -');
@@ -122,14 +152,11 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
     logger.info(`Filters are disabled when snipe list is on`);
   } else {
     logger.info('- Filters -');
+    logger.info(`Filter preset: ${FILTER_PRESET}`);
+    logFilterPresetInfo();
     logger.info(`Filter check interval: ${botConfig.filterCheckInterval} ms`);
     logger.info(`Filter check duration: ${botConfig.filterCheckDuration} ms`);
     logger.info(`Consecutive filter matches: ${botConfig.consecutiveMatchCount}`);
-    logger.info(`Check renounced: ${botConfig.checkRenounced}`);
-    logger.info(`Check freezable: ${botConfig.checkFreezable}`);
-    logger.info(`Check burned: ${botConfig.checkBurned}`);
-    logger.info(`Min pool size: ${botConfig.minPoolSize.toFixed()}`);
-    logger.info(`Max pool size: ${botConfig.maxPoolSize.toFixed()}`);
   }
 
   logger.info('------- CONFIGURATION END -------');
@@ -137,9 +164,57 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info('Bot is running! Press CTRL + C to stop it.');
 }
 
+/**
+ * Graceful shutdown handler
+ */
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (isShuttingDown) {
+    logger.info('Shutdown already in progress...');
+    return;
+  }
+
+  isShuttingDown = true;
+  logger.info({ signal }, 'Received shutdown signal, cleaning up...');
+
+  try {
+    // Stop listeners first
+    if (listeners) {
+      logger.info('Stopping WebSocket listeners...');
+      await listeners.stop();
+    }
+
+    // Stop health server
+    if (healthServer) {
+      logger.info('Stopping health server...');
+      await healthServer.stop();
+    }
+
+    logger.info('Graceful shutdown complete');
+    process.exit(0);
+  } catch (error) {
+    logger.error({ error }, 'Error during graceful shutdown');
+    process.exit(1);
+  }
+}
+
+/**
+ * Main bot entry point
+ */
 const runListener = async () => {
   logger.level = LOG_LEVEL;
   logger.info('Bot is starting...');
+
+  // Start health server early
+  try {
+    healthServer = await startHealthServer(HEALTH_PORT);
+    logger.info({ port: HEALTH_PORT }, 'Health server started');
+  } catch (error) {
+    logger.error({ error }, 'Failed to start health server');
+    // Continue without health server - not critical for bot operation
+  }
+
+  // Initialize RPC Manager with failover
+  const connection = initializeRpcManager();
 
   const marketCache = new MarketCache(connection);
   const poolCache = new PoolCache();
@@ -168,6 +243,7 @@ const runListener = async () => {
     checkRenounced: CHECK_IF_MINT_IS_RENOUNCED,
     checkFreezable: CHECK_IF_FREEZABLE,
     checkBurned: CHECK_IF_BURNED,
+    checkMutable: CHECK_IF_MUTABLE,
     minPoolSize: new TokenAmount(quoteToken, MIN_POOL_SIZE, false),
     maxPoolSize: new TokenAmount(quoteToken, MAX_POOL_SIZE, false),
     quoteToken,
@@ -205,7 +281,26 @@ const runListener = async () => {
   }
 
   const runTimestamp = Math.floor(new Date().getTime() / 1000);
-  const listeners = new Listeners(connection);
+
+  // Initialize listeners with reconnection support
+  listeners = new Listeners(connection);
+
+  // Connect listener events to health server
+  if (healthServer) {
+    listeners.on('connected', () => {
+      healthServer!.setWebSocketConnected(true);
+    });
+
+    listeners.on('disconnected', () => {
+      healthServer!.setWebSocketConnected(false);
+    });
+
+    listeners.on('reconnecting', ({ attempt, delay }) => {
+      logger.info({ attempt, delay }, 'WebSocket reconnecting...');
+    });
+  }
+
+  // Start listeners
   await listeners.start({
     walletPublicKey: wallet.publicKey,
     quoteToken,
@@ -213,15 +308,31 @@ const runListener = async () => {
     cacheNewMarkets: CACHE_NEW_MARKETS,
   });
 
+  // Update health server status
+  if (healthServer) {
+    healthServer.setWebSocketConnected(true);
+    healthServer.setRpcHealthy(true);
+  }
+
   listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
     const marketState = MARKET_STATE_LAYOUT_V3.decode(updatedAccountInfo.accountInfo.data);
     marketCache.save(updatedAccountInfo.accountId.toString(), marketState);
+
+    // Record activity
+    if (healthServer) {
+      healthServer.recordWebSocketActivity();
+    }
   });
 
   listeners.on('pool', async (updatedAccountInfo: KeyedAccountInfo) => {
     const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(updatedAccountInfo.accountInfo.data);
     const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
     const exists = await poolCache.get(poolState.baseMint.toString());
+
+    // Record activity
+    if (healthServer) {
+      healthServer.recordWebSocketActivity();
+    }
 
     if (!exists && poolOpenTime > runTimestamp) {
       poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
@@ -231,6 +342,11 @@ const runListener = async () => {
 
   listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {
     const accountData = AccountLayout.decode(updatedAccountInfo.accountInfo.data);
+
+    // Record activity
+    if (healthServer) {
+      healthServer.recordWebSocketActivity();
+    }
 
     if (accountData.mint.equals(quoteToken.mint)) {
       return;
@@ -242,4 +358,23 @@ const runListener = async () => {
   printDetails(wallet, quoteToken, bot);
 };
 
-runListener();
+// Register graceful shutdown handlers
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  logger.error({ error }, 'Uncaught exception');
+  gracefulShutdown('uncaughtException');
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error({ reason, promise }, 'Unhandled promise rejection');
+});
+
+// Start the bot
+runListener().catch((error) => {
+  logger.error({ error }, 'Failed to start bot');
+  process.exit(1);
+});

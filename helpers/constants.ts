@@ -1,65 +1,128 @@
-import { Logger } from 'pino';
-import dotenv from 'dotenv';
 import { Commitment } from '@solana/web3.js';
 import { logger } from './logger';
+import { getConfig, isDryRun, ValidatedConfig } from './config-validator';
+import { resolveFilterSettings, FilterPresetName, ResolvedFilterSettings } from './filter-presets';
 
-dotenv.config();
+// Get validated configuration
+const config: ValidatedConfig = getConfig();
 
-const retrieveEnvVariable = (variableName: string, logger: Logger) => {
-  const variable = process.env[variableName] || '';
-  if (!variable) {
-    logger.error(`${variableName} is not set`);
-    process.exit(1);
+// Resolve filter settings based on preset
+const filterSettings: ResolvedFilterSettings = resolveFilterSettings(
+  config.filterPreset as FilterPresetName,
+  {
+    checkIfBurned: config.checkIfBurned,
+    checkIfMintIsRenounced: config.checkIfMintIsRenounced,
+    checkIfFreezable: config.checkIfFreezable,
+    checkIfMutable: config.checkIfMutable,
+    checkIfSocials: config.checkIfSocials,
+    minPoolSize: config.minPoolSize,
+    maxPoolSize: config.maxPoolSize,
   }
-  return variable;
-};
+);
 
-// Wallet
-export const PRIVATE_KEY = retrieveEnvVariable('PRIVATE_KEY', logger);
+// ============================================================================
+// WALLET
+// ============================================================================
+export const PRIVATE_KEY = config.privateKey;
 
-// Connection
+// ============================================================================
+// CONNECTION
+// ============================================================================
 export const NETWORK = 'mainnet-beta';
-export const COMMITMENT_LEVEL: Commitment = retrieveEnvVariable('COMMITMENT_LEVEL', logger) as Commitment;
-export const RPC_ENDPOINT = retrieveEnvVariable('RPC_ENDPOINT', logger);
-export const RPC_WEBSOCKET_ENDPOINT = retrieveEnvVariable('RPC_WEBSOCKET_ENDPOINT', logger);
+export const COMMITMENT_LEVEL: Commitment = config.commitmentLevel;
+export const RPC_ENDPOINT = config.rpcEndpoint;
+export const RPC_WEBSOCKET_ENDPOINT = config.rpcWebsocketEndpoint;
+export const RPC_BACKUP_ENDPOINTS = config.rpcBackupEndpoints;
 
-// Bot
-export const LOG_LEVEL = retrieveEnvVariable('LOG_LEVEL', logger);
-export const ONE_TOKEN_AT_A_TIME = retrieveEnvVariable('ONE_TOKEN_AT_A_TIME', logger) === 'true';
-export const COMPUTE_UNIT_LIMIT = Number(retrieveEnvVariable('COMPUTE_UNIT_LIMIT', logger));
-export const COMPUTE_UNIT_PRICE = Number(retrieveEnvVariable('COMPUTE_UNIT_PRICE', logger));
-export const PRE_LOAD_EXISTING_MARKETS = retrieveEnvVariable('PRE_LOAD_EXISTING_MARKETS', logger) === 'true';
-export const CACHE_NEW_MARKETS = retrieveEnvVariable('CACHE_NEW_MARKETS', logger) === 'true';
-export const TRANSACTION_EXECUTOR = retrieveEnvVariable('TRANSACTION_EXECUTOR', logger);
-export const CUSTOM_FEE = retrieveEnvVariable('CUSTOM_FEE', logger);
+// ============================================================================
+// MODE
+// ============================================================================
+export const DRY_RUN = config.dryRun;
+export const LOG_LEVEL = config.logLevel;
+export { isDryRun };
 
-// Buy
-export const AUTO_BUY_DELAY = Number(retrieveEnvVariable('AUTO_BUY_DELAY', logger));
-export const QUOTE_MINT = retrieveEnvVariable('QUOTE_MINT', logger);
-export const QUOTE_AMOUNT = retrieveEnvVariable('QUOTE_AMOUNT', logger);
-export const MAX_BUY_RETRIES = Number(retrieveEnvVariable('MAX_BUY_RETRIES', logger));
-export const BUY_SLIPPAGE = Number(retrieveEnvVariable('BUY_SLIPPAGE', logger));
+// ============================================================================
+// BOT
+// ============================================================================
+export const ONE_TOKEN_AT_A_TIME = config.oneTokenAtATime;
+export const COMPUTE_UNIT_LIMIT = config.computeUnitLimit;
+export const COMPUTE_UNIT_PRICE = config.computeUnitPrice;
+export const PRE_LOAD_EXISTING_MARKETS = config.preLoadExistingMarkets;
+export const CACHE_NEW_MARKETS = config.cacheNewMarkets;
+export const TRANSACTION_EXECUTOR = config.transactionExecutor;
+export const CUSTOM_FEE = config.customFee;
 
-// Sell
-export const AUTO_SELL = retrieveEnvVariable('AUTO_SELL', logger) === 'true';
-export const AUTO_SELL_DELAY = Number(retrieveEnvVariable('AUTO_SELL_DELAY', logger));
-export const MAX_SELL_RETRIES = Number(retrieveEnvVariable('MAX_SELL_RETRIES', logger));
-export const TAKE_PROFIT = Number(retrieveEnvVariable('TAKE_PROFIT', logger));
-export const STOP_LOSS = Number(retrieveEnvVariable('STOP_LOSS', logger));
-export const PRICE_CHECK_INTERVAL = Number(retrieveEnvVariable('PRICE_CHECK_INTERVAL', logger));
-export const PRICE_CHECK_DURATION = Number(retrieveEnvVariable('PRICE_CHECK_DURATION', logger));
-export const SELL_SLIPPAGE = Number(retrieveEnvVariable('SELL_SLIPPAGE', logger));
+// ============================================================================
+// BUY
+// ============================================================================
+export const AUTO_BUY_DELAY = config.autoBuyDelay;
+export const QUOTE_MINT = config.quoteMint;
+export const QUOTE_AMOUNT = config.quoteAmount;
+export const MAX_BUY_RETRIES = config.maxBuyRetries;
+export const BUY_SLIPPAGE = config.buySlippage;
 
-// Filters
-export const FILTER_CHECK_INTERVAL = Number(retrieveEnvVariable('FILTER_CHECK_INTERVAL', logger));
-export const FILTER_CHECK_DURATION = Number(retrieveEnvVariable('FILTER_CHECK_DURATION', logger));
-export const CONSECUTIVE_FILTER_MATCHES = Number(retrieveEnvVariable('CONSECUTIVE_FILTER_MATCHES', logger));
-export const CHECK_IF_MUTABLE = retrieveEnvVariable('CHECK_IF_MUTABLE', logger) === 'true';
-export const CHECK_IF_SOCIALS = retrieveEnvVariable('CHECK_IF_SOCIALS', logger) === 'true';
-export const CHECK_IF_MINT_IS_RENOUNCED = retrieveEnvVariable('CHECK_IF_MINT_IS_RENOUNCED', logger) === 'true';
-export const CHECK_IF_FREEZABLE = retrieveEnvVariable('CHECK_IF_FREEZABLE', logger) === 'true';
-export const CHECK_IF_BURNED = retrieveEnvVariable('CHECK_IF_BURNED', logger) === 'true';
-export const MIN_POOL_SIZE = retrieveEnvVariable('MIN_POOL_SIZE', logger);
-export const MAX_POOL_SIZE = retrieveEnvVariable('MAX_POOL_SIZE', logger);
-export const USE_SNIPE_LIST = retrieveEnvVariable('USE_SNIPE_LIST', logger) === 'true';
-export const SNIPE_LIST_REFRESH_INTERVAL = Number(retrieveEnvVariable('SNIPE_LIST_REFRESH_INTERVAL', logger));
+// ============================================================================
+// SELL
+// ============================================================================
+export const AUTO_SELL = config.autoSell;
+export const AUTO_SELL_DELAY = config.autoSellDelay;
+export const MAX_SELL_RETRIES = config.maxSellRetries;
+export const TAKE_PROFIT = config.takeProfit;
+export const STOP_LOSS = config.stopLoss;
+export const PRICE_CHECK_INTERVAL = config.priceCheckInterval;
+export const PRICE_CHECK_DURATION = config.priceCheckDuration;
+export const SELL_SLIPPAGE = config.sellSlippage;
+
+// ============================================================================
+// FILTERS (resolved from preset or custom settings)
+// ============================================================================
+export const FILTER_PRESET = config.filterPreset;
+export const FILTER_CHECK_INTERVAL = config.filterCheckInterval;
+export const FILTER_CHECK_DURATION = config.filterCheckDuration;
+export const CONSECUTIVE_FILTER_MATCHES = config.consecutiveFilterMatches;
+
+// Filter flags resolved from preset
+export const CHECK_IF_MUTABLE = filterSettings.checkIfMutable;
+export const CHECK_IF_SOCIALS = filterSettings.checkIfSocials;
+export const CHECK_IF_MINT_IS_RENOUNCED = filterSettings.checkIfMintIsRenounced;
+export const CHECK_IF_FREEZABLE = filterSettings.checkIfFreezable;
+export const CHECK_IF_BURNED = filterSettings.checkIfBurned;
+export const MIN_POOL_SIZE = filterSettings.minPoolSize;
+export const MAX_POOL_SIZE = filterSettings.maxPoolSize;
+
+// Snipe list
+export const USE_SNIPE_LIST = config.useSnipeList;
+export const SNIPE_LIST_REFRESH_INTERVAL = config.snipeListRefreshInterval;
+
+// ============================================================================
+// OPERATIONAL
+// ============================================================================
+export const HEALTH_PORT = config.healthPort;
+export const DATA_DIR = config.dataDir;
+
+// ============================================================================
+// LOGGING
+// ============================================================================
+
+/**
+ * Log the active filter preset configuration
+ */
+export function logFilterPresetInfo(): void {
+  if (config.filterPreset === 'custom') {
+    logger.info('Filter preset: custom (using individual CHECK_IF_* settings)');
+  } else {
+    logger.info(`Filter preset: ${config.filterPreset}`);
+  }
+  logger.info(`  Burned LP check: ${filterSettings.checkIfBurned}`);
+  logger.info(`  Renounced mint check: ${filterSettings.checkIfMintIsRenounced}`);
+  logger.info(`  Freezable check: ${filterSettings.checkIfFreezable}`);
+  logger.info(`  Mutable check: ${filterSettings.checkIfMutable}`);
+  logger.info(`  Socials check: ${filterSettings.checkIfSocials}`);
+  logger.info(`  Pool size range: ${filterSettings.minPoolSize} - ${filterSettings.maxPoolSize}`);
+}
+
+// Export the resolved filter settings for external use
+export { filterSettings };
+
+// Export the full config for advanced use cases
+export { config as validatedConfig };
