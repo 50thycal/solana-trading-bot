@@ -33,6 +33,7 @@ import {
   getPnlTracker,
   getPositionMonitor,
 } from './risk';
+import { getStateStore } from './persistence';
 
 export interface BotConfig {
   wallet: Keypair;
@@ -133,16 +134,62 @@ export class Bot {
   public async buy(accountId: PublicKey, poolState: LiquidityStateV4) {
     logger.trace({ mint: poolState.baseMint }, `Processing new pool...`);
     const tokenMint = poolState.baseMint.toString();
+    const poolId = accountId.toString();
+
+    // === PERSISTENCE CHECK: Seen pools ===
+    const stateStore = getStateStore();
+    if (stateStore) {
+      // Check if we've already processed this pool
+      if (stateStore.hasSeenPool(poolId)) {
+        logger.trace({ poolId, mint: tokenMint }, `Skipping - pool already processed`);
+        return;
+      }
+
+      // Check if we already have an open position for this token
+      if (stateStore.hasOpenPosition(tokenMint)) {
+        logger.debug({ mint: tokenMint }, `Skipping buy - already have open position`);
+        stateStore.recordSeenPool({
+          poolId,
+          tokenMint,
+          actionTaken: 'skipped',
+          filterReason: 'Already have open position',
+        });
+        return;
+      }
+
+      // Check for pending buy trade (idempotency)
+      const pendingTrade = stateStore.getPendingTradeForToken(tokenMint, 'buy');
+      if (pendingTrade) {
+        logger.debug({ mint: tokenMint, tradeId: pendingTrade.id }, `Skipping buy - pending trade exists`);
+        return;
+      }
+    }
 
     // === RISK CHECK 1: Blacklist ===
     const blacklist = getBlacklist();
     if (blacklist.isTokenBlacklisted(tokenMint)) {
       logger.debug({ mint: tokenMint }, `Skipping buy - token is blacklisted`);
+      if (stateStore) {
+        stateStore.recordSeenPool({
+          poolId,
+          tokenMint,
+          actionTaken: 'blacklisted',
+          filterReason: 'Token is blacklisted',
+        });
+      }
       return;
     }
 
     if (this.config.useSnipeList && !this.snipeListCache?.isInList(tokenMint)) {
       logger.debug({ mint: tokenMint }, `Skipping buy because token is not in a snipe list`);
+      if (stateStore) {
+        stateStore.recordSeenPool({
+          poolId,
+          tokenMint,
+          actionTaken: 'skipped',
+          filterReason: 'Not in snipe list',
+        });
+      }
       return;
     }
 
@@ -154,6 +201,14 @@ export class Bot {
 
       if (!exposureCheck.allowed) {
         logger.warn({ mint: tokenMint, reason: exposureCheck.reason }, `Skipping buy - risk limit exceeded`);
+        if (stateStore) {
+          stateStore.recordSeenPool({
+            poolId,
+            tokenMint,
+            actionTaken: 'skipped',
+            filterReason: exposureCheck.reason || 'Risk limit exceeded',
+          });
+        }
         return;
       }
     }
@@ -187,6 +242,14 @@ export class Bot {
 
         if (!match) {
           logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
+          if (stateStore) {
+            stateStore.recordSeenPool({
+              poolId,
+              tokenMint,
+              actionTaken: 'filtered',
+              filterReason: 'Did not pass filter checks',
+            });
+          }
           return;
         }
       }
@@ -223,13 +286,36 @@ export class Bot {
             // === Record trade and register position ===
             const entryAmountSol = parseFloat(this.config.quoteAmount.toFixed());
 
+            // Create position in SQLite for persistence
+            if (stateStore) {
+              const takeProfitSol = entryAmountSol * (1 + this.config.takeProfit / 100);
+              const stopLossSol = entryAmountSol * (1 - this.config.stopLoss / 100);
+
+              stateStore.createPosition({
+                tokenMint,
+                entryPrice: entryAmountSol, // Will be updated with actual price
+                amountToken: 0, // Will be updated when we know the exact amount
+                amountSol: entryAmountSol,
+                poolId,
+                takeProfitSol,
+                stopLossSol,
+              });
+
+              // Record as bought in seen pools
+              stateStore.recordSeenPool({
+                poolId,
+                tokenMint,
+                actionTaken: 'bought',
+              });
+            }
+
             // Record with P&L tracker
             const pnlTracker = getPnlTracker();
             pnlTracker.recordBuy({
               tokenMint,
               amountSol: entryAmountSol,
               amountToken: 0, // Will be updated when we know the exact amount
-              poolId: accountId.toString(),
+              poolId,
               txSignature: result.signature,
             });
 
@@ -246,7 +332,7 @@ export class Bot {
               const tokenAmount = new TokenAmount(tokenOut, 0, true);
               positionMonitor.addPosition({
                 tokenMint,
-                poolId: accountId.toString(),
+                poolId,
                 poolKeys,
                 tokenAmount,
                 entryAmountSol,
@@ -360,6 +446,12 @@ export class Bot {
               poolId: poolData.id,
               txSignature: result.signature,
             });
+
+            // Close position in SQLite
+            const stateStore = getStateStore();
+            if (stateStore) {
+              stateStore.closePosition(tokenMint, 'sold');
+            }
 
             // Remove from position monitor
             if (positionMonitor) {

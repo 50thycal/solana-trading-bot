@@ -1,8 +1,8 @@
 import { MarketCache, PoolCache } from './cache';
 import { Listeners } from './listeners';
-import { Connection, KeyedAccountInfo, Keypair } from '@solana/web3.js';
+import { Connection, KeyedAccountInfo, Keypair, PublicKey } from '@solana/web3.js';
 import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
-import { AccountLayout, getAssociatedTokenAddressSync } from '@solana/spl-token';
+import { AccountLayout, getAssociatedTokenAddressSync, getAccount } from '@solana/spl-token';
 import { Bot, BotConfig } from './bot';
 import { DefaultTransactionExecutor, TransactionExecutor } from './transactions';
 import {
@@ -63,11 +63,17 @@ import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-exe
 import {
   getBlacklist,
   initExposureManager,
+  getExposureManager,
   getPnlTracker,
   initPositionMonitor,
   getPositionMonitor,
   TriggerEvent,
 } from './risk';
+import {
+  initStateStore,
+  getStateStore,
+  closeStateStore,
+} from './persistence';
 
 // Global references for graceful shutdown
 let listeners: Listeners | null = null;
@@ -222,6 +228,10 @@ async function gracefulShutdown(signal: string): Promise<void> {
       await healthServer.stop();
     }
 
+    // Close state store (SQLite)
+    logger.info('Closing state store...');
+    closeStateStore();
+
     logger.info('Graceful shutdown complete');
     process.exit(0);
   } catch (error) {
@@ -309,10 +319,25 @@ const runListener = async () => {
     process.exit(1);
   }
 
+  // === Initialize Persistence Layer (Phase 3) ===
+  logger.info('Initializing persistence layer...');
+  const stateStore = initStateStore();
+  const dbStats = stateStore.getStats();
+  logger.info(
+    {
+      openPositions: dbStats.positions.open,
+      closedPositions: dbStats.positions.closed,
+      confirmedTrades: dbStats.trades.confirmed,
+      seenPools: dbStats.seenPools,
+      blacklist: dbStats.blacklist,
+    },
+    'State store initialized',
+  );
+
   // === Initialize Risk Systems (Phase 2) ===
   logger.info('Initializing risk control systems...');
 
-  // Initialize blacklist
+  // Initialize blacklist (now uses SQLite)
   const blacklist = getBlacklist();
   await blacklist.init();
 
@@ -323,7 +348,7 @@ const runListener = async () => {
     minWalletBufferSol: MIN_WALLET_BUFFER_SOL,
   });
 
-  // Initialize P&L tracker
+  // Initialize P&L tracker (now uses SQLite)
   const pnlTracker = getPnlTracker();
   await pnlTracker.init();
 
@@ -351,6 +376,69 @@ const runListener = async () => {
     // Position monitor just logs the trigger, the wallet listener handles the actual sell
     // This is because the sell needs the actual token balance from the wallet
   });
+
+  // === Startup Recovery (Phase 3) ===
+  // Load open positions from database and verify they still exist in wallet
+  const openPositions = stateStore.getOpenPositions();
+  if (openPositions.length > 0) {
+    logger.info({ count: openPositions.length }, 'Recovering open positions from database...');
+
+    for (const position of openPositions) {
+      try {
+        // Verify token is still in wallet by checking balance
+        const tokenMint = new PublicKey(position.tokenMint);
+        const tokenAta = await getAssociatedTokenAddressSync(tokenMint, wallet.publicKey);
+
+        try {
+          const tokenAccount = await getAccount(connection, tokenAta, COMMITMENT_LEVEL);
+          const tokenBalance = Number(tokenAccount.amount);
+
+          if (tokenBalance > 0) {
+            // Token still in wallet, resume monitoring
+            logger.info(
+              {
+                tokenMint: position.tokenMint,
+                entryAmountSol: position.amountSol,
+                tokenBalance,
+              },
+              'Resuming position monitoring',
+            );
+
+            // Update position with current token amount if we have it
+            if (position.amountToken === 0) {
+              stateStore.updatePositionTokenAmount(position.tokenMint, tokenBalance);
+            }
+
+            // We need pool keys to monitor - we'll need to fetch pool data
+            // For now, we'll add to exposure manager and the position will be
+            // picked up when the wallet listener fires on any balance change
+            const expManager = getExposureManager();
+            if (expManager) {
+              expManager.addPosition({
+                tokenMint: position.tokenMint,
+                entryAmountSol: position.amountSol,
+                currentValueSol: position.lastPriceSol || position.amountSol,
+                entryTimestamp: position.entryTimestamp,
+                poolId: position.poolId,
+              });
+            }
+          } else {
+            // Token no longer in wallet, close position
+            logger.info({ tokenMint: position.tokenMint }, 'Token no longer in wallet, closing position');
+            stateStore.closePosition(position.tokenMint, 'Token not in wallet on recovery');
+          }
+        } catch (tokenError) {
+          // Token account doesn't exist, close position
+          logger.info({ tokenMint: position.tokenMint }, 'Token account not found, closing position');
+          stateStore.closePosition(position.tokenMint, 'Token account not found on recovery');
+        }
+      } catch (error) {
+        logger.error({ tokenMint: position.tokenMint, error }, 'Error recovering position');
+      }
+    }
+
+    logger.info('Position recovery complete');
+  }
 
   // Start position monitor
   positionMonitor.start();

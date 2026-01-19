@@ -1,10 +1,8 @@
-import fs from 'fs';
-import path from 'path';
 import { logger } from '../helpers';
-import { getConfig } from '../helpers/config-validator';
+import { getStateStore, TradeRecord as DbTradeRecord } from '../persistence';
 
 /**
- * Trade record structure
+ * Trade record structure (for API compatibility)
  */
 export interface TradeRecord {
   id: string;
@@ -42,27 +40,17 @@ export interface PositionPnl {
 }
 
 /**
- * Data structure stored in JSON
- */
-interface PnlData {
-  trades: TradeRecord[];
-  sessionStats: SessionStats;
-}
-
-/**
  * P&L Tracker for recording trades and calculating profit/loss.
- * Persists to JSON file in data directory.
+ * Uses SQLite persistence via StateStore (Phase 3).
+ *
+ * Session stats are tracked in memory for the current session,
+ * while trades are persisted to SQLite for recovery.
  */
 export class PnlTracker {
-  private trades: TradeRecord[] = [];
   private sessionStats: SessionStats;
-  private filePath: string;
   private initialized: boolean = false;
-  private saveDebounceTimer: NodeJS.Timeout | null = null;
 
   constructor() {
-    const config = getConfig();
-    this.filePath = path.join(config.dataDir, 'trades.json');
     this.sessionStats = {
       startTime: null,
       totalBuys: 0,
@@ -72,7 +60,7 @@ export class PnlTracker {
   }
 
   /**
-   * Initialize tracker by loading from JSON file
+   * Initialize tracker by loading stats from SQLite database
    */
   async init(): Promise<void> {
     if (this.initialized) {
@@ -80,13 +68,22 @@ export class PnlTracker {
     }
 
     try {
-      await this.load();
+      const stateStore = getStateStore();
+      if (stateStore) {
+        // Load cumulative stats from database
+        const stats = stateStore.getTradeStats();
+        this.sessionStats.realizedPnlSol = stats.realizedPnlSol;
+      }
+
       this.sessionStats.startTime = Date.now();
       this.initialized = true;
+
+      const tradeCount = this.getAllTrades().length;
       logger.info(
         {
-          existingTrades: this.trades.length,
+          existingTrades: tradeCount,
           sessionStart: new Date(this.sessionStats.startTime).toISOString(),
+          cumulativeRealizedPnl: this.sessionStats.realizedPnlSol.toFixed(4),
         },
         'P&L tracker initialized',
       );
@@ -98,96 +95,11 @@ export class PnlTracker {
   }
 
   /**
-   * Load data from JSON file
-   */
-  private async load(): Promise<void> {
-    try {
-      const dir = path.dirname(this.filePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-
-      if (!fs.existsSync(this.filePath)) {
-        await this.save();
-        return;
-      }
-
-      const data = fs.readFileSync(this.filePath, 'utf-8');
-      const parsed: PnlData = JSON.parse(data);
-
-      this.trades = parsed.trades || [];
-      // Keep cumulative realized P&L, reset session counts
-      this.sessionStats = {
-        startTime: Date.now(),
-        totalBuys: 0,
-        totalSells: 0,
-        realizedPnlSol: parsed.sessionStats?.realizedPnlSol || 0,
-      };
-    } catch (error) {
-      throw new Error(`Failed to load P&L data: ${error}`);
-    }
-  }
-
-  /**
-   * Save data to JSON file (debounced)
-   */
-  private async save(): Promise<void> {
-    // Debounce saves to avoid excessive disk I/O
-    if (this.saveDebounceTimer) {
-      clearTimeout(this.saveDebounceTimer);
-    }
-
-    this.saveDebounceTimer = setTimeout(async () => {
-      try {
-        const dir = path.dirname(this.filePath);
-        if (!fs.existsSync(dir)) {
-          fs.mkdirSync(dir, { recursive: true });
-        }
-
-        const data: PnlData = {
-          trades: this.trades,
-          sessionStats: this.sessionStats,
-        };
-
-        fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2));
-      } catch (error) {
-        logger.error({ error }, 'Failed to save P&L data');
-      }
-    }, 1000);
-  }
-
-  /**
-   * Force immediate save (for shutdown)
+   * Force immediate save (for shutdown) - now a no-op since SQLite is synchronous
    */
   async forceSave(): Promise<void> {
-    if (this.saveDebounceTimer) {
-      clearTimeout(this.saveDebounceTimer);
-      this.saveDebounceTimer = null;
-    }
-
-    try {
-      const dir = path.dirname(this.filePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-
-      const data: PnlData = {
-        trades: this.trades,
-        sessionStats: this.sessionStats,
-      };
-
-      fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2));
-      logger.debug('P&L data force saved');
-    } catch (error) {
-      logger.error({ error }, 'Failed to force save P&L data');
-    }
-  }
-
-  /**
-   * Generate a unique trade ID
-   */
-  private generateTradeId(): string {
-    return `trade_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    // SQLite writes are synchronous, no need to flush
+    logger.debug('P&L data saved (SQLite)');
   }
 
   /**
@@ -201,8 +113,34 @@ export class PnlTracker {
     poolId: string;
     txSignature?: string;
   }): TradeRecord {
+    const stateStore = getStateStore();
+
+    // Record trade intent if we have a state store
+    let tradeId: string;
+    if (stateStore) {
+      const dbTrade = stateStore.recordTradeIntent({
+        type: 'buy',
+        tokenMint: params.tokenMint,
+        amountSol: params.amountSol,
+        amountToken: params.amountToken,
+        poolId: params.poolId,
+        positionId: params.tokenMint, // Use token mint as position ID
+      });
+      tradeId = dbTrade.id;
+
+      // Confirm immediately if we have a signature
+      if (params.txSignature) {
+        stateStore.confirmTrade({
+          tradeId,
+          txSignature: params.txSignature,
+        });
+      }
+    } else {
+      tradeId = `trade_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    }
+
     const trade: TradeRecord = {
-      id: this.generateTradeId(),
+      id: tradeId,
       type: 'buy',
       tokenMint: params.tokenMint,
       tokenSymbol: params.tokenSymbol,
@@ -212,12 +150,10 @@ export class PnlTracker {
       timestamp: Date.now(),
       txSignature: params.txSignature,
       poolId: params.poolId,
-      positionId: params.tokenMint, // Use token mint as position ID for simplicity
+      positionId: params.tokenMint,
     };
 
-    this.trades.push(trade);
     this.sessionStats.totalBuys++;
-    this.save();
 
     logger.info(
       {
@@ -243,26 +179,57 @@ export class PnlTracker {
     poolId: string;
     txSignature?: string;
   }): { trade: TradeRecord; realizedPnl: number } {
-    // Find the corresponding buy trade(s) for this token
-    const buyTrades = this.trades.filter(
-      (t) => t.type === 'buy' && t.tokenMint === params.tokenMint,
-    );
+    const stateStore = getStateStore();
 
-    // Calculate average entry cost
-    let totalBuyCost = 0;
-    let totalBuyTokens = 0;
-    for (const buy of buyTrades) {
-      totalBuyCost += buy.amountSol;
-      totalBuyTokens += buy.amountToken;
+    // Get entry cost for P&L calculation
+    let entryAmountSol = 0;
+    let positionId: string | undefined;
+
+    if (stateStore) {
+      // Look up the position to get entry cost
+      const position = stateStore.getPositionByMint(params.tokenMint);
+      if (position) {
+        entryAmountSol = position.amountSol;
+        positionId = position.id;
+      } else {
+        // Fallback: calculate from buy trades
+        const buyTrades = stateStore.getTradesForToken(params.tokenMint)
+          .filter(t => t.type === 'buy' && t.status === 'confirmed');
+        for (const buy of buyTrades) {
+          entryAmountSol += buy.amountSol;
+        }
+      }
     }
 
     // Calculate realized P&L
-    const avgEntryPrice = totalBuyTokens > 0 ? totalBuyCost / totalBuyTokens : 0;
-    const entryCostForSold = avgEntryPrice * params.amountToken;
-    const realizedPnl = params.amountSol - entryCostForSold;
+    const realizedPnl = params.amountSol - entryAmountSol;
+
+    // Record trade
+    let tradeId: string;
+    if (stateStore) {
+      const dbTrade = stateStore.recordTradeIntent({
+        type: 'sell',
+        tokenMint: params.tokenMint,
+        amountSol: params.amountSol,
+        amountToken: params.amountToken,
+        poolId: params.poolId,
+        positionId,
+      });
+      tradeId = dbTrade.id;
+
+      // Confirm immediately if we have a signature
+      if (params.txSignature) {
+        stateStore.confirmTrade({
+          tradeId,
+          txSignature: params.txSignature,
+        });
+      }
+    } else {
+      tradeId = `trade_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    }
 
     const trade: TradeRecord = {
-      id: this.generateTradeId(),
+      id: tradeId,
       type: 'sell',
       tokenMint: params.tokenMint,
       tokenSymbol: params.tokenSymbol,
@@ -272,13 +239,11 @@ export class PnlTracker {
       timestamp: Date.now(),
       txSignature: params.txSignature,
       poolId: params.poolId,
-      positionId: params.tokenMint,
+      positionId,
     };
 
-    this.trades.push(trade);
     this.sessionStats.totalSells++;
     this.sessionStats.realizedPnlSol += realizedPnl;
-    this.save();
 
     logger.info(
       {
@@ -299,14 +264,27 @@ export class PnlTracker {
    * Get all trades for a specific token
    */
   getTradesForToken(tokenMint: string): TradeRecord[] {
-    return this.trades.filter((t) => t.tokenMint === tokenMint);
+    const stateStore = getStateStore();
+    if (!stateStore) {
+      return [];
+    }
+
+    return stateStore.getTradesForToken(tokenMint)
+      .filter(t => t.status === 'confirmed')
+      .map(t => this.dbTradeToTradeRecord(t));
   }
 
   /**
    * Get recent trades
    */
   getRecentTrades(limit: number = 10): TradeRecord[] {
-    return this.trades.slice(-limit);
+    const stateStore = getStateStore();
+    if (!stateStore) {
+      return [];
+    }
+
+    return stateStore.getRecentTrades(limit)
+      .map(t => this.dbTradeToTradeRecord(t));
   }
 
   /**
@@ -316,20 +294,17 @@ export class PnlTracker {
     tokenMint: string,
     currentValueSol: number,
   ): PositionPnl | null {
-    const buyTrades = this.trades.filter(
-      (t) => t.type === 'buy' && t.tokenMint === tokenMint,
-    );
-
-    if (buyTrades.length === 0) {
+    const stateStore = getStateStore();
+    if (!stateStore) {
       return null;
     }
 
-    // Calculate total entry cost
-    let entryAmountSol = 0;
-    for (const buy of buyTrades) {
-      entryAmountSol += buy.amountSol;
+    const position = stateStore.getPositionByMint(tokenMint);
+    if (!position) {
+      return null;
     }
 
+    const entryAmountSol = position.amountSol;
     const unrealizedPnlSol = currentValueSol - entryAmountSol;
     const unrealizedPnlPercent =
       entryAmountSol > 0 ? (unrealizedPnlSol / entryAmountSol) * 100 : 0;
@@ -362,28 +337,31 @@ export class PnlTracker {
     const minutes = Math.floor((sessionDurationMs % (1000 * 60 * 60)) / (1000 * 60));
     const sessionDuration = `${hours}h ${minutes}m`;
 
-    // Calculate win rate from sell trades
-    const sellTrades = this.trades.filter((t) => t.type === 'sell');
-    let wins = 0;
+    // Calculate win rate from database
+    const stateStore = getStateStore();
+    let winRate = 0;
 
-    for (const sell of sellTrades) {
-      const buyTrades = this.trades.filter(
-        (t) =>
-          t.type === 'buy' &&
-          t.tokenMint === sell.tokenMint &&
-          t.timestamp < sell.timestamp,
-      );
+    if (stateStore) {
+      const allTrades = stateStore.getAllConfirmedTrades();
+      const sellTrades = allTrades.filter(t => t.type === 'sell');
+      let wins = 0;
 
-      if (buyTrades.length > 0) {
-        const avgEntryPrice =
-          buyTrades.reduce((sum, b) => sum + b.pricePerToken, 0) / buyTrades.length;
-        if (sell.pricePerToken > avgEntryPrice) {
-          wins++;
+      for (const sell of sellTrades) {
+        // Find corresponding buy trades
+        const buyTrades = allTrades.filter(
+          t => t.type === 'buy' && t.tokenMint === sell.tokenMint && t.timestamp < sell.timestamp
+        );
+
+        if (buyTrades.length > 0) {
+          const totalBuyCost = buyTrades.reduce((sum, b) => sum + b.amountSol, 0);
+          if (sell.amountSol > totalBuyCost) {
+            wins++;
+          }
         }
       }
-    }
 
-    const winRate = sellTrades.length > 0 ? (wins / sellTrades.length) * 100 : 0;
+      winRate = sellTrades.length > 0 ? (wins / sellTrades.length) * 100 : 0;
+    }
 
     return {
       sessionDuration,
@@ -416,7 +394,13 @@ export class PnlTracker {
    * Get all trades
    */
   getAllTrades(): TradeRecord[] {
-    return [...this.trades];
+    const stateStore = getStateStore();
+    if (!stateStore) {
+      return [];
+    }
+
+    return stateStore.getAllConfirmedTrades()
+      .map(t => this.dbTradeToTradeRecord(t));
   }
 
   /**
@@ -430,17 +414,33 @@ export class PnlTracker {
    * Clear old trades (keep last N days)
    */
   async pruneOldTrades(daysToKeep: number = 7): Promise<number> {
-    const cutoff = Date.now() - daysToKeep * 24 * 60 * 60 * 1000;
-    const originalCount = this.trades.length;
-    this.trades = this.trades.filter((t) => t.timestamp > cutoff);
-    const prunedCount = originalCount - this.trades.length;
-
-    if (prunedCount > 0) {
-      await this.save();
-      logger.info({ prunedCount, daysToKeep }, 'Pruned old trades');
+    const stateStore = getStateStore();
+    if (!stateStore) {
+      return 0;
     }
 
-    return prunedCount;
+    // Note: This would require adding a prune method to state-store
+    // For now, we'll skip this since SQLite storage is efficient
+    logger.info({ daysToKeep }, 'Trade pruning not implemented for SQLite');
+    return 0;
+  }
+
+  /**
+   * Convert database trade record to API trade record
+   */
+  private dbTradeToTradeRecord(dbTrade: DbTradeRecord): TradeRecord {
+    return {
+      id: dbTrade.id,
+      type: dbTrade.type,
+      tokenMint: dbTrade.tokenMint,
+      amountSol: dbTrade.amountSol,
+      amountToken: dbTrade.amountToken,
+      pricePerToken: dbTrade.price,
+      timestamp: dbTrade.timestamp,
+      txSignature: dbTrade.txSignature,
+      poolId: dbTrade.poolId,
+      positionId: dbTrade.positionId,
+    };
   }
 }
 

@@ -1,33 +1,21 @@
-import fs from 'fs';
-import path from 'path';
 import { logger } from '../helpers';
-import { getConfig } from '../helpers/config-validator';
-
-/**
- * Blacklist data structure stored in JSON
- */
-interface BlacklistData {
-  tokenMints: string[];
-  creatorAddresses: string[];
-}
+import { getStateStore } from '../persistence';
 
 /**
  * Blacklist manager for blocking known scam tokens and creators.
- * Persists to JSON file in data directory.
+ * Uses SQLite persistence via StateStore (Phase 3).
+ *
+ * Maintains in-memory Sets for fast lookup while persisting to SQLite.
  */
 export class Blacklist {
   private tokenMints: Set<string> = new Set();
   private creatorAddresses: Set<string> = new Set();
-  private filePath: string;
   private initialized: boolean = false;
 
-  constructor() {
-    const config = getConfig();
-    this.filePath = path.join(config.dataDir, 'blacklist.json');
-  }
+  constructor() {}
 
   /**
-   * Initialize blacklist by loading from JSON file
+   * Initialize blacklist by loading from SQLite database
    */
   async init(): Promise<void> {
     if (this.initialized) {
@@ -51,51 +39,22 @@ export class Blacklist {
   }
 
   /**
-   * Load blacklist from JSON file
+   * Load blacklist from SQLite database
    */
   private async load(): Promise<void> {
-    try {
-      // Ensure data directory exists
-      const dir = path.dirname(this.filePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-
-      if (!fs.existsSync(this.filePath)) {
-        // Create empty blacklist file
-        await this.save();
-        return;
-      }
-
-      const data = fs.readFileSync(this.filePath, 'utf-8');
-      const parsed: BlacklistData = JSON.parse(data);
-
-      this.tokenMints = new Set(parsed.tokenMints || []);
-      this.creatorAddresses = new Set(parsed.creatorAddresses || []);
-    } catch (error) {
-      throw new Error(`Failed to load blacklist: ${error}`);
+    const stateStore = getStateStore();
+    if (!stateStore) {
+      logger.warn('State store not initialized, blacklist will be empty');
+      return;
     }
-  }
 
-  /**
-   * Save blacklist to JSON file
-   */
-  private async save(): Promise<void> {
-    try {
-      const dir = path.dirname(this.filePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
+    // Load tokens
+    const tokens = stateStore.getBlacklistedTokens();
+    this.tokenMints = new Set(tokens);
 
-      const data: BlacklistData = {
-        tokenMints: Array.from(this.tokenMints),
-        creatorAddresses: Array.from(this.creatorAddresses),
-      };
-
-      fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2));
-    } catch (error) {
-      logger.error({ error }, 'Failed to save blacklist');
-    }
+    // Load creators
+    const creators = stateStore.getBlacklistedCreators();
+    this.creatorAddresses = new Set(creators);
   }
 
   /**
@@ -137,8 +96,19 @@ export class Blacklist {
       return;
     }
 
+    // Add to in-memory set
     this.tokenMints.add(mint);
-    await this.save();
+
+    // Persist to SQLite
+    const stateStore = getStateStore();
+    if (stateStore) {
+      stateStore.addToBlacklist({
+        address: mint,
+        type: 'token',
+        reason,
+      });
+    }
+
     logger.info({ mint, reason }, 'Added token to blacklist');
   }
 
@@ -150,8 +120,19 @@ export class Blacklist {
       return;
     }
 
+    // Add to in-memory set
     this.creatorAddresses.add(address);
-    await this.save();
+
+    // Persist to SQLite
+    const stateStore = getStateStore();
+    if (stateStore) {
+      stateStore.addToBlacklist({
+        address,
+        type: 'creator',
+        reason,
+      });
+    }
+
     logger.info({ address, reason }, 'Added creator to blacklist');
   }
 
@@ -163,8 +144,15 @@ export class Blacklist {
       return false;
     }
 
+    // Remove from in-memory set
     this.tokenMints.delete(mint);
-    await this.save();
+
+    // Remove from SQLite
+    const stateStore = getStateStore();
+    if (stateStore) {
+      stateStore.removeFromBlacklist(mint);
+    }
+
     logger.info({ mint }, 'Removed token from blacklist');
     return true;
   }
@@ -177,8 +165,15 @@ export class Blacklist {
       return false;
     }
 
+    // Remove from in-memory set
     this.creatorAddresses.delete(address);
-    await this.save();
+
+    // Remove from SQLite
+    const stateStore = getStateStore();
+    if (stateStore) {
+      stateStore.removeFromBlacklist(address);
+    }
+
     logger.info({ address }, 'Removed creator from blacklist');
     return true;
   }
@@ -208,7 +203,7 @@ export class Blacklist {
   }
 
   /**
-   * Reload blacklist from file (useful for runtime updates)
+   * Reload blacklist from database (useful for runtime updates)
    */
   async reload(): Promise<void> {
     await this.load();
