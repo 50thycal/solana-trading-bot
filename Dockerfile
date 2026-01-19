@@ -21,6 +21,9 @@ RUN npm run build 2>/dev/null || true
 # Runtime stage
 FROM node:20-alpine
 
+# Install su-exec for dropping privileges in entrypoint
+RUN apk add --no-cache su-exec
+
 # Create non-root user for security
 RUN addgroup -g 1001 -S botuser && \
     adduser -S botuser -u 1001
@@ -44,6 +47,10 @@ COPY --from=builder /app/persistence ./persistence
 # Copy health server
 COPY --from=builder /app/health.ts ./
 
+# Copy and setup entrypoint script for Railway volume permission handling
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Create data directory with correct permissions for SQLite database
 RUN mkdir -p ./data && chown -R botuser:botuser ./data
 
@@ -53,8 +60,7 @@ RUN touch ./snipe-list.txt && chown botuser:botuser ./snipe-list.txt
 # Set ownership of app directory
 RUN chown -R botuser:botuser /app
 
-# Switch to non-root user
-USER botuser
+# Note: USER directive removed - entrypoint handles user switching after fixing volume permissions
 
 # Health check - checks the /health endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
@@ -67,6 +73,9 @@ EXPOSE 8080
 ENV NODE_ENV=production
 ENV HEALTH_PORT=8080
 ENV DATA_DIR=./data
+
+# Entrypoint handles permission fixing and user switching
+ENTRYPOINT ["docker-entrypoint.sh"]
 
 # Run the bot using ts-node with transpile-only for faster startup
 CMD ["npx", "ts-node", "--transpile-only", "index.ts"]
