@@ -322,17 +322,22 @@ const runListener = async () => {
   // === Initialize Persistence Layer (Phase 3) ===
   logger.info('Initializing persistence layer...');
   const stateStore = initStateStore();
-  const dbStats = stateStore.getStats();
-  logger.info(
-    {
-      openPositions: dbStats.positions.open,
-      closedPositions: dbStats.positions.closed,
-      confirmedTrades: dbStats.trades.confirmed,
-      seenPools: dbStats.seenPools,
-      blacklist: dbStats.blacklist,
-    },
-    'State store initialized',
-  );
+
+  if (stateStore) {
+    const dbStats = stateStore.getStats();
+    logger.info(
+      {
+        openPositions: dbStats.positions.open,
+        closedPositions: dbStats.positions.closed,
+        confirmedTrades: dbStats.trades.confirmed,
+        seenPools: dbStats.seenPools,
+        blacklist: dbStats.blacklist,
+      },
+      'State store initialized',
+    );
+  } else {
+    logger.warn('State store NOT available - running without persistence');
+  }
 
   // === Initialize Risk Systems (Phase 2) ===
   logger.info('Initializing risk control systems...');
@@ -379,65 +384,67 @@ const runListener = async () => {
 
   // === Startup Recovery (Phase 3) ===
   // Load open positions from database and verify they still exist in wallet
-  const openPositions = stateStore.getOpenPositions();
-  if (openPositions.length > 0) {
-    logger.info({ count: openPositions.length }, 'Recovering open positions from database...');
+  if (stateStore) {
+    const openPositions = stateStore.getOpenPositions();
+    if (openPositions.length > 0) {
+      logger.info({ count: openPositions.length }, 'Recovering open positions from database...');
 
-    for (const position of openPositions) {
-      try {
-        // Verify token is still in wallet by checking balance
-        const tokenMint = new PublicKey(position.tokenMint);
-        const tokenAta = await getAssociatedTokenAddressSync(tokenMint, wallet.publicKey);
-
+      for (const position of openPositions) {
         try {
-          const tokenAccount = await getAccount(connection, tokenAta, COMMITMENT_LEVEL);
-          const tokenBalance = Number(tokenAccount.amount);
+          // Verify token is still in wallet by checking balance
+          const tokenMint = new PublicKey(position.tokenMint);
+          const tokenAta = getAssociatedTokenAddressSync(tokenMint, wallet.publicKey);
 
-          if (tokenBalance > 0) {
-            // Token still in wallet, resume monitoring
-            logger.info(
-              {
-                tokenMint: position.tokenMint,
-                entryAmountSol: position.amountSol,
-                tokenBalance,
-              },
-              'Resuming position monitoring',
-            );
+          try {
+            const tokenAccount = await getAccount(connection, tokenAta, COMMITMENT_LEVEL);
+            const tokenBalance = Number(tokenAccount.amount);
 
-            // Update position with current token amount if we have it
-            if (position.amountToken === 0) {
-              stateStore.updatePositionTokenAmount(position.tokenMint, tokenBalance);
+            if (tokenBalance > 0) {
+              // Token still in wallet, resume monitoring
+              logger.info(
+                {
+                  tokenMint: position.tokenMint,
+                  entryAmountSol: position.amountSol,
+                  tokenBalance,
+                },
+                'Resuming position monitoring',
+              );
+
+              // Update position with current token amount if we have it
+              if (position.amountToken === 0) {
+                stateStore.updatePositionTokenAmount(position.tokenMint, tokenBalance);
+              }
+
+              // We need pool keys to monitor - we'll need to fetch pool data
+              // For now, we'll add to exposure manager and the position will be
+              // picked up when the wallet listener fires on any balance change
+              const expManager = getExposureManager();
+              if (expManager) {
+                expManager.addPosition({
+                  tokenMint: position.tokenMint,
+                  entryAmountSol: position.amountSol,
+                  currentValueSol: position.lastPriceSol || position.amountSol,
+                  entryTimestamp: position.entryTimestamp,
+                  poolId: position.poolId,
+                });
+              }
+            } else {
+              // Token no longer in wallet, close position
+              logger.info({ tokenMint: position.tokenMint }, 'Token no longer in wallet, closing position');
+              stateStore.closePosition(position.tokenMint, 'Token not in wallet on recovery');
             }
-
-            // We need pool keys to monitor - we'll need to fetch pool data
-            // For now, we'll add to exposure manager and the position will be
-            // picked up when the wallet listener fires on any balance change
-            const expManager = getExposureManager();
-            if (expManager) {
-              expManager.addPosition({
-                tokenMint: position.tokenMint,
-                entryAmountSol: position.amountSol,
-                currentValueSol: position.lastPriceSol || position.amountSol,
-                entryTimestamp: position.entryTimestamp,
-                poolId: position.poolId,
-              });
-            }
-          } else {
-            // Token no longer in wallet, close position
-            logger.info({ tokenMint: position.tokenMint }, 'Token no longer in wallet, closing position');
-            stateStore.closePosition(position.tokenMint, 'Token not in wallet on recovery');
+          } catch (tokenError) {
+            // Token account doesn't exist, close position
+            logger.info({ tokenMint: position.tokenMint }, 'Token account not found, closing position');
+            stateStore.closePosition(position.tokenMint, 'Token account not found on recovery');
           }
-        } catch (tokenError) {
-          // Token account doesn't exist, close position
-          logger.info({ tokenMint: position.tokenMint }, 'Token account not found, closing position');
-          stateStore.closePosition(position.tokenMint, 'Token account not found on recovery');
+        } catch (error) {
+          logger.error({ tokenMint: position.tokenMint, error }, 'Error recovering position');
         }
-      } catch (error) {
-        logger.error({ tokenMint: position.tokenMint, error }, 'Error recovering position');
       }
-    }
 
-    logger.info('Position recovery complete');
+      logger.info('Position recovery complete');
+    }
   }
 
   // Start position monitor

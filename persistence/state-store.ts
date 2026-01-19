@@ -45,14 +45,28 @@ export class StateStore {
     const config = getConfig();
     this.dbPath = path.join(config.dataDir, 'bot.db');
 
-    // Ensure data directory exists
+    // Ensure data directory exists with proper permissions
     const dir = path.dirname(this.dbPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    try {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+        logger.info({ dir }, 'Created data directory');
+      }
+
+      // Verify directory is writable
+      fs.accessSync(dir, fs.constants.W_OK);
+    } catch (error) {
+      logger.error({ dir, error }, 'Data directory is not writable. Check permissions or volume mount.');
+      throw new Error(`Cannot write to data directory: ${dir}. Ensure the directory exists and is writable.`);
     }
 
     // Initialize database connection
-    this.db = new Database(this.dbPath);
+    try {
+      this.db = new Database(this.dbPath);
+    } catch (error) {
+      logger.error({ dbPath: this.dbPath, error }, 'Failed to open SQLite database');
+      throw error;
+    }
 
     // Enable WAL mode for better concurrent read performance
     this.db.pragma('journal_mode = WAL');
@@ -803,11 +817,21 @@ let stateStoreInstance: StateStore | null = null;
 
 /**
  * Initialize the state store singleton
+ * Returns null if initialization fails (bot can continue without persistence)
  */
-export function initStateStore(): StateStore {
+export function initStateStore(): StateStore | null {
   if (!stateStoreInstance) {
-    stateStoreInstance = new StateStore();
-    stateStoreInstance.init();
+    try {
+      stateStoreInstance = new StateStore();
+      stateStoreInstance.init();
+    } catch (error) {
+      logger.warn(
+        { error },
+        'Failed to initialize SQLite state store. Bot will continue WITHOUT persistence. ' +
+        'Data will not survive restarts. To fix: ensure DATA_DIR is writable or configure Railway volume.'
+      );
+      stateStoreInstance = null;
+    }
   }
   return stateStoreInstance;
 }
