@@ -1,12 +1,15 @@
 # Build stage
 FROM node:20-alpine AS builder
 
+# Install build dependencies for better-sqlite3 native module
+RUN apk add --no-cache python3 make g++
+
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install dependencies (including native modules)
 RUN npm ci
 
 # Copy source files
@@ -24,7 +27,7 @@ RUN addgroup -g 1001 -S botuser && \
 
 WORKDIR /app
 
-# Copy dependencies from builder
+# Copy dependencies from builder (includes compiled native modules)
 COPY --from=builder /app/node_modules ./node_modules
 
 # Copy source files
@@ -36,11 +39,12 @@ COPY --from=builder /app/helpers ./helpers
 COPY --from=builder /app/listeners ./listeners
 COPY --from=builder /app/transactions ./transactions
 COPY --from=builder /app/risk ./risk
+COPY --from=builder /app/persistence ./persistence
 
 # Copy health server
 COPY --from=builder /app/health.ts ./
 
-# Create data directory with correct permissions
+# Create data directory with correct permissions for SQLite database
 RUN mkdir -p ./data && chown -R botuser:botuser ./data
 
 # Create snipe-list.txt if it doesn't exist
