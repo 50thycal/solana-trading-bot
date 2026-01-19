@@ -142,16 +142,16 @@ export class Bot {
   }
 
   public async buy(accountId: PublicKey, poolState: LiquidityStateV4) {
-    logger.trace({ mint: poolState.baseMint }, `Processing new pool...`);
     const tokenMint = poolState.baseMint.toString();
     const poolId = accountId.toString();
+    logger.debug({ mint: tokenMint, poolId }, `Processing new pool...`);
 
     // === PERSISTENCE CHECK: Seen pools ===
     const stateStore = getStateStore();
     if (stateStore) {
       // Check if we've already processed this pool
       if (stateStore.hasSeenPool(poolId)) {
-        logger.trace({ poolId, mint: tokenMint }, `Skipping - pool already processed`);
+        logger.debug({ poolId, mint: tokenMint }, `Skipping - pool already processed`);
         return;
       }
 
@@ -272,7 +272,7 @@ export class Bot {
           ]);
 
           if (!filterMatch) {
-            logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
+            logger.debug({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
             if (stateStore) {
               stateStore.recordSeenPool({
                 poolId,
@@ -306,7 +306,7 @@ export class Bot {
           const match = await this.filterMatch(poolKeys);
 
           if (!match) {
-            logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
+            logger.debug({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
             if (stateStore) {
               stateStore.recordSeenPool({
                 poolId,
@@ -686,6 +686,11 @@ export class Bot {
     const timesToCheck = this.config.filterCheckDuration / this.config.filterCheckInterval;
     let timesChecked = 0;
     let matchCount = 0;
+
+    logger.debug(
+      { mint: poolKeys.baseMint.toString(), totalChecks: timesToCheck, interval: this.config.filterCheckInterval },
+      'Starting filter checks'
+    );
 
     do {
       try {
