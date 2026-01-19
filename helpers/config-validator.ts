@@ -66,6 +66,17 @@ export interface ValidatedConfig {
   minWalletBufferSol: number;
   maxHoldDurationMs: number;
 
+  // Execution Quality (Phase 4)
+  simulateTransaction: boolean;
+  useDynamicFee: boolean;
+  priorityFeePercentile: number;
+  minPriorityFee: number;
+  maxPriorityFee: number;
+  useFallbackExecutor: boolean;
+  jitoBundleTimeout: number;
+  jitoBundlePollInterval: number;
+  precomputeTransaction: boolean;
+
   // Operational
   healthPort: number;
   dataDir: string;
@@ -290,6 +301,23 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'MAX_HOLD_DURATION_MS', message: 'MAX_HOLD_DURATION_MS cannot be negative' });
   }
 
+  // === EXECUTION QUALITY (Phase 4) ===
+  const simulateTransaction = requireBoolean('SIMULATE_TRANSACTION', true);
+  const useDynamicFee = requireBoolean('USE_DYNAMIC_FEE', false);
+  const priorityFeePercentile = requireNumber('PRIORITY_FEE_PERCENTILE', 75);
+  if (priorityFeePercentile < 0 || priorityFeePercentile > 100) {
+    errors.push({ variable: 'PRIORITY_FEE_PERCENTILE', message: 'PRIORITY_FEE_PERCENTILE must be between 0 and 100' });
+  }
+  const minPriorityFee = requireNumber('MIN_PRIORITY_FEE', 10000);
+  const maxPriorityFee = requireNumber('MAX_PRIORITY_FEE', 1000000);
+  if (minPriorityFee > maxPriorityFee) {
+    errors.push({ variable: 'MIN_PRIORITY_FEE', message: 'MIN_PRIORITY_FEE cannot be greater than MAX_PRIORITY_FEE' });
+  }
+  const useFallbackExecutor = requireBoolean('USE_FALLBACK_EXECUTOR', true);
+  const jitoBundleTimeout = requireNumber('JITO_BUNDLE_TIMEOUT', 60000);
+  const jitoBundlePollInterval = requireNumber('JITO_BUNDLE_POLL_INTERVAL', 2000);
+  const precomputeTransaction = requireBoolean('PRECOMPUTE_TRANSACTION', true);
+
   // === OPERATIONAL ===
   const healthPort = requireNumber('HEALTH_PORT', 8080);
   const dataDir = getEnv('DATA_DIR', './data');
@@ -373,6 +401,15 @@ export function validateConfig(): ValidatedConfig {
     maxTradesPerHour,
     minWalletBufferSol,
     maxHoldDurationMs,
+    simulateTransaction,
+    useDynamicFee,
+    priorityFeePercentile,
+    minPriorityFee,
+    maxPriorityFee,
+    useFallbackExecutor,
+    jitoBundleTimeout,
+    jitoBundlePollInterval,
+    precomputeTransaction,
     healthPort,
     dataDir,
   };

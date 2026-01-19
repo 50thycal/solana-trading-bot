@@ -103,6 +103,19 @@ export const MIN_WALLET_BUFFER_SOL = config.minWalletBufferSol;
 export const MAX_HOLD_DURATION_MS = config.maxHoldDurationMs;
 
 // ============================================================================
+// EXECUTION QUALITY (Phase 4)
+// ============================================================================
+export const SIMULATE_TRANSACTION = config.simulateTransaction;
+export const USE_DYNAMIC_FEE = config.useDynamicFee;
+export const PRIORITY_FEE_PERCENTILE = config.priorityFeePercentile;
+export const MIN_PRIORITY_FEE = config.minPriorityFee;
+export const MAX_PRIORITY_FEE = config.maxPriorityFee;
+export const USE_FALLBACK_EXECUTOR = config.useFallbackExecutor;
+export const JITO_BUNDLE_TIMEOUT = config.jitoBundleTimeout;
+export const JITO_BUNDLE_POLL_INTERVAL = config.jitoBundlePollInterval;
+export const PRECOMPUTE_TRANSACTION = config.precomputeTransaction;
+
+// ============================================================================
 // OPERATIONAL
 // ============================================================================
 export const HEALTH_PORT = config.healthPort;
