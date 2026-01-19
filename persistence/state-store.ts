@@ -817,11 +817,21 @@ let stateStoreInstance: StateStore | null = null;
 
 /**
  * Initialize the state store singleton
+ * Returns null if initialization fails (bot can continue without persistence)
  */
-export function initStateStore(): StateStore {
+export function initStateStore(): StateStore | null {
   if (!stateStoreInstance) {
-    stateStoreInstance = new StateStore();
-    stateStoreInstance.init();
+    try {
+      stateStoreInstance = new StateStore();
+      stateStoreInstance.init();
+    } catch (error) {
+      logger.warn(
+        { error },
+        'Failed to initialize SQLite state store. Bot will continue WITHOUT persistence. ' +
+        'Data will not survive restarts. To fix: ensure DATA_DIR is writable or configure Railway volume.'
+      );
+      stateStoreInstance = null;
+    }
   }
   return stateStoreInstance;
 }
