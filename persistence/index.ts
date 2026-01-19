@@ -23,6 +23,10 @@ export {
   BlacklistRecord,
   SchemaVersion,
   SessionStatsRecord,
+  // Pool Detection (Phase 5)
+  StoredFilterResult,
+  PoolDetectionRecord,
+  PoolDetectionStats,
   // Inputs
   CreatePositionInput,
   RecordTradeIntentInput,
@@ -30,6 +34,8 @@ export {
   FailTradeInput,
   RecordSeenPoolInput,
   AddBlacklistInput,
+  RecordPoolDetectionInput,
+  PoolDetectionQueryOptions,
   // Constants
   PENDING_TRADE_TIMEOUT_MS,
 } from './models';

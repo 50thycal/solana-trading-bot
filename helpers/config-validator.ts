@@ -80,6 +80,11 @@ export interface ValidatedConfig {
   // Operational
   healthPort: number;
   dataDir: string;
+
+  // Dashboard (Phase 5)
+  dashboardEnabled: boolean;
+  dashboardPort: number;
+  dashboardPollInterval: number;
 }
 
 interface ValidationError {
@@ -322,6 +327,11 @@ export function validateConfig(): ValidatedConfig {
   const healthPort = requireNumber('HEALTH_PORT', 8080);
   const dataDir = getEnv('DATA_DIR', './data');
 
+  // === DASHBOARD (Phase 5) ===
+  const dashboardEnabled = requireBoolean('DASHBOARD_ENABLED', true);
+  const dashboardPort = requireNumber('DASHBOARD_PORT', 8080); // Same as health port by default
+  const dashboardPollInterval = requireNumber('DASHBOARD_POLL_INTERVAL', 5000);
+
   // Validate private key format (base58)
   if (privateKey) {
     try {
@@ -412,6 +422,9 @@ export function validateConfig(): ValidatedConfig {
     precomputeTransaction,
     healthPort,
     dataDir,
+    dashboardEnabled,
+    dashboardPort,
+    dashboardPollInterval,
   };
 
   // Log dry run mode warning
