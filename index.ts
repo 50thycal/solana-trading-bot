@@ -4,7 +4,7 @@ import { Connection, KeyedAccountInfo, Keypair, PublicKey } from '@solana/web3.j
 import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
 import { AccountLayout, getAssociatedTokenAddressSync, getAccount } from '@solana/spl-token';
 import { Bot, BotConfig } from './bot';
-import { DefaultTransactionExecutor, TransactionExecutor } from './transactions';
+import { DefaultTransactionExecutor, TransactionExecutor, FallbackTransactionExecutor } from './transactions';
 import {
   getToken,
   getWallet,
@@ -53,6 +53,8 @@ import {
   MAX_TRADES_PER_HOUR,
   MIN_WALLET_BUFFER_SOL,
   MAX_HOLD_DURATION_MS,
+  USE_FALLBACK_EXECUTOR,
+  SIMULATE_TRANSACTION,
   logFilterPresetInfo,
 } from './helpers';
 import { initRpcManager } from './helpers/rpc-manager';
@@ -185,6 +187,10 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Max hold duration: ${MAX_HOLD_DURATION_MS > 0 ? `${MAX_HOLD_DURATION_MS}ms` : 'disabled'}`);
   logger.info(`Persistent stop-loss monitoring: enabled`);
 
+  logger.info('- Execution Quality -');
+  logger.info(`Transaction simulation: ${SIMULATE_TRANSACTION}`);
+  logger.info(`Fallback executor: ${USE_FALLBACK_EXECUTOR && TRANSACTION_EXECUTOR === 'jito' ? 'enabled' : 'disabled'}`);
+
   logger.info('------- CONFIGURATION END -------');
 
   logger.info('Bot is running! Press CTRL + C to stop it.');
@@ -265,11 +271,25 @@ const runListener = async () => {
 
   switch (TRANSACTION_EXECUTOR) {
     case 'warp': {
-      txExecutor = new WarpTransactionExecutor(CUSTOM_FEE);
+      txExecutor = new WarpTransactionExecutor(CUSTOM_FEE, connection);
       break;
     }
     case 'jito': {
-      txExecutor = new JitoTransactionExecutor(CUSTOM_FEE, connection);
+      const jitoExecutor = new JitoTransactionExecutor(CUSTOM_FEE, connection);
+
+      // Wrap Jito executor with fallback to default RPC if enabled
+      if (USE_FALLBACK_EXECUTOR) {
+        const defaultExecutor = new DefaultTransactionExecutor(connection);
+        txExecutor = new FallbackTransactionExecutor(
+          jitoExecutor,
+          defaultExecutor,
+          'jito',
+          'default',
+        );
+        logger.info('Transaction executor: Jito with Default RPC fallback');
+      } else {
+        txExecutor = jitoExecutor;
+      }
       break;
     }
     default: {

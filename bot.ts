@@ -34,6 +34,16 @@ import {
   getPositionMonitor,
 } from './risk';
 import { getStateStore } from './persistence';
+import { PRECOMPUTE_TRANSACTION } from './helpers/constants';
+
+/**
+ * Prepared transaction ready for execution
+ */
+interface PreparedTransaction {
+  transaction: VersionedTransaction;
+  latestBlockhash: { blockhash: string; lastValidBlockHeight: number };
+  preparedAt: number; // timestamp when prepared
+}
 
 export interface BotConfig {
   wallet: Keypair;
@@ -236,21 +246,77 @@ export class Bot {
         getAssociatedTokenAddress(poolState.baseMint, this.config.wallet.publicKey),
       ]);
       const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(accountId, poolState, market);
+      const tokenOut = new Token(TOKEN_PROGRAM_ID, poolKeys.baseMint, poolKeys.baseDecimals);
+
+      // Pre-compute optimization: prepare transaction in parallel with filter checks
+      let preparedTx: PreparedTransaction | null = null;
 
       if (!this.config.useSnipeList) {
-        const match = await this.filterMatch(poolKeys);
+        if (PRECOMPUTE_TRANSACTION) {
+          // Run filter check and transaction preparation in parallel
+          logger.trace({ mint: tokenMint }, 'Running filter check and tx preparation in parallel');
 
-        if (!match) {
-          logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
-          if (stateStore) {
-            stateStore.recordSeenPool({
-              poolId,
-              tokenMint,
-              actionTaken: 'filtered',
-              filterReason: 'Did not pass filter checks',
-            });
+          const [filterMatch, txPrep] = await Promise.all([
+            this.filterMatch(poolKeys),
+            this.prepareSwapTransaction(
+              poolKeys,
+              this.config.quoteAta,
+              mintAta,
+              this.config.quoteToken,
+              tokenOut,
+              this.config.quoteAmount,
+              this.config.buySlippage,
+              this.config.wallet,
+              'buy',
+            ),
+          ]);
+
+          if (!filterMatch) {
+            logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
+            if (stateStore) {
+              stateStore.recordSeenPool({
+                poolId,
+                tokenMint,
+                actionTaken: 'filtered',
+                filterReason: 'Did not pass filter checks',
+              });
+            }
+            return;
           }
-          return;
+
+          preparedTx = txPrep;
+
+          // Check if blockhash is still valid, refresh if needed
+          if (preparedTx && !this.isBlockhashValid(preparedTx)) {
+            logger.trace({ mint: tokenMint }, 'Blockhash expired, refreshing transaction');
+            preparedTx = await this.refreshPreparedTransaction(
+              poolKeys,
+              this.config.quoteAta,
+              mintAta,
+              this.config.quoteToken,
+              tokenOut,
+              this.config.quoteAmount,
+              this.config.buySlippage,
+              this.config.wallet,
+              'buy',
+            );
+          }
+        } else {
+          // Sequential: run filter check first, then build transaction
+          const match = await this.filterMatch(poolKeys);
+
+          if (!match) {
+            logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
+            if (stateStore) {
+              stateStore.recordSeenPool({
+                poolId,
+                tokenMint,
+                actionTaken: 'filtered',
+                filterReason: 'Did not pass filter checks',
+              });
+            }
+            return;
+          }
         }
       }
 
@@ -260,18 +326,31 @@ export class Bot {
             { mint: tokenMint },
             `Send buy transaction attempt: ${i + 1}/${this.config.maxBuyRetries}`,
           );
-          const tokenOut = new Token(TOKEN_PROGRAM_ID, poolKeys.baseMint, poolKeys.baseDecimals);
-          const result = await this.swap(
-            poolKeys,
-            this.config.quoteAta,
-            mintAta,
-            this.config.quoteToken,
-            tokenOut,
-            this.config.quoteAmount,
-            this.config.buySlippage,
-            this.config.wallet,
-            'buy',
-          );
+
+          let result;
+
+          // Use pre-computed transaction on first attempt if available
+          if (i === 0 && preparedTx) {
+            logger.trace({ mint: tokenMint }, 'Using pre-computed transaction');
+            result = await this.txExecutor.executeAndConfirm(
+              preparedTx.transaction,
+              this.config.wallet,
+              preparedTx.latestBlockhash,
+            );
+          } else {
+            // Fall back to regular swap for retries or if precompute failed
+            result = await this.swap(
+              poolKeys,
+              this.config.quoteAta,
+              mintAta,
+              this.config.quoteToken,
+              tokenOut,
+              this.config.quoteAmount,
+              this.config.buySlippage,
+              this.config.wallet,
+              'buy',
+            );
+          }
 
           if (result.confirmed) {
             logger.info(
@@ -633,6 +712,168 @@ export class Bot {
     } while (timesChecked < timesToCheck);
 
     return false;
+  }
+
+  /**
+   * Pre-compute a swap transaction for faster execution.
+   * Prepares all transaction data but doesn't send it.
+   */
+  private async prepareSwapTransaction(
+    poolKeys: LiquidityPoolKeysV4,
+    ataIn: PublicKey,
+    ataOut: PublicKey,
+    tokenIn: Token,
+    tokenOut: Token,
+    amountIn: TokenAmount,
+    slippage: number,
+    wallet: Keypair,
+    direction: 'buy' | 'sell',
+  ): Promise<PreparedTransaction | null> {
+    try {
+      const slippagePercent = new Percent(slippage, 100);
+      const poolInfo = await Liquidity.fetchInfo({
+        connection: this.connection,
+        poolKeys,
+      });
+
+      const computedAmountOut = Liquidity.computeAmountOut({
+        poolKeys,
+        poolInfo,
+        amountIn,
+        currencyOut: tokenOut,
+        slippage: slippagePercent,
+      });
+
+      const latestBlockhash = await this.connection.getLatestBlockhash();
+      const { innerTransaction } = Liquidity.makeSwapFixedInInstruction(
+        {
+          poolKeys: poolKeys,
+          userKeys: {
+            tokenAccountIn: ataIn,
+            tokenAccountOut: ataOut,
+            owner: wallet.publicKey,
+          },
+          amountIn: amountIn.raw,
+          minAmountOut: computedAmountOut.minAmountOut.raw,
+        },
+        poolKeys.version,
+      );
+
+      // Build pre-swap instructions
+      const preInstructions = [];
+      const postInstructions = [];
+
+      // Add compute budget instructions if not using Warp/Jito
+      if (!this.isWarp && !this.isJito) {
+        preInstructions.push(
+          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: this.config.unitPrice }),
+          ComputeBudgetProgram.setComputeUnitLimit({ units: this.config.unitLimit }),
+        );
+      }
+
+      // Handle WSOL wrapping for buy direction
+      if (direction === 'buy') {
+        // Create output token account
+        preInstructions.push(
+          createAssociatedTokenAccountIdempotentInstruction(
+            wallet.publicKey,
+            ataOut,
+            wallet.publicKey,
+            tokenOut.mint,
+          ),
+        );
+
+        // If input token is WSOL (native SOL), wrap SOL to WSOL
+        if (tokenIn.mint.equals(NATIVE_MINT)) {
+          // Create WSOL account if needed
+          preInstructions.push(
+            createAssociatedTokenAccountIdempotentInstruction(
+              wallet.publicKey,
+              ataIn,
+              wallet.publicKey,
+              NATIVE_MINT,
+            ),
+          );
+          // Transfer SOL to the WSOL account
+          preInstructions.push(
+            SystemProgram.transfer({
+              fromPubkey: wallet.publicKey,
+              toPubkey: ataIn,
+              lamports: BigInt(amountIn.raw.toString()),
+            }),
+          );
+          // Sync native to update the WSOL balance
+          preInstructions.push(createSyncNativeInstruction(ataIn));
+        }
+      }
+
+      // Handle sell direction
+      if (direction === 'sell') {
+        // Close the input token account after selling to recover rent
+        postInstructions.push(createCloseAccountInstruction(ataIn, wallet.publicKey, wallet.publicKey));
+      }
+
+      const messageV0 = new TransactionMessage({
+        payerKey: wallet.publicKey,
+        recentBlockhash: latestBlockhash.blockhash,
+        instructions: [
+          ...preInstructions,
+          ...innerTransaction.instructions,
+          ...postInstructions,
+        ],
+      }).compileToV0Message();
+
+      const transaction = new VersionedTransaction(messageV0);
+      transaction.sign([wallet, ...innerTransaction.signers]);
+
+      return {
+        transaction,
+        latestBlockhash,
+        preparedAt: Date.now(),
+      };
+    } catch (error) {
+      logger.trace({ error }, 'Failed to prepare swap transaction');
+      return null;
+    }
+  }
+
+  /**
+   * Check if a prepared transaction's blockhash is still likely valid.
+   * Blockhashes are valid for ~60-90 seconds (150 slots * 400ms).
+   * We use a conservative threshold of 45 seconds.
+   */
+  private isBlockhashValid(preparedTx: PreparedTransaction): boolean {
+    const maxAgeMs = 45000; // 45 seconds
+    const age = Date.now() - preparedTx.preparedAt;
+    return age < maxAgeMs;
+  }
+
+  /**
+   * Refresh a prepared transaction with a new blockhash.
+   */
+  private async refreshPreparedTransaction(
+    poolKeys: LiquidityPoolKeysV4,
+    ataIn: PublicKey,
+    ataOut: PublicKey,
+    tokenIn: Token,
+    tokenOut: Token,
+    amountIn: TokenAmount,
+    slippage: number,
+    wallet: Keypair,
+    direction: 'buy' | 'sell',
+  ): Promise<PreparedTransaction | null> {
+    logger.trace('Refreshing prepared transaction with new blockhash');
+    return this.prepareSwapTransaction(
+      poolKeys,
+      ataIn,
+      ataOut,
+      tokenIn,
+      tokenOut,
+      amountIn,
+      slippage,
+      wallet,
+      direction,
+    );
   }
 
   private async priceMatch(amountIn: TokenAmount, poolKeys: LiquidityPoolKeysV4) {
