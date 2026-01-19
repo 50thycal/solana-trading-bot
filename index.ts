@@ -529,7 +529,20 @@ const runListener = async () => {
       healthServer.recordWebSocketActivity();
     }
 
-    if (!exists && poolOpenTime > runTimestamp && bot) {
+    // Log all pool events at debug level for visibility
+    const isNewPool = !exists && poolOpenTime > runTimestamp;
+    logger.debug(
+      {
+        mint: poolState.baseMint.toString(),
+        poolOpenTime,
+        runTimestamp,
+        isNew: isNewPool,
+        alreadyCached: !!exists,
+      },
+      isNewPool ? 'New pool detected - processing' : 'Pool event received - skipping (not new or already cached)'
+    );
+
+    if (isNewPool && bot) {
       poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
       await bot.buy(updatedAccountInfo.accountId, poolState);
     }
@@ -553,6 +566,35 @@ const runListener = async () => {
   });
 
   printDetails(wallet, quoteToken, bot!);
+
+  // Periodic heartbeat log to show bot is still alive
+  const heartbeatIntervalMs = 5 * 60 * 1000; // 5 minutes
+  let poolEventsReceived = 0;
+  let lastHeartbeat = Date.now();
+
+  // Track pool events for heartbeat stats
+  listeners.on('pool', () => {
+    poolEventsReceived++;
+  });
+
+  setInterval(() => {
+    const uptimeMs = Date.now() - lastHeartbeat;
+    const stateStore = getStateStore();
+    const stats = stateStore?.getStats();
+
+    logger.info(
+      {
+        poolEventsLast5min: poolEventsReceived,
+        seenPools: stats?.seenPools || 0,
+        openPositions: stats?.positions.open || 0,
+        uptimeMinutes: Math.floor(uptimeMs / 60000),
+      },
+      'Heartbeat: Bot is running and listening for new pools'
+    );
+
+    poolEventsReceived = 0; // Reset counter
+    lastHeartbeat = Date.now();
+  }, heartbeatIntervalMs);
 };
 
 // Register graceful shutdown handlers
