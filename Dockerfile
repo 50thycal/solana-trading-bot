@@ -43,6 +43,7 @@ COPY --from=builder /app/listeners ./listeners
 COPY --from=builder /app/transactions ./transactions
 COPY --from=builder /app/risk ./risk
 COPY --from=builder /app/persistence ./persistence
+COPY --from=builder /app/dashboard ./dashboard
 
 # Copy health server
 COPY --from=builder /app/health.ts ./
@@ -73,6 +74,8 @@ EXPOSE 8080
 ENV NODE_ENV=production
 ENV HEALTH_PORT=8080
 ENV DATA_DIR=./data
+ENV DASHBOARD_ENABLED=true
+ENV DASHBOARD_PORT=8080
 
 # Entrypoint handles permission fixing and user switching
 ENTRYPOINT ["docker-entrypoint.sh"]
