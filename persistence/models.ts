@@ -178,3 +178,82 @@ export interface AddBlacklistInput {
  * Configuration for pending trade timeout
  */
 export const PENDING_TRADE_TIMEOUT_MS = 60000; // 60 seconds
+
+// ============================================================
+// POOL DETECTION MODELS (Phase 5 - Dashboard)
+// ============================================================
+
+/**
+ * Detailed filter result stored in database
+ */
+export interface StoredFilterResult {
+  name: string;           // Filter identifier: 'burn', 'renounced', 'freezable', 'mutable', 'socials', 'pool_size'
+  displayName: string;    // Human-readable name
+  passed: boolean;
+  checked: boolean;
+  reason: string;
+  expectedValue?: string;
+  actualValue?: string;
+  numericValue?: number;
+}
+
+/**
+ * Pool detection record for dashboard display
+ */
+export interface PoolDetectionRecord {
+  id: string;
+  poolId: string;
+  tokenMint: string;
+  detectedAt: number;
+  action: PoolAction;
+
+  // Detailed filter results stored as JSON
+  filterResults: StoredFilterResult[];
+
+  // Risk check results
+  riskCheckPassed: boolean;
+  riskCheckReason?: string;
+
+  // Pool metadata
+  poolQuoteReserve?: number;
+
+  // Summary
+  summary: string;
+}
+
+/**
+ * Input for recording a pool detection with detailed filter results
+ */
+export interface RecordPoolDetectionInput {
+  poolId: string;
+  tokenMint: string;
+  action: PoolAction;
+  filterResults: StoredFilterResult[];
+  riskCheckPassed?: boolean;
+  riskCheckReason?: string;
+  poolQuoteReserve?: number;
+  summary: string;
+}
+
+/**
+ * Query options for pool detections
+ */
+export interface PoolDetectionQueryOptions {
+  limit?: number;
+  offset?: number;
+  action?: PoolAction;
+  fromTimestamp?: number;
+  toTimestamp?: number;
+}
+
+/**
+ * Aggregated statistics for pool detections
+ */
+export interface PoolDetectionStats {
+  totalDetected: number;
+  totalBought: number;
+  totalFiltered: number;
+  totalSkipped: number;
+  totalBlacklisted: number;
+  filterRejectionCounts: Record<string, number>;
+}

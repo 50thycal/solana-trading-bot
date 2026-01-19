@@ -58,8 +58,9 @@ import {
   logFilterPresetInfo,
 } from './helpers';
 import { initRpcManager } from './helpers/rpc-manager';
-import { startHealthServer, HealthServer } from './health';
+import { startDashboardServer, DashboardServer } from './dashboard';
 import { version } from './package.json';
+import { getConfig } from './helpers/config-validator';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
 import {
@@ -79,7 +80,7 @@ import {
 
 // Global references for graceful shutdown
 let listeners: Listeners | null = null;
-let healthServer: HealthServer | null = null;
+let dashboardServer: DashboardServer | null = null;
 let bot: Bot | null = null;
 let isShuttingDown = false;
 
@@ -228,10 +229,10 @@ async function gracefulShutdown(signal: string): Promise<void> {
     await pnlTracker.forceSave();
     pnlTracker.logSessionSummary();
 
-    // Stop health server
-    if (healthServer) {
-      logger.info('Stopping health server...');
-      await healthServer.stop();
+    // Stop dashboard server
+    if (dashboardServer) {
+      logger.info('Stopping dashboard server...');
+      await dashboardServer.stop();
     }
 
     // Close state store (SQLite)
@@ -253,13 +254,21 @@ const runListener = async () => {
   logger.level = LOG_LEVEL;
   logger.info('Bot is starting...');
 
-  // Start health server early
-  try {
-    healthServer = await startHealthServer(HEALTH_PORT);
-    logger.info({ port: HEALTH_PORT }, 'Health server started');
-  } catch (error) {
-    logger.error({ error }, 'Failed to start health server');
-    // Continue without health server - not critical for bot operation
+  // Get config for dashboard settings
+  const config = getConfig();
+
+  // Start dashboard server early (includes health endpoints)
+  if (config.dashboardEnabled) {
+    try {
+      dashboardServer = await startDashboardServer({
+        port: config.dashboardPort,
+        pollInterval: config.dashboardPollInterval,
+      });
+      logger.info({ port: config.dashboardPort }, 'Dashboard server started');
+    } catch (error) {
+      logger.error({ error }, 'Failed to start dashboard server');
+      // Continue without dashboard - not critical for bot operation
+    }
   }
 
   // Initialize RPC Manager with failover
@@ -481,13 +490,13 @@ const runListener = async () => {
   listeners = new Listeners(connection);
 
   // Connect listener events to health server
-  if (healthServer) {
+  if (dashboardServer) {
     listeners.on('connected', () => {
-      healthServer!.setWebSocketConnected(true);
+      dashboardServer!.setWebSocketConnected(true);
     });
 
     listeners.on('disconnected', () => {
-      healthServer!.setWebSocketConnected(false);
+      dashboardServer!.setWebSocketConnected(false);
     });
 
     listeners.on('reconnecting', ({ attempt, delay }) => {
@@ -504,9 +513,9 @@ const runListener = async () => {
   });
 
   // Update health server status
-  if (healthServer) {
-    healthServer.setWebSocketConnected(true);
-    healthServer.setRpcHealthy(true);
+  if (dashboardServer) {
+    dashboardServer.setWebSocketConnected(true);
+    dashboardServer.setRpcHealthy(true);
   }
 
   listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
@@ -514,8 +523,8 @@ const runListener = async () => {
     marketCache.save(updatedAccountInfo.accountId.toString(), marketState);
 
     // Record activity
-    if (healthServer) {
-      healthServer.recordWebSocketActivity();
+    if (dashboardServer) {
+      dashboardServer.recordWebSocketActivity();
     }
   });
 
@@ -525,8 +534,8 @@ const runListener = async () => {
     const exists = await poolCache.get(poolState.baseMint.toString());
 
     // Record activity
-    if (healthServer) {
-      healthServer.recordWebSocketActivity();
+    if (dashboardServer) {
+      dashboardServer.recordWebSocketActivity();
     }
 
     // Log all pool events at debug level for visibility
@@ -552,8 +561,8 @@ const runListener = async () => {
     const accountData = AccountLayout.decode(updatedAccountInfo.accountInfo.data);
 
     // Record activity
-    if (healthServer) {
-      healthServer.recordWebSocketActivity();
+    if (dashboardServer) {
+      dashboardServer.recordWebSocketActivity();
     }
 
     if (accountData.mint.equals(quoteToken.mint)) {

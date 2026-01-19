@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Solana Trading Bot Dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <h1>Solana Trading Bot</h1>
+      <div class="status-indicator" id="connection-status">
+        <span class="status-dot"></span>
+        <span class="status-text">Connecting...</span>
+      </div>
+    </header>
+
+    <!-- Overview Cards -->
+    <section class="overview-cards">
+      <div class="card">
+        <div class="card-label">Uptime</div>
+        <div class="card-value" id="uptime">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Wallet Balance</div>
+        <div class="card-value" id="wallet-balance">-- SOL</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Total P&L</div>
+        <div class="card-value" id="total-pnl">-- SOL</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Open Positions</div>
+        <div class="card-value" id="open-positions">--</div>
+      </div>
+    </section>
+
+    <!-- Main Content Grid -->
+    <div class="main-grid">
+      <!-- Pool Activity Section -->
+      <section class="panel pool-activity">
+        <div class="panel-header">
+          <h2>Pool Activity</h2>
+          <div class="filter-controls">
+            <select id="pool-filter">
+              <option value="">All</option>
+              <option value="bought">Bought</option>
+              <option value="filtered">Filtered</option>
+              <option value="skipped">Skipped</option>
+              <option value="blacklisted">Blacklisted</option>
+            </select>
+          </div>
+        </div>
+        <div class="pool-list" id="pool-list">
+          <div class="loading">Loading pool activity...</div>
+        </div>
+      </section>
+
+      <!-- Right Sidebar -->
+      <aside class="sidebar">
+        <!-- Open Positions -->
+        <section class="panel positions-panel">
+          <div class="panel-header">
+            <h2>Open Positions</h2>
+          </div>
+          <div class="positions-list" id="positions-list">
+            <div class="empty-state">No open positions</div>
+          </div>
+        </section>
+
+        <!-- Statistics -->
+        <section class="panel stats-panel">
+          <div class="panel-header">
+            <h2>Statistics</h2>
+          </div>
+          <div class="stats-content" id="stats-content">
+            <div class="stat-row">
+              <span class="stat-label">Pools Detected</span>
+              <span class="stat-value" id="stat-pools-detected">--</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Pools Bought</span>
+              <span class="stat-value" id="stat-pools-bought">--</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Buy Rate</span>
+              <span class="stat-value" id="stat-buy-rate">--%</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Win Rate</span>
+              <span class="stat-value" id="stat-win-rate">--%</span>
+            </div>
+          </div>
+
+          <div class="panel-header" style="margin-top: 1rem;">
+            <h3>Top Rejection Reasons</h3>
+          </div>
+          <div class="rejection-list" id="rejection-list">
+            <div class="empty-state">No data yet</div>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <!-- Pool Detail Modal -->
+    <div class="modal" id="pool-modal">
+      <div class="modal-backdrop" onclick="closePoolModal()"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Pool Details</h3>
+          <button class="modal-close" onclick="closePoolModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="pool-modal-body">
+          <!-- Populated by JavaScript -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

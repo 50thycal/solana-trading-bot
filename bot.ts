@@ -20,8 +20,9 @@ import {
 } from '@solana/spl-token';
 import { Liquidity, LiquidityPoolKeysV4, LiquidityStateV4, Percent, Token, TokenAmount } from '@raydium-io/raydium-sdk';
 import { MarketCache, PoolCache, SnipeListCache } from './cache';
-import { PoolFilters } from './filters';
+import { PoolFilters, PoolFilterResults, DetailedFilterResult } from './filters';
 import { TransactionExecutor } from './transactions';
+import { StoredFilterResult } from './persistence';
 import { createPoolKeys, logger, NETWORK, sleep } from './helpers';
 import { Mutex } from 'async-mutex';
 import BN from 'bn.js';
@@ -186,6 +187,17 @@ export class Bot {
           actionTaken: 'blacklisted',
           filterReason: 'Token is blacklisted',
         });
+
+        // Record for dashboard
+        stateStore.recordPoolDetection({
+          poolId,
+          tokenMint,
+          action: 'blacklisted',
+          filterResults: [],
+          riskCheckPassed: false,
+          riskCheckReason: 'Token is blacklisted',
+          summary: 'Blacklisted token - skipped',
+        });
       }
       return;
     }
@@ -198,6 +210,17 @@ export class Bot {
           tokenMint,
           actionTaken: 'skipped',
           filterReason: 'Not in snipe list',
+        });
+
+        // Record for dashboard
+        stateStore.recordPoolDetection({
+          poolId,
+          tokenMint,
+          action: 'skipped',
+          filterResults: [],
+          riskCheckPassed: true,
+          riskCheckReason: 'Not in snipe list',
+          summary: 'Not in snipe list - skipped',
         });
       }
       return;
@@ -217,6 +240,17 @@ export class Bot {
             tokenMint,
             actionTaken: 'skipped',
             filterReason: exposureCheck.reason || 'Risk limit exceeded',
+          });
+
+          // Record for dashboard
+          stateStore.recordPoolDetection({
+            poolId,
+            tokenMint,
+            action: 'skipped',
+            filterResults: [],
+            riskCheckPassed: false,
+            riskCheckReason: exposureCheck.reason || 'Risk limit exceeded',
+            summary: `Risk limit: ${exposureCheck.reason || 'Exposure limit exceeded'}`,
           });
         }
         return;
@@ -250,14 +284,15 @@ export class Bot {
 
       // Pre-compute optimization: prepare transaction in parallel with filter checks
       let preparedTx: PreparedTransaction | null = null;
+      let filterResults: PoolFilterResults | null = null;
 
       if (!this.config.useSnipeList) {
         if (PRECOMPUTE_TRANSACTION) {
           // Run filter check and transaction preparation in parallel
           logger.trace({ mint: tokenMint }, 'Running filter check and tx preparation in parallel');
 
-          const [filterMatch, txPrep] = await Promise.all([
-            this.filterMatch(poolKeys),
+          const [detailedFilterResults, txPrep] = await Promise.all([
+            this.filterMatchWithDetails(poolKeys),
             this.prepareSwapTransaction(
               poolKeys,
               this.config.quoteAta,
@@ -271,14 +306,28 @@ export class Bot {
             ),
           ]);
 
-          if (!filterMatch) {
-            logger.debug({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
+          filterResults = detailedFilterResults;
+
+          if (!filterResults.allPassed) {
+            logger.debug({ mint: poolKeys.baseMint.toString(), summary: filterResults.summary }, `Skipping buy because pool doesn't match filters`);
+
+            // Record detailed filter results for dashboard
             if (stateStore) {
               stateStore.recordSeenPool({
                 poolId,
                 tokenMint,
                 actionTaken: 'filtered',
-                filterReason: 'Did not pass filter checks',
+                filterReason: filterResults.summary,
+              });
+
+              // Record detailed pool detection for dashboard
+              stateStore.recordPoolDetection({
+                poolId,
+                tokenMint,
+                action: 'filtered',
+                filterResults: this.convertToStoredFilterResults(filterResults.filters),
+                riskCheckPassed: true,
+                summary: filterResults.summary,
               });
             }
             return;
@@ -303,16 +352,28 @@ export class Bot {
           }
         } else {
           // Sequential: run filter check first, then build transaction
-          const match = await this.filterMatch(poolKeys);
+          filterResults = await this.filterMatchWithDetails(poolKeys);
 
-          if (!match) {
-            logger.debug({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
+          if (!filterResults.allPassed) {
+            logger.debug({ mint: poolKeys.baseMint.toString(), summary: filterResults.summary }, `Skipping buy because pool doesn't match filters`);
+
+            // Record detailed filter results for dashboard
             if (stateStore) {
               stateStore.recordSeenPool({
                 poolId,
                 tokenMint,
                 actionTaken: 'filtered',
-                filterReason: 'Did not pass filter checks',
+                filterReason: filterResults.summary,
+              });
+
+              // Record detailed pool detection for dashboard
+              stateStore.recordPoolDetection({
+                poolId,
+                tokenMint,
+                action: 'filtered',
+                filterResults: this.convertToStoredFilterResults(filterResults.filters),
+                riskCheckPassed: true,
+                summary: filterResults.summary,
               });
             }
             return;
@@ -385,6 +446,18 @@ export class Bot {
                 poolId,
                 tokenMint,
                 actionTaken: 'bought',
+              });
+
+              // Record detailed pool detection for dashboard (bought)
+              stateStore.recordPoolDetection({
+                poolId,
+                tokenMint,
+                action: 'bought',
+                filterResults: filterResults
+                  ? this.convertToStoredFilterResults(filterResults.filters)
+                  : [],
+                riskCheckPassed: true,
+                summary: 'All filters passed - token purchased',
               });
             }
 
@@ -717,6 +790,85 @@ export class Bot {
     } while (timesChecked < timesToCheck);
 
     return false;
+  }
+
+  /**
+   * Run filter checks and return detailed results for dashboard tracking.
+   * Uses consecutive match system like filterMatch but returns full details.
+   */
+  private async filterMatchWithDetails(poolKeys: LiquidityPoolKeysV4): Promise<PoolFilterResults> {
+    // If filtering is disabled, return all passed
+    if (this.config.filterCheckInterval === 0 || this.config.filterCheckDuration === 0) {
+      return {
+        tokenMint: poolKeys.baseMint.toString(),
+        poolId: poolKeys.id.toString(),
+        filters: [],
+        allPassed: true,
+        summary: 'Filtering disabled',
+        checkedAt: Date.now(),
+      };
+    }
+
+    const timesToCheck = this.config.filterCheckDuration / this.config.filterCheckInterval;
+    let timesChecked = 0;
+    let matchCount = 0;
+    let lastResults: PoolFilterResults | null = null;
+
+    logger.debug(
+      { mint: poolKeys.baseMint.toString(), totalChecks: timesToCheck, interval: this.config.filterCheckInterval },
+      'Starting detailed filter checks'
+    );
+
+    do {
+      try {
+        // Get detailed filter results
+        lastResults = await this.poolFilters.executeWithDetails(poolKeys);
+
+        if (lastResults.allPassed) {
+          matchCount++;
+
+          if (this.config.consecutiveMatchCount <= matchCount) {
+            logger.debug(
+              { mint: poolKeys.baseMint.toString() },
+              `Filter match ${matchCount}/${this.config.consecutiveMatchCount}`,
+            );
+            return lastResults;
+          }
+        } else {
+          matchCount = 0;
+        }
+
+        await sleep(this.config.filterCheckInterval);
+      } finally {
+        timesChecked++;
+      }
+    } while (timesChecked < timesToCheck);
+
+    // Return the last results (which didn't pass)
+    return lastResults || {
+      tokenMint: poolKeys.baseMint.toString(),
+      poolId: poolKeys.id.toString(),
+      filters: [],
+      allPassed: false,
+      summary: 'Filter check timed out',
+      checkedAt: Date.now(),
+    };
+  }
+
+  /**
+   * Convert DetailedFilterResult[] to StoredFilterResult[] for database storage
+   */
+  private convertToStoredFilterResults(filters: DetailedFilterResult[]): StoredFilterResult[] {
+    return filters.map((f) => ({
+      name: f.name,
+      displayName: f.displayName,
+      passed: f.passed,
+      checked: f.checked,
+      reason: f.reason,
+      expectedValue: f.details?.expected,
+      actualValue: f.details?.actual,
+      numericValue: f.details?.value,
+    }));
   }
 
   /**

@@ -26,12 +26,17 @@ import {
   PositionStatus,
   BlacklistType,
   PoolAction,
+  PoolDetectionRecord,
+  RecordPoolDetectionInput,
+  PoolDetectionQueryOptions,
+  PoolDetectionStats,
+  StoredFilterResult,
 } from './models';
 
 /**
  * Current schema version - increment when making schema changes
  */
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 
 /**
  * SQLite State Store - manages all persistent data
@@ -125,6 +130,10 @@ export class StateStore {
         this.migrateToV1();
       }
 
+      if (currentVersion < 2) {
+        this.migrateToV2();
+      }
+
       logger.info({ version: CURRENT_SCHEMA_VERSION }, 'Database migrations complete');
     }
   }
@@ -212,6 +221,46 @@ export class StateStore {
     `);
 
     logger.info('Applied migration v1: Initial schema');
+  }
+
+  /**
+   * Migration to version 2 - Pool detections table for dashboard
+   */
+  private migrateToV2(): void {
+    this.db.exec(`
+      -- Pool detections table with detailed filter results
+      CREATE TABLE IF NOT EXISTS pool_detections (
+        id TEXT PRIMARY KEY,
+        pool_id TEXT NOT NULL,
+        token_mint TEXT NOT NULL,
+        detected_at INTEGER NOT NULL,
+        action TEXT NOT NULL,
+
+        -- Filter results stored as JSON array
+        filter_results TEXT NOT NULL,
+
+        -- Risk check results
+        risk_check_passed INTEGER,
+        risk_check_reason TEXT,
+
+        -- Pool metadata
+        pool_quote_reserve REAL,
+
+        -- Summary for quick display
+        summary TEXT NOT NULL
+      );
+
+      -- Indexes for efficient querying
+      CREATE INDEX IF NOT EXISTS idx_pool_detections_detected_at ON pool_detections(detected_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_pool_detections_action ON pool_detections(action);
+      CREATE INDEX IF NOT EXISTS idx_pool_detections_token_mint ON pool_detections(token_mint);
+      CREATE INDEX IF NOT EXISTS idx_pool_detections_pool_id ON pool_detections(pool_id);
+
+      -- Record migration
+      INSERT INTO schema_version (version, applied_at) VALUES (2, ${Date.now()});
+    `);
+
+    logger.info('Applied migration v2: Pool detections table for dashboard');
   }
 
   /**
@@ -750,6 +799,210 @@ export class StateStore {
   }
 
   // ============================================================
+  // POOL DETECTION OPERATIONS (Phase 5 - Dashboard)
+  // ============================================================
+
+  /**
+   * Record a pool detection with detailed filter results
+   */
+  recordPoolDetection(input: RecordPoolDetectionInput): PoolDetectionRecord {
+    const id = `det_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const now = Date.now();
+
+    const detection: PoolDetectionRecord = {
+      id,
+      poolId: input.poolId,
+      tokenMint: input.tokenMint,
+      detectedAt: now,
+      action: input.action,
+      filterResults: input.filterResults,
+      riskCheckPassed: input.riskCheckPassed ?? true,
+      riskCheckReason: input.riskCheckReason,
+      poolQuoteReserve: input.poolQuoteReserve,
+      summary: input.summary,
+    };
+
+    this.db.prepare(`
+      INSERT INTO pool_detections (
+        id, pool_id, token_mint, detected_at, action,
+        filter_results, risk_check_passed, risk_check_reason,
+        pool_quote_reserve, summary
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      detection.id,
+      detection.poolId,
+      detection.tokenMint,
+      detection.detectedAt,
+      detection.action,
+      JSON.stringify(detection.filterResults),
+      detection.riskCheckPassed ? 1 : 0,
+      detection.riskCheckReason ?? null,
+      detection.poolQuoteReserve ?? null,
+      detection.summary
+    );
+
+    logger.debug({ detectionId: id, poolId: input.poolId, action: input.action }, 'Pool detection recorded');
+    return detection;
+  }
+
+  /**
+   * Get pool detections with optional filtering
+   */
+  getPoolDetections(options: PoolDetectionQueryOptions = {}): PoolDetectionRecord[] {
+    const { limit = 50, offset = 0, action, fromTimestamp, toTimestamp } = options;
+
+    let sql = 'SELECT * FROM pool_detections WHERE 1=1';
+    const params: any[] = [];
+
+    if (action) {
+      sql += ' AND action = ?';
+      params.push(action);
+    }
+
+    if (fromTimestamp) {
+      sql += ' AND detected_at >= ?';
+      params.push(fromTimestamp);
+    }
+
+    if (toTimestamp) {
+      sql += ' AND detected_at <= ?';
+      params.push(toTimestamp);
+    }
+
+    sql += ' ORDER BY detected_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    const rows = this.db.prepare(sql).all(...params);
+    return rows.map((row) => this.rowToPoolDetection(row));
+  }
+
+  /**
+   * Get a single pool detection by ID
+   */
+  getPoolDetectionById(id: string): PoolDetectionRecord | null {
+    const row = this.db.prepare('SELECT * FROM pool_detections WHERE id = ?').get(id);
+    return row ? this.rowToPoolDetection(row) : null;
+  }
+
+  /**
+   * Get pool detection by pool ID
+   */
+  getPoolDetectionByPoolId(poolId: string): PoolDetectionRecord | null {
+    const row = this.db.prepare(
+      'SELECT * FROM pool_detections WHERE pool_id = ? ORDER BY detected_at DESC LIMIT 1'
+    ).get(poolId);
+    return row ? this.rowToPoolDetection(row) : null;
+  }
+
+  /**
+   * Get total count of pool detections
+   */
+  getPoolDetectionCount(action?: PoolAction): number {
+    if (action) {
+      const result = this.db.prepare(
+        'SELECT COUNT(*) as count FROM pool_detections WHERE action = ?'
+      ).get(action) as { count: number };
+      return result.count;
+    }
+
+    const result = this.db.prepare(
+      'SELECT COUNT(*) as count FROM pool_detections'
+    ).get() as { count: number };
+    return result.count;
+  }
+
+  /**
+   * Get pool detection statistics for dashboard
+   */
+  getPoolDetectionStats(): PoolDetectionStats {
+    // Get action counts
+    const actionStats = this.db.prepare(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN action = 'bought' THEN 1 ELSE 0 END) as bought,
+        SUM(CASE WHEN action = 'filtered' THEN 1 ELSE 0 END) as filtered,
+        SUM(CASE WHEN action = 'skipped' THEN 1 ELSE 0 END) as skipped,
+        SUM(CASE WHEN action = 'blacklisted' THEN 1 ELSE 0 END) as blacklisted
+      FROM pool_detections
+    `).get() as {
+      total: number;
+      bought: number;
+      filtered: number;
+      skipped: number;
+      blacklisted: number;
+    };
+
+    // Get filter rejection counts by analyzing filter_results JSON
+    // This queries all filtered pools and aggregates which filters failed
+    const filteredPools = this.db.prepare(`
+      SELECT filter_results FROM pool_detections WHERE action = 'filtered'
+    `).all() as { filter_results: string }[];
+
+    const filterRejectionCounts: Record<string, number> = {};
+
+    for (const pool of filteredPools) {
+      try {
+        const filterResults: StoredFilterResult[] = JSON.parse(pool.filter_results);
+        for (const filter of filterResults) {
+          if (filter.checked && !filter.passed) {
+            filterRejectionCounts[filter.displayName] = (filterRejectionCounts[filter.displayName] || 0) + 1;
+          }
+        }
+      } catch {
+        // Skip malformed JSON
+      }
+    }
+
+    return {
+      totalDetected: actionStats.total || 0,
+      totalBought: actionStats.bought || 0,
+      totalFiltered: actionStats.filtered || 0,
+      totalSkipped: actionStats.skipped || 0,
+      totalBlacklisted: actionStats.blacklisted || 0,
+      filterRejectionCounts,
+    };
+  }
+
+  /**
+   * Clean up old pool detections (keep recent data, remove old)
+   */
+  cleanupOldPoolDetections(daysToKeep: number = 7): number {
+    const cutoff = Date.now() - daysToKeep * 24 * 60 * 60 * 1000;
+    const result = this.db.prepare('DELETE FROM pool_detections WHERE detected_at < ?').run(cutoff);
+
+    if (result.changes > 0) {
+      logger.info({ count: result.changes, daysToKeep }, 'Cleaned up old pool detections');
+    }
+
+    return result.changes;
+  }
+
+  /**
+   * Convert database row to PoolDetectionRecord
+   */
+  private rowToPoolDetection(row: any): PoolDetectionRecord {
+    let filterResults: StoredFilterResult[] = [];
+    try {
+      filterResults = JSON.parse(row.filter_results);
+    } catch {
+      filterResults = [];
+    }
+
+    return {
+      id: row.id,
+      poolId: row.pool_id,
+      tokenMint: row.token_mint,
+      detectedAt: row.detected_at,
+      action: row.action as PoolAction,
+      filterResults,
+      riskCheckPassed: row.risk_check_passed === 1,
+      riskCheckReason: row.risk_check_reason ?? undefined,
+      poolQuoteReserve: row.pool_quote_reserve ?? undefined,
+      summary: row.summary,
+    };
+  }
+
+  // ============================================================
   // UTILITY OPERATIONS
   // ============================================================
 
@@ -778,6 +1031,7 @@ export class StateStore {
     trades: { pending: number; confirmed: number; failed: number };
     seenPools: number;
     blacklist: { tokens: number; creators: number };
+    poolDetections: PoolDetectionStats;
   } {
     const positionStats = this.db.prepare(`
       SELECT
@@ -806,6 +1060,7 @@ export class StateStore {
       },
       seenPools: this.getSeenPoolCount(),
       blacklist: this.getBlacklistStats(),
+      poolDetections: this.getPoolDetectionStats(),
     };
   }
 }
