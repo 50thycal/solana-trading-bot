@@ -5,6 +5,7 @@
   "version": "2.0.1",
   "scripts": {
     "start": "ts-node index.ts",
+    "test-trade": "ts-node test-trade.ts",
     "tsc": "tsc --noEmit"
   },
   "dependencies": {
