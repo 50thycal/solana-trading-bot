@@ -13,6 +13,7 @@ import { logger } from '../helpers';
 import { getStateStore } from '../persistence';
 import { getPnlTracker, getExposureManager, getPositionMonitor } from '../risk';
 import { PoolAction } from '../persistence/models';
+import { executeTestTrade } from '../scripts/test-trade';
 
 /**
  * Dashboard server configuration
@@ -103,12 +104,18 @@ export class DashboardServer {
 
     // Add CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    // Handle POST requests to API
+    if (req.method === 'POST' && pathname.startsWith('/api/')) {
+      await this.handlePostRequest(pathname, req, res);
       return;
     }
 
@@ -252,6 +259,106 @@ export class DashboardServer {
       logger.error({ error, pathname }, 'API request error');
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Internal server error' }));
+    }
+  }
+
+  /**
+   * Handle POST requests to API endpoints
+   */
+  private async handlePostRequest(
+    pathname: string,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ): Promise<void> {
+    try {
+      // Parse request body
+      const body = await this.parseRequestBody(req);
+
+      switch (pathname) {
+        case '/api/test-trade':
+          await this.handleTestTrade(body, res);
+          break;
+
+        default:
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'API endpoint not found' }));
+      }
+    } catch (error) {
+      logger.error({ error, pathname }, 'POST request error');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Internal server error' }));
+    }
+  }
+
+  /**
+   * Parse JSON request body
+   */
+  private parseRequestBody(req: http.IncomingMessage): Promise<any> {
+    return new Promise((resolve, reject) => {
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk.toString();
+      });
+      req.on('end', () => {
+        try {
+          resolve(body ? JSON.parse(body) : {});
+        } catch (error) {
+          reject(new Error('Invalid JSON body'));
+        }
+      });
+      req.on('error', reject);
+    });
+  }
+
+  /**
+   * POST /api/test-trade - Execute a test trade
+   */
+  private async handleTestTrade(
+    body: { poolId?: string; dryRun?: boolean; amount?: number },
+    res: http.ServerResponse,
+  ): Promise<void> {
+    const { poolId, dryRun = false, amount } = body;
+
+    if (!poolId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Missing required field: poolId' }));
+      return;
+    }
+
+    // Validate poolId format (basic check for base58)
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(poolId)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid poolId format' }));
+      return;
+    }
+
+    // Validate amount if provided
+    if (amount !== undefined && (typeof amount !== 'number' || amount <= 0)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid amount: must be a positive number' }));
+      return;
+    }
+
+    logger.info({ poolId, dryRun, amount }, 'Test trade request received');
+
+    try {
+      const result = await executeTestTrade({
+        poolId,
+        dryRun,
+        amount,
+      });
+
+      res.writeHead(result.success ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result, null, 2));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ error: errorMessage, poolId }, 'Test trade execution failed');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: false,
+        message: 'Test trade execution failed',
+        error: errorMessage,
+      }));
     }
   }
 
