@@ -37,6 +37,43 @@
       </div>
     </section>
 
+    <!-- Test Trade Section -->
+    <section class="panel test-trade-panel">
+      <div class="panel-header">
+        <h2>Test Trade</h2>
+      </div>
+      <div class="test-trade-content">
+        <div class="test-trade-form">
+          <div class="form-group">
+            <label for="pool-id-input">Pool ID</label>
+            <input type="text" id="pool-id-input" placeholder="Enter Raydium pool ID..." class="form-input">
+          </div>
+          <div class="form-row">
+            <div class="form-group form-group-small">
+              <label for="amount-input">Amount (SOL)</label>
+              <input type="number" id="amount-input" placeholder="Default" step="0.001" min="0.001" class="form-input">
+            </div>
+            <div class="form-group form-group-checkbox">
+              <label class="checkbox-label">
+                <input type="checkbox" id="dry-run-checkbox">
+                <span>Dry Run</span>
+              </label>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button id="test-trade-btn" class="btn btn-primary">Execute Trade</button>
+          </div>
+        </div>
+        <div class="test-trade-result" id="test-trade-result" style="display: none;">
+          <div class="result-header">
+            <span class="result-icon"></span>
+            <span class="result-message"></span>
+          </div>
+          <div class="result-details"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- Main Content Grid -->
     <div class="main-grid">
       <!-- Pool Activity Section -->

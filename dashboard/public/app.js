@@ -28,6 +28,12 @@ const elements = {
   rejectionList: document.getElementById('rejection-list'),
   poolModal: document.getElementById('pool-modal'),
   poolModalBody: document.getElementById('pool-modal-body'),
+  // Test trade elements
+  poolIdInput: document.getElementById('pool-id-input'),
+  amountInput: document.getElementById('amount-input'),
+  dryRunCheckbox: document.getElementById('dry-run-checkbox'),
+  testTradeBtn: document.getElementById('test-trade-btn'),
+  testTradeResult: document.getElementById('test-trade-result'),
 };
 
 // ============================================================
@@ -384,6 +390,113 @@ elements.poolFilter.addEventListener('change', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && elements.poolModal.classList.contains('open')) {
     closePoolModal();
+  }
+});
+
+// ============================================================
+// TEST TRADE
+// ============================================================
+
+let isTestTradeRunning = false;
+
+async function executeTestTrade() {
+  if (isTestTradeRunning) return;
+
+  const poolId = elements.poolIdInput.value.trim();
+  const amountValue = elements.amountInput.value.trim();
+  const dryRun = elements.dryRunCheckbox.checked;
+
+  // Validate pool ID
+  if (!poolId) {
+    showTestTradeResult(false, 'Please enter a Pool ID');
+    return;
+  }
+
+  // Validate pool ID format (base58, 32-44 characters)
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(poolId)) {
+    showTestTradeResult(false, 'Invalid Pool ID format');
+    return;
+  }
+
+  // Parse amount if provided
+  let amount;
+  if (amountValue) {
+    amount = parseFloat(amountValue);
+    if (isNaN(amount) || amount <= 0) {
+      showTestTradeResult(false, 'Invalid amount');
+      return;
+    }
+  }
+
+  // Start loading state
+  isTestTradeRunning = true;
+  elements.testTradeBtn.disabled = true;
+  elements.testTradeBtn.textContent = 'Executing...';
+  hideTestTradeResult();
+
+  try {
+    const response = await fetch(`${API_BASE}/api/test-trade`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        poolId,
+        dryRun,
+        amount,
+      }),
+    });
+
+    const result = await response.json();
+    showTestTradeResult(result.success, result.message, result.details);
+  } catch (error) {
+    console.error('Test trade error:', error);
+    showTestTradeResult(false, 'Failed to execute test trade', { error: error.message });
+  } finally {
+    isTestTradeRunning = false;
+    elements.testTradeBtn.disabled = false;
+    elements.testTradeBtn.textContent = 'Execute Trade';
+  }
+}
+
+function showTestTradeResult(success, message, details) {
+  const resultEl = elements.testTradeResult;
+  const iconEl = resultEl.querySelector('.result-icon');
+  const messageEl = resultEl.querySelector('.result-message');
+  const detailsEl = resultEl.querySelector('.result-details');
+
+  resultEl.style.display = 'block';
+  resultEl.className = `test-trade-result ${success ? 'success' : 'error'}`;
+
+  iconEl.textContent = success ? '\u2713' : '\u2717';
+  messageEl.textContent = message;
+
+  if (details) {
+    const detailItems = [];
+    if (details.poolId) detailItems.push(`Pool: ${shortenAddress(details.poolId)}`);
+    if (details.tokenMint) detailItems.push(`Token: ${shortenAddress(details.tokenMint)}`);
+    if (details.amount) detailItems.push(`Amount: ${details.amount} SOL`);
+    if (details.dryRun !== undefined) detailItems.push(`Mode: ${details.dryRun ? 'Dry Run' : 'Live'}`);
+    if (details.txSignature) detailItems.push(`Tx: ${shortenAddress(details.txSignature)}`);
+    if (details.error) detailItems.push(`Error: ${details.error}`);
+
+    detailsEl.innerHTML = detailItems.map(item => `<div>${item}</div>`).join('');
+  } else {
+    detailsEl.innerHTML = '';
+  }
+}
+
+function hideTestTradeResult() {
+  elements.testTradeResult.style.display = 'none';
+}
+
+// Test trade button handler
+elements.testTradeBtn.addEventListener('click', executeTestTrade);
+
+// Handle Enter key in pool ID input
+elements.poolIdInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    executeTestTrade();
   }
 });
 
