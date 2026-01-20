@@ -13,7 +13,16 @@ import { logger } from '../helpers';
 import { getStateStore } from '../persistence';
 import { getPnlTracker, getExposureManager, getPositionMonitor } from '../risk';
 import { PoolAction } from '../persistence/models';
-import { executeTestTrade } from '../scripts/test-trade';
+
+// Dynamic import for test-trade to avoid crash if file doesn't exist
+let executeTestTrade: ((options: { poolId: string; dryRun: boolean; amount?: number }) => Promise<any>) | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const testTradeModule = require('../scripts/test-trade');
+  executeTestTrade = testTradeModule.executeTestTrade;
+} catch {
+  logger.warn('Test trade module not found - test trade feature will be disabled');
+}
 
 /**
  * Dashboard server configuration
@@ -317,6 +326,17 @@ export class DashboardServer {
     body: { poolId?: string; dryRun?: boolean; amount?: number },
     res: http.ServerResponse,
   ): Promise<void> {
+    // Check if test trade module is available
+    if (!executeTestTrade) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: false,
+        message: 'Test trade feature is not available',
+        error: 'Test trade module not loaded',
+      }));
+      return;
+    }
+
     const { poolId, dryRun = false, amount } = body;
 
     if (!poolId) {
