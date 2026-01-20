@@ -207,7 +207,7 @@ export class DashboardServer {
 
       switch (pathname) {
         case '/api/status':
-          data = this.getApiStatus();
+          data = await this.getApiStatus();
           break;
 
         case '/api/pools':
@@ -258,7 +258,7 @@ export class DashboardServer {
   /**
    * GET /api/status - Bot status overview
    */
-  private getApiStatus() {
+  private async getApiStatus() {
     const stateStore = getStateStore();
     const pnlTracker = getPnlTracker();
     const exposureManager = getExposureManager();
@@ -268,6 +268,9 @@ export class DashboardServer {
     const pnlSummary = pnlTracker?.getSessionSummary();
     const exposureStats = exposureManager?.getStats();
     const monitorStats = positionMonitor?.getStats();
+
+    // Fetch actual wallet balance from chain
+    const walletBalance = exposureManager ? await exposureManager.getWalletBalance() : null;
 
     return {
       status: this.isWebSocketConnected ? 'running' : 'disconnected',
@@ -281,6 +284,7 @@ export class DashboardServer {
         healthy: this.isRpcHealthy,
         endpoint: this.rpcEndpoint,
       },
+      walletBalance, // Actual SOL balance from wallet
       exposure: exposureStats
         ? {
             currentExposure: exposureStats.totalExposure,

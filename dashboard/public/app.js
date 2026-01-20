@@ -70,10 +70,11 @@ async function updateStatus() {
   // Uptime
   elements.uptime.textContent = data.uptimeFormatted || '--';
 
-  // Exposure as "wallet balance" proxy
-  if (data.exposure) {
-    const remaining = data.exposure.maxExposure - data.exposure.currentExposure;
-    elements.walletBalance.textContent = `${remaining.toFixed(3)} SOL`;
+  // Actual wallet balance from chain
+  if (data.walletBalance !== null && data.walletBalance !== undefined) {
+    elements.walletBalance.textContent = `${data.walletBalance.toFixed(4)} SOL`;
+  } else {
+    elements.walletBalance.textContent = '-- SOL';
   }
 
   // P&L
