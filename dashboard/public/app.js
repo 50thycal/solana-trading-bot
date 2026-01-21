@@ -29,6 +29,7 @@ const elements = {
   poolModal: document.getElementById('pool-modal'),
   poolModalBody: document.getElementById('pool-modal-body'),
   // Test trade elements
+  poolSelector: document.getElementById('pool-selector'),
   poolIdInput: document.getElementById('pool-id-input'),
   amountInput: document.getElementById('amount-input'),
   dryRunCheckbox: document.getElementById('dry-run-checkbox'),
@@ -151,6 +152,31 @@ async function updateStats() {
   } else {
     elements.rejectionList.innerHTML = '<div class="empty-state">No data yet</div>';
   }
+}
+
+async function updatePoolSelector() {
+  // Fetch recent pools for the dropdown (limit to 10 most recent)
+  const data = await fetchApi('/api/pools?limit=10');
+  if (!data || !data.pools) return;
+
+  // Keep the default option, add pool options
+  const defaultOption = '<option value="">-- Select a pool --</option>';
+
+  if (data.pools.length === 0) {
+    elements.poolSelector.innerHTML = defaultOption + '<option disabled>No pools available</option>';
+    return;
+  }
+
+  const poolOptions = data.pools.map(pool => {
+    const tokenShort = shortenAddress(pool.tokenMint);
+    const poolShort = shortenAddress(pool.poolId);
+    const time = formatTimeAgo(pool.detectedAt);
+    const actionLabel = pool.action.charAt(0).toUpperCase() + pool.action.slice(1);
+
+    return `<option value="${pool.poolId}">${poolShort} - ${tokenShort} (${actionLabel}, ${time})</option>`;
+  }).join('');
+
+  elements.poolSelector.innerHTML = defaultOption + poolOptions;
 }
 
 // ============================================================
@@ -386,6 +412,14 @@ elements.poolFilter.addEventListener('change', (e) => {
   updatePools();
 });
 
+// Pool selector for test trade
+elements.poolSelector.addEventListener('change', (e) => {
+  const selectedPoolId = e.target.value;
+  if (selectedPoolId) {
+    elements.poolIdInput.value = selectedPoolId;
+  }
+});
+
 // Close modal on Escape key
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && elements.poolModal.classList.contains('open')) {
@@ -510,6 +544,7 @@ async function updateAll() {
     updatePools(),
     updatePositions(),
     updateStats(),
+    updatePoolSelector(),
   ]);
 }
 
