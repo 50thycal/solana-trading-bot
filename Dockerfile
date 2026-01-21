@@ -44,6 +44,7 @@ COPY --from=builder /app/transactions ./transactions
 COPY --from=builder /app/risk ./risk
 COPY --from=builder /app/persistence ./persistence
 COPY --from=builder /app/dashboard ./dashboard
+COPY --from=builder /app/scripts ./scripts
 
 # Copy health server
 COPY --from=builder /app/health.ts ./
