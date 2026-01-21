@@ -55,6 +55,14 @@ export interface BuyResult {
   error?: string;
 }
 
+/**
+ * Options for buy operation
+ */
+export interface BuyOptions {
+  /** Skip persistence checks (seen pool, open position, pending trade) - used for manual/test trades */
+  skipChecks?: boolean;
+}
+
 export interface BotConfig {
   wallet: Keypair;
   checkRenounced: boolean;
@@ -151,14 +159,16 @@ export class Bot {
     return true;
   }
 
-  public async buy(accountId: PublicKey, poolState: LiquidityStateV4): Promise<BuyResult> {
+  public async buy(accountId: PublicKey, poolState: LiquidityStateV4, options?: BuyOptions): Promise<BuyResult> {
     const tokenMint = poolState.baseMint.toString();
     const poolId = accountId.toString();
-    logger.debug({ mint: tokenMint, poolId }, `Processing new pool...`);
+    const skipChecks = options?.skipChecks ?? false;
+    logger.debug({ mint: tokenMint, poolId, skipChecks }, `Processing new pool...`);
 
     // === PERSISTENCE CHECK: Seen pools ===
+    // Skip these checks for manual/test trades
     const stateStore = getStateStore();
-    if (stateStore) {
+    if (stateStore && !skipChecks) {
       // Check if we've already processed this pool
       if (stateStore.hasSeenPool(poolId)) {
         logger.debug({ poolId, mint: tokenMint }, `Skipping - pool already processed`);

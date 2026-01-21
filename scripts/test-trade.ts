@@ -13,7 +13,7 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
 import { getAssociatedTokenAddressSync } from '@solana/spl-token';
-import { Bot, BotConfig, BuyResult } from '../bot';
+import { Bot, BotConfig, BuyResult, BuyOptions } from '../bot';
 import { DefaultTransactionExecutor, TransactionExecutor, FallbackTransactionExecutor } from '../transactions';
 import { MarketCache, PoolCache } from '../cache';
 import { WarpTransactionExecutor } from '../transactions/warp-transaction-executor';
@@ -288,9 +288,9 @@ export async function executeTestTrade(options: TestTradeOptions): Promise<TestT
       };
     }
 
-    // Execute the buy
+    // Execute the buy with skipChecks to bypass persistence checks for manual test trades
     logger.info({ tokenMint, amount: tradeAmount }, 'Executing buy transaction...');
-    const buyResult: BuyResult = await bot.buy(poolPubkey, poolState);
+    const buyResult: BuyResult = await bot.buy(poolPubkey, poolState, { skipChecks: true });
 
     if (buyResult.success) {
       return {
