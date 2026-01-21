@@ -46,6 +46,15 @@ interface PreparedTransaction {
   preparedAt: number; // timestamp when prepared
 }
 
+/**
+ * Result from a buy operation
+ */
+export interface BuyResult {
+  success: boolean;
+  txSignature?: string;
+  error?: string;
+}
+
 export interface BotConfig {
   wallet: Keypair;
   checkRenounced: boolean;
@@ -142,7 +151,7 @@ export class Bot {
     return true;
   }
 
-  public async buy(accountId: PublicKey, poolState: LiquidityStateV4) {
+  public async buy(accountId: PublicKey, poolState: LiquidityStateV4): Promise<BuyResult> {
     const tokenMint = poolState.baseMint.toString();
     const poolId = accountId.toString();
     logger.debug({ mint: tokenMint, poolId }, `Processing new pool...`);
@@ -153,7 +162,7 @@ export class Bot {
       // Check if we've already processed this pool
       if (stateStore.hasSeenPool(poolId)) {
         logger.debug({ poolId, mint: tokenMint }, `Skipping - pool already processed`);
-        return;
+        return { success: false, error: 'Pool already processed' };
       }
 
       // Check if we already have an open position for this token
@@ -165,14 +174,14 @@ export class Bot {
           actionTaken: 'skipped',
           filterReason: 'Already have open position',
         });
-        return;
+        return { success: false, error: 'Already have open position' };
       }
 
       // Check for pending buy trade (idempotency)
       const pendingTrade = stateStore.getPendingTradeForToken(tokenMint, 'buy');
       if (pendingTrade) {
         logger.debug({ mint: tokenMint, tradeId: pendingTrade.id }, `Skipping buy - pending trade exists`);
-        return;
+        return { success: false, error: 'Pending trade exists' };
       }
     }
 
@@ -199,7 +208,7 @@ export class Bot {
           summary: 'Blacklisted token - skipped',
         });
       }
-      return;
+      return { success: false, error: 'Token is blacklisted' };
     }
 
     if (this.config.useSnipeList && !this.snipeListCache?.isInList(tokenMint)) {
@@ -223,7 +232,7 @@ export class Bot {
           summary: 'Not in snipe list - skipped',
         });
       }
-      return;
+      return { success: false, error: 'Not in snipe list' };
     }
 
     // === RISK CHECK 2: Exposure and balance ===
@@ -253,7 +262,7 @@ export class Bot {
             summary: `Risk limit: ${exposureCheck.reason || 'Exposure limit exceeded'}`,
           });
         }
-        return;
+        return { success: false, error: exposureCheck.reason || 'Risk limit exceeded' };
       }
     }
 
@@ -268,7 +277,7 @@ export class Bot {
           { mint: tokenMint },
           `Skipping buy because one token at a time is turned on and token is already being processed`,
         );
-        return;
+        return { success: false, error: 'Another trade is in progress' };
       }
 
       await this.mutex.acquire();
@@ -330,7 +339,7 @@ export class Bot {
                 summary: filterResults.summary,
               });
             }
-            return;
+            return { success: false, error: `Filter failed: ${filterResults.summary}` };
           }
 
           preparedTx = txPrep;
@@ -376,10 +385,13 @@ export class Bot {
                 summary: filterResults.summary,
               });
             }
-            return;
+            return { success: false, error: `Filter failed: ${filterResults.summary}` };
           }
         }
       }
+
+      let lastError: string | undefined;
+      let successSignature: string | undefined;
 
       for (let i = 0; i < this.config.maxBuyRetries; i++) {
         try {
@@ -422,6 +434,8 @@ export class Bot {
               },
               `Confirmed buy tx`,
             );
+
+            successSignature = result.signature;
 
             // === Record trade and register position ===
             const entryAmountSol = parseFloat(this.config.quoteAmount.toFixed());
@@ -494,6 +508,8 @@ export class Bot {
             break;
           }
 
+          // Transaction was not confirmed - store the error
+          lastError = result.error || `Transaction not confirmed (signature: ${result.signature})`;
           logger.info(
             {
               mint: tokenMint,
@@ -503,11 +519,24 @@ export class Bot {
             `Error confirming buy tx`,
           );
         } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error);
           logger.debug({ mint: tokenMint, error }, `Error confirming buy transaction`);
         }
       }
+
+      // Return result based on whether we succeeded
+      if (successSignature) {
+        return { success: true, txSignature: successSignature };
+      }
+
+      // All retries failed
+      const errorMsg = `All ${this.config.maxBuyRetries} buy attempts failed. Last error: ${lastError || 'Unknown error'}`;
+      logger.error({ mint: tokenMint, error: lastError }, errorMsg);
+      return { success: false, error: errorMsg };
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error({ mint: tokenMint, error }, `Failed to buy token`);
+      return { success: false, error: errorMsg };
     } finally {
       if (this.config.oneTokenAtATime) {
         this.mutex.release();

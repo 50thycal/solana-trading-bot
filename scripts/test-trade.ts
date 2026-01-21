@@ -13,7 +13,7 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
 import { getAssociatedTokenAddressSync } from '@solana/spl-token';
-import { Bot, BotConfig } from '../bot';
+import { Bot, BotConfig, BuyResult } from '../bot';
 import { DefaultTransactionExecutor, TransactionExecutor, FallbackTransactionExecutor } from '../transactions';
 import { MarketCache, PoolCache } from '../cache';
 import { WarpTransactionExecutor } from '../transactions/warp-transaction-executor';
@@ -290,18 +290,33 @@ export async function executeTestTrade(options: TestTradeOptions): Promise<TestT
 
     // Execute the buy
     logger.info({ tokenMint, amount: tradeAmount }, 'Executing buy transaction...');
-    await bot.buy(poolPubkey, poolState);
+    const buyResult: BuyResult = await bot.buy(poolPubkey, poolState);
 
-    return {
-      success: true,
-      message: 'Test trade executed',
-      details: {
-        poolId,
-        tokenMint,
-        amount: tradeAmount,
-        dryRun: false,
-      },
-    };
+    if (buyResult.success) {
+      return {
+        success: true,
+        message: 'Test trade executed successfully',
+        details: {
+          poolId,
+          tokenMint,
+          amount: tradeAmount,
+          dryRun: false,
+          txSignature: buyResult.txSignature,
+        },
+      };
+    } else {
+      return {
+        success: false,
+        message: 'Test trade failed',
+        details: {
+          poolId,
+          tokenMint,
+          amount: tradeAmount,
+          dryRun: false,
+          error: buyResult.error || 'Unknown error during buy execution',
+        },
+      };
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error({ error: errorMessage, poolId }, 'Test trade failed');
