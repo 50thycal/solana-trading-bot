@@ -221,7 +221,7 @@ export class Bot {
       return { success: false, error: 'Token is blacklisted' };
     }
 
-    if (this.config.useSnipeList && !this.snipeListCache?.isInList(tokenMint)) {
+    if (!skipChecks && this.config.useSnipeList && !this.snipeListCache?.isInList(tokenMint)) {
       logger.debug({ mint: tokenMint }, `Skipping buy because token is not in a snipe list`);
       if (stateStore) {
         stateStore.recordSeenPool({
