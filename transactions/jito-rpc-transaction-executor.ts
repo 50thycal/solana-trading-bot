@@ -208,6 +208,8 @@ export class JitoTransactionExecutor implements TransactionExecutor {
   ): Promise<{ landed: boolean; status?: string }> {
     const startTime = Date.now();
     const maxAttempts = Math.ceil(this.bundleTimeout / this.bundlePollInterval);
+    let consecutiveRateLimits = 0;
+    const maxConsecutiveRateLimits = 3;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
@@ -217,6 +219,9 @@ export class JitoTransactionExecutor implements TransactionExecutor {
           method: 'getBundleStatuses',
           params: [[bundleId]],
         });
+
+        // Reset rate limit counter on successful request
+        consecutiveRateLimits = 0;
 
         const result = response.data?.result?.value?.[0];
 
@@ -244,8 +249,29 @@ export class JitoTransactionExecutor implements TransactionExecutor {
         // Wait before next poll
         await new Promise((resolve) => setTimeout(resolve, this.bundlePollInterval));
       } catch (error) {
+        // Handle rate limiting (429) specially
+        if (error instanceof AxiosError && error.response?.status === 429) {
+          consecutiveRateLimits++;
+          logger.trace({ bundleId, attempt, consecutiveRateLimits }, 'Rate limited by Jito API');
+
+          // If we've hit too many rate limits, assume the bundle was submitted
+          // and return early to let the fallback handle confirmation
+          if (consecutiveRateLimits >= maxConsecutiveRateLimits) {
+            logger.debug(
+              { bundleId },
+              'Too many rate limits from Jito API - bundle likely submitted, returning to allow fallback confirmation'
+            );
+            return { landed: false, status: 'rate_limited' };
+          }
+
+          // Exponential backoff on rate limits: 500ms, 1000ms, 2000ms
+          const backoffMs = Math.min(500 * Math.pow(2, consecutiveRateLimits - 1), 5000);
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          continue;
+        }
+
         logger.trace({ bundleId, error }, 'Error polling bundle status');
-        // Continue polling on transient errors
+        // Continue polling on other transient errors
       }
     }
 

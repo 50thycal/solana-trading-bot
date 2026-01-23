@@ -1,6 +1,7 @@
 import { BlockhashWithExpiryBlockHeight, Keypair, VersionedTransaction } from '@solana/web3.js';
 import { TransactionExecutor } from './transaction-executor.interface';
 import { logger } from '../helpers';
+import bs58 from 'bs58';
 
 /**
  * Fallback transaction executor that tries a primary executor first,
@@ -21,6 +22,9 @@ export class FallbackTransactionExecutor implements TransactionExecutor {
     payer: Keypair,
     latestBlockhash: BlockhashWithExpiryBlockHeight,
   ): Promise<{ confirmed: boolean; signature?: string; error?: string }> {
+    // Get the transaction signature for potential confirmation later
+    const txSignature = bs58.encode(transaction.signatures[0]);
+
     // Try primary executor first
     logger.debug(`Attempting transaction with ${this.primaryName} executor`);
     const primaryResult = await this.primary.executeAndConfirm(transaction, payer, latestBlockhash);
@@ -48,6 +52,22 @@ export class FallbackTransactionExecutor implements TransactionExecutor {
     if (fallbackResult.confirmed) {
       logger.debug(`Transaction confirmed via ${this.fallbackName} executor`);
       return fallbackResult;
+    }
+
+    // Check if the fallback failed because the transaction was already processed
+    // This typically means the primary executor actually submitted successfully
+    // but failed to confirm (e.g., due to rate limiting during status polling)
+    if (fallbackResult.error?.includes('AlreadyProcessed') ||
+        fallbackResult.error?.includes('already been processed')) {
+      logger.info(
+        { signature: txSignature },
+        'Transaction was already processed - likely submitted by primary executor. Treating as success.'
+      );
+      return {
+        confirmed: true,
+        signature: primaryResult.signature || txSignature,
+        error: undefined,
+      };
     }
 
     // Both failed
