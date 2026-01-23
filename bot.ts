@@ -21,6 +21,7 @@ import {
 import { Liquidity, LiquidityPoolKeysV4, LiquidityStateV4, Percent, Token, TokenAmount } from '@raydium-io/raydium-sdk';
 import { MarketCache, PoolCache, SnipeListCache } from './cache';
 import { PoolFilters, PoolFilterResults, DetailedFilterResult } from './filters';
+import bs58 from 'bs58';
 import { TransactionExecutor } from './transactions';
 import { StoredFilterResult } from './persistence';
 import { createPoolKeys, logger, NETWORK, sleep } from './helpers';
@@ -403,26 +404,56 @@ export class Bot {
       let lastError: string | undefined;
       let successSignature: string | undefined;
 
+      // Build transaction once before retry loop to avoid duplicate trades
+      // Each retry will re-submit the SAME transaction, not create a new one
+      let currentTx: PreparedTransaction | null = preparedTx;
+      if (!currentTx) {
+        currentTx = await this.prepareSwapTransaction(
+          poolKeys,
+          this.config.quoteAta,
+          mintAta,
+          this.config.quoteToken,
+          tokenOut,
+          this.config.quoteAmount,
+          this.config.buySlippage,
+          this.config.wallet,
+          'buy',
+        );
+      }
+
+      if (!currentTx) {
+        logger.error({ mint: tokenMint }, 'Failed to prepare buy transaction');
+        return { success: false, error: 'Failed to prepare transaction' };
+      }
+
       for (let i = 0; i < this.config.maxBuyRetries; i++) {
         try {
+          // Get current signature (may change if we refresh the transaction)
+          const currentSig = bs58.encode(currentTx.transaction.signatures[0]);
           logger.info(
-            { mint: tokenMint },
+            { mint: tokenMint, signature: currentSig },
             `Send buy transaction attempt: ${i + 1}/${this.config.maxBuyRetries}`,
           );
 
-          let result;
+          // Check if blockhash expired - if so, rebuild transaction with new blockhash
+          // but same instructions (this creates a new signature, so check if old tx landed first)
+          if (i > 0 && !this.isBlockhashValid(currentTx)) {
+            // Before creating new tx, check if the previous one actually landed
+            logger.trace({ mint: tokenMint, signature: currentSig }, 'Blockhash expired, checking if tx landed');
+            try {
+              const txStatus = await this.connection.getSignatureStatus(currentSig);
+              if (txStatus.value?.confirmationStatus === 'confirmed' ||
+                  txStatus.value?.confirmationStatus === 'finalized') {
+                logger.info({ mint: tokenMint, signature: currentSig }, 'Transaction already confirmed on retry check');
+                successSignature = currentSig;
+                break;
+              }
+            } catch {
+              // Ignore errors checking status, proceed with new tx
+            }
 
-          // Use pre-computed transaction on first attempt if available
-          if (i === 0 && preparedTx) {
-            logger.trace({ mint: tokenMint }, 'Using pre-computed transaction');
-            result = await this.txExecutor.executeAndConfirm(
-              preparedTx.transaction,
-              this.config.wallet,
-              preparedTx.latestBlockhash,
-            );
-          } else {
-            // Fall back to regular swap for retries or if precompute failed
-            result = await this.swap(
+            logger.trace({ mint: tokenMint }, 'Previous tx not confirmed, creating new tx with fresh blockhash');
+            const refreshedTx = await this.prepareSwapTransaction(
               poolKeys,
               this.config.quoteAta,
               mintAta,
@@ -433,7 +464,19 @@ export class Bot {
               this.config.wallet,
               'buy',
             );
+            if (!refreshedTx) {
+              lastError = 'Failed to refresh transaction';
+              continue;
+            }
+            currentTx = refreshedTx;
           }
+
+          // Re-submit the same transaction (same signature unless blockhash was refreshed)
+          const result = await this.txExecutor.executeAndConfirm(
+            currentTx.transaction,
+            this.config.wallet,
+            currentTx.latestBlockhash,
+          );
 
           if (result.confirmed) {
             logger.info(
