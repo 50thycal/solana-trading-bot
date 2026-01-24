@@ -36,6 +36,7 @@ import {
   getCpmmSwapAccounts,
   computeCpmmSwapOutput,
   computeMinAmountOut,
+  adaptCpmmPoolKeysForFilters,
 } from './helpers';
 import { Mutex } from 'async-mutex';
 import BN from 'bn.js';
@@ -1331,13 +1332,50 @@ export class Bot {
       const baseMint = isQuoteMintA ? poolKeys.mintB : poolKeys.mintA;
       const mintAta = await getAssociatedTokenAddress(baseMint, this.config.wallet.publicKey);
 
-      // For CPMM, we skip the market fetch and filter checks for now
-      // (CPMM pools typically don't have the same filter requirements as AmmV4)
-      // TODO: Add CPMM-specific filters if needed
+      // Apply filters to CPMM pools just like AmmV4 pools
+      // Adapt CPMM pool keys to work with existing filter system
+      let filterResults: PoolFilterResults | null = null;
 
-      // Note: For CPMM pools, we skip detailed filter checks for now
-      // since they have different characteristics than AmmV4 pools
-      logger.debug({ mint: tokenMint, poolType: 'CPMM' }, 'Skipping filter checks for CPMM pool');
+      if (!this.config.useSnipeList && !skipChecks) {
+        const adaptedPoolKeys = adaptCpmmPoolKeysForFilters(poolKeys, this.config.quoteToken.mint);
+        // Cast to LiquidityPoolKeysV4 - the adapter provides the fields needed by filters
+        filterResults = await this.filterMatchWithDetails(adaptedPoolKeys as unknown as LiquidityPoolKeysV4);
+
+        if (!filterResults.allPassed) {
+          logger.debug(
+            { mint: tokenMint, summary: filterResults.summary, poolType: 'CPMM' },
+            `Skipping CPMM buy because pool doesn't match filters`
+          );
+
+          // Record detailed filter results for dashboard
+          if (stateStore) {
+            stateStore.recordSeenPool({
+              poolId,
+              tokenMint,
+              actionTaken: 'filtered',
+              filterReason: filterResults.summary,
+            });
+
+            stateStore.recordPoolDetection({
+              poolId,
+              tokenMint,
+              action: 'filtered',
+              poolType: 'CPMM',
+              filterResults: this.convertToStoredFilterResults(filterResults.filters),
+              riskCheckPassed: true,
+              summary: filterResults.summary,
+            });
+          }
+
+          return { success: false, error: `Filter failed: ${filterResults.summary}` };
+        }
+
+        logger.debug({ mint: tokenMint, poolType: 'CPMM' }, 'CPMM pool passed all filters');
+      } else if (skipChecks) {
+        logger.debug({ mint: tokenMint, poolType: 'CPMM' }, 'Skipping filter checks (skipChecks=true)');
+      } else {
+        logger.debug({ mint: tokenMint, poolType: 'CPMM' }, 'Skipping filter checks (using snipe list)');
+      }
 
       // Build transaction
       let currentTx: PreparedTransaction | null = await this.prepareCpmmSwapTransaction(
@@ -1458,9 +1496,9 @@ export class Bot {
             tokenMint,
             action: 'bought',
             poolType: 'CPMM',
-            filterResults: [],
+            filterResults: filterResults ? this.convertToStoredFilterResults(filterResults.filters) : [],
             riskCheckPassed: true,
-            summary: 'CPMM pool - bought',
+            summary: filterResults?.summary || 'CPMM pool - bought',
           });
         }
 
