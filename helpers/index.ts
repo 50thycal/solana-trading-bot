@@ -1,5 +1,6 @@
 export * from './market';
 export * from './liquidity';
+export * from './cpmm';
 export * from './logger';
 export * from './constants';
 export * from './token';

@@ -19,12 +19,24 @@ import {
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import { Liquidity, LiquidityPoolKeysV4, LiquidityStateV4, Percent, Token, TokenAmount } from '@raydium-io/raydium-sdk';
+import { makeSwapCpmmBaseInInstruction } from '@raydium-io/raydium-sdk-v2';
 import { MarketCache, PoolCache, SnipeListCache } from './cache';
 import { PoolFilters, PoolFilterResults, DetailedFilterResult } from './filters';
 import bs58 from 'bs58';
 import { TransactionExecutor } from './transactions';
 import { StoredFilterResult } from './persistence';
-import { createPoolKeys, logger, NETWORK, sleep } from './helpers';
+import {
+  createPoolKeys,
+  logger,
+  NETWORK,
+  sleep,
+  CpmmPoolState,
+  CpmmPoolKeys,
+  createCpmmPoolKeys,
+  getCpmmSwapAccounts,
+  computeCpmmSwapOutput,
+  computeMinAmountOut,
+} from './helpers';
 import { Mutex } from 'async-mutex';
 import BN from 'bn.js';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
@@ -1166,5 +1178,642 @@ export class Bot {
         timesChecked++;
       }
     } while (timesChecked < timesToCheck);
+  }
+
+  // ============================================================================
+  // CPMM POOL SUPPORT
+  // ============================================================================
+
+  /**
+   * Buy tokens from a CPMM pool.
+   * CPMM pools are newer Raydium pools that don't require OpenBook markets.
+   */
+  public async buyCpmm(accountId: PublicKey, poolState: CpmmPoolState, options?: BuyOptions): Promise<BuyResult> {
+    // Determine which mint is the base token (the one we're buying)
+    // In CPMM, mintA and mintB are ordered, so we need to figure out which is quote and which is base
+    const isQuoteMintA = poolState.mintA.equals(this.config.quoteToken.mint);
+    const tokenMint = isQuoteMintA ? poolState.mintB.toString() : poolState.mintA.toString();
+    const tokenDecimals = isQuoteMintA ? poolState.mintDecimalB : poolState.mintDecimalA;
+    const poolId = accountId.toString();
+    const skipChecks = options?.skipChecks ?? false;
+
+    logger.debug({ mint: tokenMint, poolId, poolType: 'CPMM', skipChecks }, `Processing new CPMM pool...`);
+
+    // === PERSISTENCE CHECK: Seen pools ===
+    const stateStore = getStateStore();
+    if (stateStore && !skipChecks) {
+      if (stateStore.hasSeenPool(poolId)) {
+        logger.debug({ poolId, mint: tokenMint }, `Skipping - CPMM pool already processed`);
+        return { success: false, error: 'Pool already processed' };
+      }
+
+      if (stateStore.hasOpenPosition(tokenMint)) {
+        logger.debug({ mint: tokenMint }, `Skipping buy - already have open position`);
+        stateStore.recordSeenPool({
+          poolId,
+          tokenMint,
+          actionTaken: 'skipped',
+          filterReason: 'Already have open position',
+        });
+        return { success: false, error: 'Already have open position' };
+      }
+
+      const pendingTrade = stateStore.getPendingTradeForToken(tokenMint, 'buy');
+      if (pendingTrade) {
+        logger.debug({ mint: tokenMint, tradeId: pendingTrade.id }, `Skipping buy - pending trade exists`);
+        return { success: false, error: 'Pending trade exists' };
+      }
+    }
+
+    // === RISK CHECK 1: Blacklist ===
+    const blacklist = getBlacklist();
+    if (blacklist.isTokenBlacklisted(tokenMint)) {
+      logger.debug({ mint: tokenMint }, `Skipping buy - token is blacklisted`);
+      if (stateStore) {
+        stateStore.recordSeenPool({
+          poolId,
+          tokenMint,
+          actionTaken: 'blacklisted',
+          filterReason: 'Token is blacklisted',
+        });
+        stateStore.recordPoolDetection({
+          poolId,
+          tokenMint,
+          action: 'blacklisted',
+          filterResults: [],
+          riskCheckPassed: false,
+          riskCheckReason: 'Token is blacklisted',
+          summary: 'Blacklisted token - skipped',
+        });
+      }
+      return { success: false, error: 'Token is blacklisted' };
+    }
+
+    if (!skipChecks && this.config.useSnipeList && !this.snipeListCache?.isInList(tokenMint)) {
+      logger.debug({ mint: tokenMint }, `Skipping buy because token is not in a snipe list`);
+      if (stateStore) {
+        stateStore.recordSeenPool({
+          poolId,
+          tokenMint,
+          actionTaken: 'skipped',
+          filterReason: 'Not in snipe list',
+        });
+        stateStore.recordPoolDetection({
+          poolId,
+          tokenMint,
+          action: 'skipped',
+          filterResults: [],
+          riskCheckPassed: true,
+          riskCheckReason: 'Not in snipe list',
+          summary: 'Not in snipe list - skipped',
+        });
+      }
+      return { success: false, error: 'Not in snipe list' };
+    }
+
+    // === RISK CHECK 2: Exposure and balance ===
+    const exposureManager = getExposureManager();
+    if (exposureManager) {
+      const tradeAmount = parseFloat(this.config.quoteAmount.toFixed());
+      const exposureCheck = await exposureManager.canTrade(tradeAmount);
+
+      if (!exposureCheck.allowed) {
+        logger.warn({ mint: tokenMint, reason: exposureCheck.reason }, `Skipping buy - risk limit exceeded`);
+        if (stateStore) {
+          stateStore.recordSeenPool({
+            poolId,
+            tokenMint,
+            actionTaken: 'skipped',
+            filterReason: exposureCheck.reason || 'Risk limit exceeded',
+          });
+          stateStore.recordPoolDetection({
+            poolId,
+            tokenMint,
+            action: 'skipped',
+            filterResults: [],
+            riskCheckPassed: false,
+            riskCheckReason: exposureCheck.reason || 'Risk limit exceeded',
+            summary: `Risk limit: ${exposureCheck.reason || 'Exposure limit exceeded'}`,
+          });
+        }
+        return { success: false, error: exposureCheck.reason || 'Risk limit exceeded' };
+      }
+    }
+
+    if (this.config.autoBuyDelay > 0) {
+      logger.debug({ mint: tokenMint }, `Waiting for ${this.config.autoBuyDelay} ms before buy`);
+      await sleep(this.config.autoBuyDelay);
+    }
+
+    if (this.config.oneTokenAtATime) {
+      if (this.mutex.isLocked() || this.sellExecutionCount > 0) {
+        logger.debug(
+          { mint: tokenMint },
+          `Skipping buy because one token at a time is turned on and token is already being processed`,
+        );
+        return { success: false, error: 'Another trade is in progress' };
+      }
+      await this.mutex.acquire();
+    }
+
+    try {
+      // Create CPMM pool keys
+      const poolKeys = createCpmmPoolKeys(accountId, poolState);
+      const baseMint = isQuoteMintA ? poolKeys.mintB : poolKeys.mintA;
+      const mintAta = await getAssociatedTokenAddress(baseMint, this.config.wallet.publicKey);
+
+      // For CPMM, we skip the market fetch and filter checks for now
+      // (CPMM pools typically don't have the same filter requirements as AmmV4)
+      // TODO: Add CPMM-specific filters if needed
+
+      // Note: For CPMM pools, we skip detailed filter checks for now
+      // since they have different characteristics than AmmV4 pools
+      logger.debug({ mint: tokenMint, poolType: 'CPMM' }, 'Skipping filter checks for CPMM pool');
+
+      // Build transaction
+      let currentTx: PreparedTransaction | null = await this.prepareCpmmSwapTransaction(
+        poolKeys,
+        poolState,
+        this.config.quoteAta,
+        mintAta,
+        this.config.quoteToken.mint,
+        baseMint,
+        this.config.quoteAmount,
+        this.config.buySlippage,
+        this.config.wallet,
+        'buy',
+      );
+
+      if (!currentTx) {
+        logger.error({ mint: tokenMint }, 'Failed to prepare CPMM buy transaction');
+        return { success: false, error: 'Failed to prepare transaction' };
+      }
+
+      let lastError: string | undefined;
+      let successSignature: string | undefined;
+
+      for (let i = 0; i < this.config.maxBuyRetries; i++) {
+        try {
+          // Ensure we have a valid transaction
+          if (!currentTx) {
+            lastError = 'No valid transaction to execute';
+            continue;
+          }
+
+          const currentSig = bs58.encode(currentTx.transaction.signatures[0]);
+          logger.info(
+            { mint: tokenMint, signature: currentSig, poolType: 'CPMM' },
+            `Send CPMM buy transaction attempt: ${i + 1}/${this.config.maxBuyRetries}`,
+          );
+
+          // Check if blockhash expired
+          if (i > 0 && !this.isBlockhashValid(currentTx)) {
+            logger.trace({ mint: tokenMint, signature: currentSig }, 'Blockhash expired, checking if tx landed');
+            try {
+              const txStatus = await this.connection.getSignatureStatus(currentSig);
+              if (txStatus.value?.confirmationStatus === 'confirmed' ||
+                  txStatus.value?.confirmationStatus === 'finalized') {
+                logger.info({ mint: tokenMint, signature: currentSig }, 'Transaction already confirmed on retry check');
+                successSignature = currentSig;
+                break;
+              }
+            } catch (e) {
+              // Ignore status check errors
+            }
+
+            // Rebuild transaction with new blockhash
+            currentTx = await this.prepareCpmmSwapTransaction(
+              poolKeys,
+              poolState,
+              this.config.quoteAta,
+              mintAta,
+              this.config.quoteToken.mint,
+              baseMint,
+              this.config.quoteAmount,
+              this.config.buySlippage,
+              this.config.wallet,
+              'buy',
+            );
+
+            if (!currentTx) {
+              lastError = 'Failed to refresh transaction';
+              continue;
+            }
+          }
+
+          const result = await this.txExecutor.executeAndConfirm(
+            currentTx.transaction,
+            this.config.wallet,
+            currentTx.latestBlockhash,
+          );
+
+          if (result.confirmed) {
+            successSignature = result.signature;
+            logger.info(
+              { mint: tokenMint, signature: successSignature, poolType: 'CPMM' },
+              `Confirmed CPMM buy tx`,
+            );
+            break;
+          } else {
+            lastError = result.error || 'Unknown error';
+            logger.debug({ mint: tokenMint, error: lastError }, `CPMM buy transaction not confirmed, retrying...`);
+          }
+        } catch (error) {
+          const errMsg = error instanceof Error ? error.message : String(error);
+          lastError = errMsg;
+          logger.debug({ mint: tokenMint, error: errMsg }, `CPMM buy transaction failed, retrying...`);
+        }
+      }
+
+      // Record result
+      if (successSignature) {
+        const entryAmountSol = parseFloat(this.config.quoteAmount.toFixed());
+
+        if (stateStore) {
+          stateStore.createPosition({
+            tokenMint,
+            poolId,
+            entryPrice: entryAmountSol,
+            amountToken: 0, // Will be updated after sell
+            amountSol: entryAmountSol,
+          });
+
+          stateStore.recordSeenPool({
+            poolId,
+            tokenMint,
+            actionTaken: 'bought',
+          });
+
+          stateStore.recordPoolDetection({
+            poolId,
+            tokenMint,
+            action: 'bought',
+            filterResults: [],
+            riskCheckPassed: true,
+            summary: 'CPMM pool - bought',
+          });
+        }
+
+        // Record with P&L tracker
+        const pnlTracker = getPnlTracker();
+        if (pnlTracker) {
+          pnlTracker.recordBuy({
+            tokenMint,
+            amountSol: entryAmountSol,
+            amountToken: 0,
+            poolId,
+            txSignature: successSignature,
+          });
+        }
+
+        // Record exposure
+        if (exposureManager) {
+          exposureManager.recordTrade();
+        }
+
+        // Note: Position monitor is skipped for CPMM pools as it requires LiquidityPoolKeysV4
+        // CPMM positions will be sold via wallet listener when token balance changes
+        logger.debug({ mint: tokenMint, poolType: 'CPMM' }, 'CPMM position tracked - auto-sell via wallet listener');
+
+        return { success: true, txSignature: successSignature };
+      }
+
+      // Failed
+      if (stateStore) {
+        stateStore.recordSeenPool({
+          poolId,
+          tokenMint,
+          actionTaken: 'error',
+          filterReason: lastError || 'Transaction failed',
+        });
+      }
+
+      return { success: false, error: lastError || 'Max retries exceeded' };
+    } finally {
+      if (this.config.oneTokenAtATime) {
+        this.mutex.release();
+      }
+    }
+  }
+
+  /**
+   * Prepare a CPMM swap transaction.
+   */
+  private async prepareCpmmSwapTransaction(
+    poolKeys: CpmmPoolKeys,
+    poolState: CpmmPoolState,
+    ataIn: PublicKey,
+    ataOut: PublicKey,
+    inputMint: PublicKey,
+    outputMint: PublicKey,
+    amountIn: TokenAmount,
+    slippage: number,
+    wallet: Keypair,
+    direction: 'buy' | 'sell',
+  ): Promise<PreparedTransaction | null> {
+    try {
+      // Get swap accounts based on direction
+      const swapAccounts = getCpmmSwapAccounts(poolKeys, inputMint);
+
+      // Fetch vault balances to compute output
+      const [inputVaultInfo, outputVaultInfo] = await Promise.all([
+        this.connection.getTokenAccountBalance(swapAccounts.inputVault),
+        this.connection.getTokenAccountBalance(swapAccounts.outputVault),
+      ]);
+
+      const inputReserve = new BN(inputVaultInfo.value.amount);
+      const outputReserve = new BN(outputVaultInfo.value.amount);
+
+      // Get trade fee rate from config (default to 0.25% = 2500 basis points)
+      // Note: In production, you might want to fetch this from the pool's configId
+      const tradeFeeRate = new BN(2500); // 0.25% in basis points (1e6 = 100%)
+
+      // Compute output amount
+      const { amountOut } = computeCpmmSwapOutput(
+        amountIn.raw,
+        inputReserve,
+        outputReserve,
+        tradeFeeRate,
+      );
+
+      // Apply slippage
+      const minAmountOut = computeMinAmountOut(amountOut, slippage);
+
+      logger.trace({
+        inputReserve: inputReserve.toString(),
+        outputReserve: outputReserve.toString(),
+        amountIn: amountIn.raw.toString(),
+        amountOut: amountOut.toString(),
+        minAmountOut: minAmountOut.toString(),
+      }, 'CPMM swap calculation');
+
+      const latestBlockhash = await this.connection.getLatestBlockhash();
+
+      // Build swap instruction using V2 SDK
+      const swapInstruction = makeSwapCpmmBaseInInstruction(
+        poolKeys.programId,
+        wallet.publicKey,
+        poolKeys.authority,
+        poolKeys.configId,
+        poolKeys.id,
+        ataIn,
+        ataOut,
+        swapAccounts.inputVault,
+        swapAccounts.outputVault,
+        swapAccounts.inputTokenProgram,
+        swapAccounts.outputTokenProgram,
+        swapAccounts.inputMint,
+        swapAccounts.outputMint,
+        poolKeys.observationId,
+        amountIn.raw,
+        minAmountOut,
+      );
+
+      // Build pre-swap instructions
+      const preInstructions = [];
+      const postInstructions = [];
+
+      // Add compute budget instructions if not using Warp/Jito
+      if (!this.isWarp && !this.isJito) {
+        preInstructions.push(
+          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: this.config.unitPrice }),
+          ComputeBudgetProgram.setComputeUnitLimit({ units: this.config.unitLimit }),
+        );
+      }
+
+      // Handle WSOL wrapping for buy direction
+      if (direction === 'buy') {
+        // Create output token account
+        preInstructions.push(
+          createAssociatedTokenAccountIdempotentInstruction(
+            wallet.publicKey,
+            ataOut,
+            wallet.publicKey,
+            outputMint,
+          ),
+        );
+
+        // If input token is WSOL (native SOL), wrap SOL to WSOL
+        if (inputMint.equals(NATIVE_MINT)) {
+          preInstructions.push(
+            createAssociatedTokenAccountIdempotentInstruction(
+              wallet.publicKey,
+              ataIn,
+              wallet.publicKey,
+              NATIVE_MINT,
+            ),
+          );
+          preInstructions.push(
+            SystemProgram.transfer({
+              fromPubkey: wallet.publicKey,
+              toPubkey: ataIn,
+              lamports: BigInt(amountIn.raw.toString()),
+            }),
+          );
+          preInstructions.push(createSyncNativeInstruction(ataIn));
+        }
+      }
+
+      // Handle sell direction
+      if (direction === 'sell') {
+        // Ensure output token account exists (for receiving quote token)
+        preInstructions.push(
+          createAssociatedTokenAccountIdempotentInstruction(
+            wallet.publicKey,
+            ataOut,
+            wallet.publicKey,
+            outputMint,
+          ),
+        );
+        // Close the input token account after selling to recover rent
+        postInstructions.push(createCloseAccountInstruction(ataIn, wallet.publicKey, wallet.publicKey));
+      }
+
+      const messageV0 = new TransactionMessage({
+        payerKey: wallet.publicKey,
+        recentBlockhash: latestBlockhash.blockhash,
+        instructions: [
+          ...preInstructions,
+          swapInstruction,
+          ...postInstructions,
+        ],
+      }).compileToV0Message();
+
+      const transaction = new VersionedTransaction(messageV0);
+      transaction.sign([wallet]);
+
+      return {
+        transaction,
+        latestBlockhash,
+        preparedAt: Date.now(),
+      };
+    } catch (error) {
+      logger.trace({ error }, 'Failed to prepare CPMM swap transaction');
+      return null;
+    }
+  }
+
+  /**
+   * Sell tokens from a CPMM pool.
+   * Called when wallet listener detects token balance change for a CPMM position.
+   */
+  public async sellCpmm(
+    accountId: PublicKey,
+    poolState: CpmmPoolState,
+    rawAccount: RawAccount,
+  ): Promise<void> {
+    // Determine which mint is the base token (the one we're selling)
+    const isQuoteMintA = poolState.mintA.equals(this.config.quoteToken.mint);
+    const baseMint = isQuoteMintA ? poolState.mintB : poolState.mintA;
+    const tokenMint = baseMint.toString();
+    const poolId = accountId.toString();
+
+    if (this.config.autoSellDelay > 0) {
+      logger.debug({ mint: tokenMint }, `Waiting for ${this.config.autoSellDelay} ms before sell`);
+      await sleep(this.config.autoSellDelay);
+    }
+
+    const tokenAmount = new BN(rawAccount.amount.toString());
+    if (tokenAmount.isZero()) {
+      logger.debug({ mint: tokenMint }, 'Token balance is zero, skipping sell');
+      return;
+    }
+
+    const tokenDecimals = isQuoteMintA ? poolState.mintDecimalB : poolState.mintDecimalA;
+    const amountIn = new TokenAmount(
+      new Token(TOKEN_PROGRAM_ID, baseMint, tokenDecimals),
+      tokenAmount,
+      true,
+    );
+
+    this.sellExecutionCount++;
+
+    try {
+      const poolKeys = createCpmmPoolKeys(accountId, poolState);
+      const ataIn = await getAssociatedTokenAddress(baseMint, this.config.wallet.publicKey);
+      const ataOut = this.config.quoteAta;
+
+      let currentTx: PreparedTransaction | null = await this.prepareCpmmSwapTransaction(
+        poolKeys,
+        poolState,
+        ataIn,
+        ataOut,
+        baseMint,
+        this.config.quoteToken.mint,
+        amountIn,
+        this.config.sellSlippage,
+        this.config.wallet,
+        'sell',
+      );
+
+      if (!currentTx) {
+        logger.error({ mint: tokenMint }, 'Failed to prepare CPMM sell transaction');
+        return;
+      }
+
+      let successSignature: string | undefined;
+
+      for (let i = 0; i < this.config.maxSellRetries; i++) {
+        try {
+          // Ensure we have a valid transaction
+          if (!currentTx) {
+            continue;
+          }
+
+          const currentSig = bs58.encode(currentTx.transaction.signatures[0]);
+          logger.info(
+            { mint: tokenMint, signature: currentSig, poolType: 'CPMM' },
+            `Send CPMM sell transaction attempt: ${i + 1}/${this.config.maxSellRetries}`,
+          );
+
+          // Check if blockhash expired
+          if (i > 0 && !this.isBlockhashValid(currentTx)) {
+            try {
+              const txStatus = await this.connection.getSignatureStatus(currentSig);
+              if (txStatus.value?.confirmationStatus === 'confirmed' ||
+                  txStatus.value?.confirmationStatus === 'finalized') {
+                logger.info({ mint: tokenMint, signature: currentSig }, 'CPMM sell transaction already confirmed');
+                successSignature = currentSig;
+                break;
+              }
+            } catch (e) {
+              // Ignore
+            }
+
+            currentTx = await this.prepareCpmmSwapTransaction(
+              poolKeys,
+              poolState,
+              ataIn,
+              ataOut,
+              baseMint,
+              this.config.quoteToken.mint,
+              amountIn,
+              this.config.sellSlippage,
+              this.config.wallet,
+              'sell',
+            );
+
+            if (!currentTx) {
+              continue;
+            }
+          }
+
+          const result = await this.txExecutor.executeAndConfirm(
+            currentTx.transaction,
+            this.config.wallet,
+            currentTx.latestBlockhash,
+          );
+
+          if (result.confirmed) {
+            successSignature = result.signature;
+            logger.info(
+              { mint: tokenMint, signature: successSignature, poolType: 'CPMM' },
+              `Confirmed CPMM sell tx`,
+            );
+            break;
+          } else {
+            logger.debug({ mint: tokenMint, error: result.error }, `CPMM sell transaction not confirmed, retrying...`);
+          }
+        } catch (error) {
+          const errMsg = error instanceof Error ? error.message : String(error);
+          logger.debug({ mint: tokenMint, error: errMsg }, `CPMM sell transaction failed, retrying...`);
+        }
+      }
+
+      if (successSignature) {
+        const stateStore = getStateStore();
+        if (stateStore) {
+          stateStore.closePosition(tokenMint, successSignature);
+        }
+
+        // Record with P&L tracker
+        const pnlTracker = getPnlTracker();
+        if (pnlTracker) {
+          // Calculate approximate sell value based on current price
+          // This is a simplification - in production you might want to use actual received amount
+          pnlTracker.recordSell({
+            tokenMint,
+            amountSol: parseFloat(this.config.quoteAmount.toFixed()),
+            amountToken: parseFloat(tokenAmount.toString()),
+            poolId,
+            txSignature: successSignature,
+          });
+        }
+
+        // Remove from position monitor
+        const positionMonitor = getPositionMonitor();
+        if (positionMonitor) {
+          positionMonitor.removePosition(tokenMint);
+        }
+
+        // Remove from exposure manager
+        const exposureManager = getExposureManager();
+        if (exposureManager) {
+          exposureManager.removePosition(tokenMint);
+        }
+      }
+    } finally {
+      this.sellExecutionCount--;
+    }
   }
 }

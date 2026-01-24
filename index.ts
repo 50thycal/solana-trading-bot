@@ -34,6 +34,7 @@ import {
   COMPUTE_UNIT_LIMIT,
   COMPUTE_UNIT_PRICE,
   CACHE_NEW_MARKETS,
+  ENABLE_CPMM,
   TAKE_PROFIT,
   STOP_LOSS,
   BUY_SLIPPAGE,
@@ -56,6 +57,7 @@ import {
   USE_FALLBACK_EXECUTOR,
   SIMULATE_TRANSACTION,
   logFilterPresetInfo,
+  CpmmPoolInfoLayout,
 } from './helpers';
 import { initRpcManager } from './helpers/rpc-manager';
 import { startDashboardServer, DashboardServer } from './dashboard';
@@ -146,6 +148,7 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Single token at the time: ${botConfig.oneTokenAtATime}`);
   logger.info(`Pre load existing markets: ${PRE_LOAD_EXISTING_MARKETS}`);
   logger.info(`Cache new markets: ${CACHE_NEW_MARKETS}`);
+  logger.info(`CPMM pools enabled: ${ENABLE_CPMM}`);
   logger.info(`Log level: ${LOG_LEVEL}`);
   logger.info(`Health check port: ${HEALTH_PORT}`);
 
@@ -510,6 +513,7 @@ const runListener = async () => {
     quoteToken,
     autoSell: AUTO_SELL,
     cacheNewMarkets: CACHE_NEW_MARKETS,
+    enableCpmm: ENABLE_CPMM,
   });
 
   // Update health server status
@@ -557,6 +561,44 @@ const runListener = async () => {
     }
   });
 
+  // Handle CPMM pool events
+  listeners.on('cpmm-pool', async (updatedAccountInfo: KeyedAccountInfo) => {
+    const cpmmPoolState = CpmmPoolInfoLayout.decode(updatedAccountInfo.accountInfo.data);
+    const poolOpenTime = parseInt(cpmmPoolState.openTime.toString());
+
+    // Record activity
+    if (dashboardServer) {
+      dashboardServer.recordWebSocketActivity();
+    }
+
+    // Determine which mint is the base token (not the quote token)
+    const isQuoteMintA = cpmmPoolState.mintA.equals(quoteToken.mint);
+    const baseMint = isQuoteMintA ? cpmmPoolState.mintB : cpmmPoolState.mintA;
+    const baseMintStr = baseMint.toString();
+
+    // Check if pool is new
+    const exists = await poolCache.get(baseMintStr);
+    const isNewPool = !exists && poolOpenTime > runTimestamp;
+
+    logger.debug(
+      {
+        mint: baseMintStr,
+        poolOpenTime,
+        runTimestamp,
+        isNew: isNewPool,
+        alreadyCached: !!exists,
+        poolType: 'CPMM',
+      },
+      isNewPool ? 'New CPMM pool detected - processing' : 'CPMM pool event received - skipping (not new or already cached)'
+    );
+
+    if (isNewPool && bot) {
+      // Save to cache using baseMint as key (same pattern as AmmV4)
+      poolCache.save(updatedAccountInfo.accountId.toString(), cpmmPoolState as any);
+      await bot.buyCpmm(updatedAccountInfo.accountId, cpmmPoolState);
+    }
+  });
+
   listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {
     const accountData = AccountLayout.decode(updatedAccountInfo.accountInfo.data);
 
@@ -579,11 +621,16 @@ const runListener = async () => {
   // Periodic heartbeat log to show bot is still alive
   const heartbeatIntervalMs = 5 * 60 * 1000; // 5 minutes
   let poolEventsReceived = 0;
+  let cpmmPoolEventsReceived = 0;
   let lastHeartbeat = Date.now();
 
   // Track pool events for heartbeat stats
   listeners.on('pool', () => {
     poolEventsReceived++;
+  });
+
+  listeners.on('cpmm-pool', () => {
+    cpmmPoolEventsReceived++;
   });
 
   setInterval(() => {
@@ -593,7 +640,8 @@ const runListener = async () => {
 
     logger.info(
       {
-        poolEventsLast5min: poolEventsReceived,
+        ammV4PoolsLast5min: poolEventsReceived,
+        cpmmPoolsLast5min: cpmmPoolEventsReceived,
         seenPools: stats?.seenPools || 0,
         openPositions: stats?.positions.open || 0,
         uptimeMinutes: Math.floor(uptimeMs / 60000),
@@ -602,6 +650,7 @@ const runListener = async () => {
     );
 
     poolEventsReceived = 0; // Reset counter
+    cpmmPoolEventsReceived = 0;
     lastHeartbeat = Date.now();
   }, heartbeatIntervalMs);
 };

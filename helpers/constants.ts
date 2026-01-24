@@ -49,6 +49,7 @@ export const COMPUTE_UNIT_LIMIT = config.computeUnitLimit;
 export const COMPUTE_UNIT_PRICE = config.computeUnitPrice;
 export const PRE_LOAD_EXISTING_MARKETS = config.preLoadExistingMarkets;
 export const CACHE_NEW_MARKETS = config.cacheNewMarkets;
+export const ENABLE_CPMM = config.enableCpmm;
 export const TRANSACTION_EXECUTOR = config.transactionExecutor;
 export const CUSTOM_FEE = config.customFee;
 
