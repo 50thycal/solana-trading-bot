@@ -53,8 +53,6 @@ export class Listeners extends EventEmitter {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private isReconnecting: boolean = false;
   private isStopped: boolean = false;
-  // Track CPMM pools pending swap enablement (status 0)
-  private pendingCpmmPools: Map<string, { retries: number; timer: NodeJS.Timeout | null }> = new Map();
 
   constructor(
     private connection: Connection,
@@ -249,6 +247,11 @@ export class Listeners extends EventEmitter {
   /**
    * Subscribe to Raydium CPMM pools
    * CPMM pools use a different program and layout than AmmV4
+   *
+   * Note: We only process pools that already have swap enabled (status bit 2).
+   * The WebSocket subscription will notify us when a pool's status changes,
+   * so there's no need for manual retries. If a pool is created with status 0
+   * and later gets swap enabled, we'll receive a new event at that time.
    */
   private async subscribeToCpmmPools(config: { quoteToken: Token }): Promise<number> {
     // CPMM uses mintA/mintB instead of baseMint/quoteMint
@@ -279,23 +282,16 @@ export class Listeners extends EventEmitter {
           const hasQuoteToken = mintA.equals(quoteTokenMint) || mintB.equals(quoteTokenMint);
 
           if (hasQuoteToken) {
-            const poolId = updatedAccountInfo.accountId.toBase58();
             // Check if swap is enabled (status bit 2)
             const status = poolState.status;
             const swapEnabled = (status & 4) !== 0;
 
             if (swapEnabled) {
-              // Clear any pending retry if swap is now enabled
-              this.clearPendingCpmmPool(poolId);
+              // Swap is enabled - emit the pool for processing
               this.emit('cpmm-pool', updatedAccountInfo);
-            } else {
-              // Pool swap not enabled - schedule a retry to re-fetch
-              this.scheduleCpmmPoolRetry(poolId, config.quoteToken);
-              logger.trace(
-                { poolId, status },
-                'CPMM pool swap not enabled, scheduled retry'
-              );
             }
+            // Note: If swap is not enabled, we simply skip this event.
+            // The WebSocket will notify us again if/when the status changes.
           }
         } catch (error) {
           logger.trace({ error }, 'Failed to decode CPMM pool data');
@@ -306,93 +302,6 @@ export class Listeners extends EventEmitter {
         { dataSize: CpmmPoolInfoLayout.span },
       ],
     );
-  }
-
-  /**
-   * Schedule a retry to check if CPMM pool has swap enabled
-   * New pools often have status 0 initially and get enabled shortly after
-   */
-  private scheduleCpmmPoolRetry(poolId: string, quoteToken: Token): void {
-    const MAX_RETRIES = 3;
-    const RETRY_DELAY_MS = 5000; // 5 seconds between retries
-
-    const existing = this.pendingCpmmPools.get(poolId);
-
-    // If already at max retries, don't schedule more
-    if (existing && existing.retries >= MAX_RETRIES) {
-      logger.debug({ poolId, retries: existing.retries }, 'CPMM pool max retries reached, giving up');
-      this.clearPendingCpmmPool(poolId);
-      return;
-    }
-
-    // Clear existing timer if any
-    if (existing?.timer) {
-      clearTimeout(existing.timer);
-    }
-
-    const retries = (existing?.retries ?? 0) + 1;
-
-    const timer = setTimeout(async () => {
-      await this.recheckCpmmPool(poolId, quoteToken);
-    }, RETRY_DELAY_MS);
-
-    this.pendingCpmmPools.set(poolId, { retries, timer });
-    logger.debug({ poolId, retries }, 'Scheduled CPMM pool retry');
-  }
-
-  /**
-   * Re-fetch a CPMM pool to check if swap is now enabled
-   */
-  private async recheckCpmmPool(poolId: string, quoteToken: Token): Promise<void> {
-    try {
-      const poolPubkey = new PublicKey(poolId);
-      const accountInfo = await this.connection.getAccountInfo(poolPubkey);
-
-      if (!accountInfo) {
-        logger.debug({ poolId }, 'CPMM pool account not found on recheck');
-        this.clearPendingCpmmPool(poolId);
-        return;
-      }
-
-      const poolState = CpmmPoolInfoLayout.decode(accountInfo.data);
-      const status = poolState.status;
-      const swapEnabled = (status & 4) !== 0;
-
-      if (swapEnabled) {
-        logger.info({ poolId, status }, 'CPMM pool swap now enabled after retry');
-        this.clearPendingCpmmPool(poolId);
-
-        // Emit the pool event with the updated account info
-        this.emit('cpmm-pool', {
-          accountId: poolPubkey,
-          accountInfo: {
-            data: accountInfo.data,
-            executable: accountInfo.executable,
-            lamports: accountInfo.lamports,
-            owner: accountInfo.owner,
-            rentEpoch: accountInfo.rentEpoch,
-          },
-        });
-      } else {
-        // Still not enabled, schedule another retry
-        logger.debug({ poolId, status }, 'CPMM pool swap still not enabled, scheduling another retry');
-        this.scheduleCpmmPoolRetry(poolId, quoteToken);
-      }
-    } catch (error) {
-      logger.debug({ poolId, error }, 'Failed to recheck CPMM pool');
-      this.clearPendingCpmmPool(poolId);
-    }
-  }
-
-  /**
-   * Clear a pending CPMM pool retry
-   */
-  private clearPendingCpmmPool(poolId: string): void {
-    const existing = this.pendingCpmmPools.get(poolId);
-    if (existing?.timer) {
-      clearTimeout(existing.timer);
-    }
-    this.pendingCpmmPools.delete(poolId);
   }
 
   /**
@@ -431,14 +340,6 @@ export class Listeners extends EventEmitter {
       }
     }
     this.subscriptions = [];
-
-    // Clear all pending CPMM pool retries
-    for (const [poolId, pending] of this.pendingCpmmPools) {
-      if (pending.timer) {
-        clearTimeout(pending.timer);
-      }
-    }
-    this.pendingCpmmPools.clear();
   }
 
   /**
