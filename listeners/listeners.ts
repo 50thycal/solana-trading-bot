@@ -345,28 +345,26 @@ export class Listeners extends EventEmitter {
     let notEnabled = 0;
     let emitted = 0;
 
-    // Log stats every 60 seconds
+    // Log stats every 60 seconds - always log to confirm subscription is working
     setInterval(() => {
-      if (totalEvents > 0) {
-        logger.debug(
-          {
-            totalEvents,
-            tooSmall,
-            decodeErrors,
-            noQuoteToken,
-            notEnabled,
-            emitted,
-          },
-          'DLMM subscription stats (last 60s)'
-        );
-        // Reset counters
-        totalEvents = 0;
-        tooSmall = 0;
-        decodeErrors = 0;
-        noQuoteToken = 0;
-        notEnabled = 0;
-        emitted = 0;
-      }
+      logger.info(
+        {
+          totalEvents,
+          tooSmall,
+          decodeErrors,
+          noQuoteToken,
+          notEnabled,
+          emitted,
+        },
+        `DLMM subscription stats (last 60s): ${totalEvents} events received`
+      );
+      // Reset counters
+      totalEvents = 0;
+      tooSmall = 0;
+      decodeErrors = 0;
+      noQuoteToken = 0;
+      notEnabled = 0;
+      emitted = 0;
     }, 60000);
 
     logger.info(
