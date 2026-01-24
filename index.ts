@@ -646,7 +646,7 @@ const runListener = async () => {
         openPositions: stats?.positions.open || 0,
         uptimeMinutes: Math.floor(uptimeMs / 60000),
       },
-      'Heartbeat: Bot is running and listening for new pools'
+      `Heartbeat: AmmV4=${poolEventsReceived} CPMM=${cpmmPoolEventsReceived} pools last 5min | Total seen: ${stats?.seenPools || 0} | Open positions: ${stats?.positions.open || 0}`
     );
 
     poolEventsReceived = 0; // Reset counter
