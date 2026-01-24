@@ -337,6 +337,38 @@ export class Listeners extends EventEmitter {
     // We don't filter by dataSize because LbPair accounts are much larger than our layout
     // (they contain bin arrays). We filter by quote token + status in the handler.
 
+    // Debug counters
+    let totalEvents = 0;
+    let tooSmall = 0;
+    let decodeErrors = 0;
+    let noQuoteToken = 0;
+    let notEnabled = 0;
+    let emitted = 0;
+
+    // Log stats every 60 seconds
+    setInterval(() => {
+      if (totalEvents > 0) {
+        logger.debug(
+          {
+            totalEvents,
+            tooSmall,
+            decodeErrors,
+            noQuoteToken,
+            notEnabled,
+            emitted,
+          },
+          'DLMM subscription stats (last 60s)'
+        );
+        // Reset counters
+        totalEvents = 0;
+        tooSmall = 0;
+        decodeErrors = 0;
+        noQuoteToken = 0;
+        notEnabled = 0;
+        emitted = 0;
+      }
+    }, 60000);
+
     logger.info(
       {
         programId: DLMM_PROGRAM_ID.toBase58(),
@@ -348,9 +380,11 @@ export class Listeners extends EventEmitter {
     return this.connection.onProgramAccountChange(
       DLMM_PROGRAM_ID,
       async (updatedAccountInfo) => {
-        // Decode and filter in handler - quote token can be tokenX OR tokenY
+        totalEvents++;
+
         // Only process accounts large enough to be LbPair accounts (>= 300 bytes)
         if (updatedAccountInfo.accountInfo.data.length < 300) {
+          tooSmall++;
           return; // Skip small accounts (not LbPair)
         }
 
@@ -368,14 +402,20 @@ export class Listeners extends EventEmitter {
             const isEnabled = isDlmmPoolEnabled(poolState.status);
 
             if (isEnabled) {
+              emitted++;
               // Pool is enabled - emit for processing
               this.emit('dlmm-pool', updatedAccountInfo);
+            } else {
+              notEnabled++;
             }
             // Note: If pool is not enabled, we skip this event.
             // The WebSocket will notify us again if/when the status changes.
+          } else {
+            noQuoteToken++;
           }
         } catch (error) {
-          logger.trace({ error }, 'Failed to decode DLMM pool data');
+          decodeErrors++;
+          logger.trace({ error, dataLength: updatedAccountInfo.accountInfo.data.length }, 'Failed to decode DLMM pool data');
         }
       },
       this.connection.commitment,
