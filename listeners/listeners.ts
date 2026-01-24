@@ -294,7 +294,7 @@ export class Listeners extends EventEmitter {
             swapNotEnabled,
             emitted,
           },
-          `CPMM listener stats (60s): ${totalEvents} raw events, ${emitted} emitted`
+          `CPMM listener stats (60s): raw=${totalEvents} | noQuote=${noQuoteToken} | swapDisabled=${swapNotEnabled} | decodeErr=${decodeErrors} | emitted=${emitted}`
         );
       }
       // Reset counters
@@ -394,7 +394,7 @@ export class Listeners extends EventEmitter {
             notEnabled,
             emitted,
           },
-          `DLMM listener stats (60s): ${totalEvents} raw events, ${emitted} emitted`
+          `DLMM listener stats (60s): raw=${totalEvents} | tooSmall=${tooSmall} | noQuote=${noQuoteToken} | notEnabled=${notEnabled} | decodeErr=${decodeErrors} | emitted=${emitted}`
         );
       }
       // Reset counters
