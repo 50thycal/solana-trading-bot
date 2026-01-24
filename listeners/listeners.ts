@@ -250,43 +250,53 @@ export class Listeners extends EventEmitter {
    */
   private async subscribeToCpmmPools(config: { quoteToken: Token }): Promise<number> {
     // CPMM uses mintA/mintB instead of baseMint/quoteMint
-    // We need to listen for pools where either mintA or mintB is the quote token
-    // For simplicity, we filter by mintB (which is typically the quote token like WSOL)
-    //
-    // CPMM pool layout offsets:
-    // - mintA: offset from layout
-    // - mintB: offset from layout
-    // - status: u8 at a specific offset
-    //
-    // Status bits: bit 0=deposit, bit 1=withdraw, bit 2=swap
-    // We want status where swap is enabled (bit 2 set), which means status & 4 != 0
-    // Common values: 7 (all enabled), 4 (swap only)
+    // The quote token (WSOL) can be in either mintA or mintB position
+    // We filter only by dataSize and do quote token filtering in the event handler
+    // This is more reliable than guessing memcmp offsets
+
+    logger.info(
+      {
+        programId: CPMM_PROGRAM_ID.toBase58(),
+        quoteToken: config.quoteToken.mint.toBase58(),
+        dataSize: CpmmPoolInfoLayout.span,
+      },
+      'Setting up CPMM pool subscription'
+    );
 
     return this.connection.onProgramAccountChange(
       CPMM_PROGRAM_ID,
       async (updatedAccountInfo) => {
-        this.emit('cpmm-pool', updatedAccountInfo);
+        // Decode and filter in handler - quote token can be mintA OR mintB
+        try {
+          const poolState = CpmmPoolInfoLayout.decode(updatedAccountInfo.accountInfo.data);
+          const mintA = poolState.mintA;
+          const mintB = poolState.mintB;
+          const quoteTokenMint = config.quoteToken.mint;
+
+          // Check if either mint is our quote token
+          const hasQuoteToken = mintA.equals(quoteTokenMint) || mintB.equals(quoteTokenMint);
+
+          if (hasQuoteToken) {
+            // Check if swap is enabled (status bit 2)
+            const status = poolState.status;
+            const swapEnabled = (status & 4) !== 0;
+
+            if (swapEnabled) {
+              this.emit('cpmm-pool', updatedAccountInfo);
+            } else {
+              logger.trace(
+                { poolId: updatedAccountInfo.accountId.toBase58(), status },
+                'CPMM pool swap not enabled, skipping'
+              );
+            }
+          }
+        } catch (error) {
+          logger.trace({ error }, 'Failed to decode CPMM pool data');
+        }
       },
       this.connection.commitment,
       [
         { dataSize: CpmmPoolInfoLayout.span },
-        {
-          // Filter by mintB (quote token) - offset 72 based on layout structure
-          // mintA is at offset 40, mintB is at offset 72 (each PublicKey is 32 bytes)
-          memcmp: {
-            offset: 72, // mintB offset in CpmmPoolInfoLayout
-            bytes: config.quoteToken.mint.toBase58(),
-          },
-        },
-        {
-          // Filter by status - must have swap enabled (bit 2)
-          // Status is at offset 8 (after bump at 0 and padding)
-          // We filter for status = 7 (all operations enabled)
-          memcmp: {
-            offset: 8, // status offset
-            bytes: bs58.encode([CPMM_POOL_STATUS.ALL_ENABLED]),
-          },
-        },
       ],
     );
   }
