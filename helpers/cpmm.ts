@@ -190,3 +190,35 @@ export function getCpmmSwapAccounts(
     };
   }
 }
+
+/**
+ * Adapter to convert CPMM pool keys to a format compatible with existing AmmV4 filters.
+ * This allows reusing the same filter logic for both pool types.
+ *
+ * @param poolKeys - CPMM pool keys
+ * @param quoteMint - The quote token mint (e.g., WSOL)
+ * @returns An object with the fields needed by pool filters (baseMint, lpMint, quoteVault, id)
+ */
+export function adaptCpmmPoolKeysForFilters(
+  poolKeys: CpmmPoolKeys,
+  quoteMint: PublicKey,
+): {
+  id: PublicKey;
+  baseMint: PublicKey;
+  quoteMint: PublicKey;
+  lpMint: PublicKey;
+  baseVault: PublicKey;
+  quoteVault: PublicKey;
+} {
+  // Determine which mint is quote and which is base
+  const isQuoteMintA = poolKeys.mintA.equals(quoteMint);
+
+  return {
+    id: poolKeys.id,
+    baseMint: isQuoteMintA ? poolKeys.mintB : poolKeys.mintA,
+    quoteMint: isQuoteMintA ? poolKeys.mintA : poolKeys.mintB,
+    lpMint: poolKeys.mintLp,
+    baseVault: isQuoteMintA ? poolKeys.vaultB : poolKeys.vaultA,
+    quoteVault: isQuoteMintA ? poolKeys.vaultA : poolKeys.vaultB,
+  };
+}
