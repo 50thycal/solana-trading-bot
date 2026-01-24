@@ -3,7 +3,7 @@ import bs58 from 'bs58';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { EventEmitter } from 'events';
-import { logger } from '../helpers';
+import { logger, CPMM_PROGRAM_ID, CpmmPoolInfoLayout, CPMM_POOL_STATUS } from '../helpers';
 
 /**
  * Reconnection configuration
@@ -28,14 +28,16 @@ export interface ListenerConfig {
   quoteToken: Token;
   autoSell: boolean;
   cacheNewMarkets: boolean;
+  enableCpmm: boolean;
 }
 
 /**
  * Listeners class - Manages WebSocket subscriptions with automatic reconnection
  *
  * Events emitted:
- * - 'market': New market detected
- * - 'pool': New pool detected
+ * - 'market': New OpenBook market detected
+ * - 'pool': New Raydium AmmV4 pool detected
+ * - 'cpmm-pool': New Raydium CPMM pool detected
  * - 'wallet': Wallet account changed
  * - 'connected': WebSocket connected/reconnected
  * - 'disconnected': WebSocket disconnected
@@ -93,6 +95,12 @@ export class Listeners extends EventEmitter {
 
       const raydiumSubscription = await this.subscribeToRaydiumPools(this.config);
       this.subscriptions.push(raydiumSubscription);
+
+      if (this.config.enableCpmm) {
+        const cpmmSubscription = await this.subscribeToCpmmPools(this.config);
+        this.subscriptions.push(cpmmSubscription);
+        logger.info('CPMM pool subscription enabled');
+      }
 
       if (this.config.autoSell) {
         const walletSubscription = await this.subscribeToWalletChanges(this.config);
@@ -230,6 +238,53 @@ export class Listeners extends EventEmitter {
           memcmp: {
             offset: LIQUIDITY_STATE_LAYOUT_V4.offsetOf('status'),
             bytes: bs58.encode([6, 0, 0, 0, 0, 0, 0, 0]),
+          },
+        },
+      ],
+    );
+  }
+
+  /**
+   * Subscribe to Raydium CPMM pools
+   * CPMM pools use a different program and layout than AmmV4
+   */
+  private async subscribeToCpmmPools(config: { quoteToken: Token }): Promise<number> {
+    // CPMM uses mintA/mintB instead of baseMint/quoteMint
+    // We need to listen for pools where either mintA or mintB is the quote token
+    // For simplicity, we filter by mintB (which is typically the quote token like WSOL)
+    //
+    // CPMM pool layout offsets:
+    // - mintA: offset from layout
+    // - mintB: offset from layout
+    // - status: u8 at a specific offset
+    //
+    // Status bits: bit 0=deposit, bit 1=withdraw, bit 2=swap
+    // We want status where swap is enabled (bit 2 set), which means status & 4 != 0
+    // Common values: 7 (all enabled), 4 (swap only)
+
+    return this.connection.onProgramAccountChange(
+      CPMM_PROGRAM_ID,
+      async (updatedAccountInfo) => {
+        this.emit('cpmm-pool', updatedAccountInfo);
+      },
+      this.connection.commitment,
+      [
+        { dataSize: CpmmPoolInfoLayout.span },
+        {
+          // Filter by mintB (quote token) - offset 72 based on layout structure
+          // mintA is at offset 40, mintB is at offset 72 (each PublicKey is 32 bytes)
+          memcmp: {
+            offset: 72, // mintB offset in CpmmPoolInfoLayout
+            bytes: config.quoteToken.mint.toBase58(),
+          },
+        },
+        {
+          // Filter by status - must have swap enabled (bit 2)
+          // Status is at offset 8 (after bump at 0 and padding)
+          // We filter for status = 7 (all operations enabled)
+          memcmp: {
+            offset: 8, // status offset
+            bytes: bs58.encode([CPMM_POOL_STATUS.ALL_ENABLED]),
           },
         },
       ],
