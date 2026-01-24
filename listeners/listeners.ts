@@ -327,24 +327,33 @@ export class Listeners extends EventEmitter {
    *
    * Note: We only process pools that are enabled (status = 1).
    * The WebSocket subscription will notify us when a pool's status changes.
+   *
+   * IMPORTANT: DLMM LbPair accounts are much larger than our partial layout
+   * (~10KB+) due to bin arrays. We don't filter by dataSize and instead
+   * rely on the discriminator check in the decoder.
    */
   private async subscribeToDlmmPools(config: { quoteToken: Token }): Promise<number> {
     // DLMM uses tokenXMint/tokenYMint - the quote token can be in either position
-    // We filter only by dataSize and do quote token + status filtering in the handler
+    // We don't filter by dataSize because LbPair accounts are much larger than our layout
+    // (they contain bin arrays). We filter by quote token + status in the handler.
 
     logger.info(
       {
         programId: DLMM_PROGRAM_ID.toBase58(),
         quoteToken: config.quoteToken.mint.toBase58(),
-        dataSize: DlmmLbPairLayout.span,
       },
-      'Setting up Meteora DLMM pool subscription'
+      'Setting up Meteora DLMM pool subscription (no dataSize filter - LbPair accounts vary in size)'
     );
 
     return this.connection.onProgramAccountChange(
       DLMM_PROGRAM_ID,
       async (updatedAccountInfo) => {
         // Decode and filter in handler - quote token can be tokenX OR tokenY
+        // Only process accounts large enough to be LbPair accounts (>= 300 bytes)
+        if (updatedAccountInfo.accountInfo.data.length < 300) {
+          return; // Skip small accounts (not LbPair)
+        }
+
         try {
           const poolState = decodeDlmmPoolState(updatedAccountInfo.accountInfo.data);
           const tokenXMint = poolState.tokenXMint;
@@ -370,9 +379,8 @@ export class Listeners extends EventEmitter {
         }
       },
       this.connection.commitment,
-      [
-        { dataSize: DlmmLbPairLayout.span },
-      ],
+      // No dataSize filter - LbPair accounts are much larger than our partial layout
+      // All filtering happens in the handler above
     );
   }
 
