@@ -229,6 +229,28 @@ body {
   color: var(--accent-yellow);
 }
 
+/* Pool Type Badge */
+.pool-type {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-left: 0.5rem;
+}
+
+.pool-type.ammv4 {
+  background: rgba(33, 150, 243, 0.15);
+  color: var(--accent-blue);
+}
+
+.pool-type.cpmm {
+  background: rgba(156, 39, 176, 0.2);
+  color: #ce93d8;
+}
+
 .pool-summary {
   font-size: 0.875rem;
   color: var(--text-secondary);
