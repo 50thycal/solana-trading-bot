@@ -431,6 +431,16 @@ export class Listeners extends EventEmitter {
           const tokenYMint = poolState.tokenYMint;
           const quoteTokenMint = config.quoteToken.mint;
 
+          // Debug: Log first few decoded mints to verify layout is correct
+          if (totalEvents <= 3) {
+            logger.info({
+              tokenXMint: tokenXMint.toBase58(),
+              tokenYMint: tokenYMint.toBase58(),
+              expectedQuote: quoteTokenMint.toBase58(),
+              dataLength: updatedAccountInfo.accountInfo.data.length,
+            }, 'DLMM DEBUG: Sample decoded mints');
+          }
+
           // Check if either token is our quote token
           const hasQuoteToken = tokenXMint.equals(quoteTokenMint) || tokenYMint.equals(quoteTokenMint);
 
