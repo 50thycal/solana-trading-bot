@@ -251,6 +251,11 @@ body {
   color: #ce93d8;
 }
 
+.pool-type.dlmm {
+  background: rgba(255, 152, 0, 0.2);
+  color: #ffb74d;
+}
+
 .pool-summary {
   font-size: 0.875rem;
   color: var(--text-secondary);

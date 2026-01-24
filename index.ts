@@ -58,6 +58,8 @@ import {
   SIMULATE_TRANSACTION,
   logFilterPresetInfo,
   CpmmPoolInfoLayout,
+  ENABLE_DLMM,
+  decodeDlmmPoolState,
 } from './helpers';
 import { initRpcManager } from './helpers/rpc-manager';
 import { startDashboardServer, DashboardServer } from './dashboard';
@@ -149,6 +151,7 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Pre load existing markets: ${PRE_LOAD_EXISTING_MARKETS}`);
   logger.info(`Cache new markets: ${CACHE_NEW_MARKETS}`);
   logger.info(`CPMM pools enabled: ${ENABLE_CPMM}`);
+  logger.info(`DLMM pools enabled: ${ENABLE_DLMM}`);
   logger.info(`Log level: ${LOG_LEVEL}`);
   logger.info(`Health check port: ${HEALTH_PORT}`);
 
@@ -514,6 +517,7 @@ const runListener = async () => {
     autoSell: AUTO_SELL,
     cacheNewMarkets: CACHE_NEW_MARKETS,
     enableCpmm: ENABLE_CPMM,
+    enableDlmm: ENABLE_DLMM,
   });
 
   // Update health server status
@@ -599,6 +603,48 @@ const runListener = async () => {
     }
   });
 
+  // Handle Meteora DLMM pool events
+  listeners.on('dlmm-pool', async (updatedAccountInfo: KeyedAccountInfo) => {
+    const dlmmPoolState = decodeDlmmPoolState(updatedAccountInfo.accountInfo.data);
+
+    // Record activity
+    if (dashboardServer) {
+      dashboardServer.recordWebSocketActivity();
+    }
+
+    // Determine which mint is the base token (not the quote token)
+    const isQuoteX = dlmmPoolState.tokenXMint.equals(quoteToken.mint);
+    const baseMint = isQuoteX ? dlmmPoolState.tokenYMint : dlmmPoolState.tokenXMint;
+    const baseMintStr = baseMint.toString();
+
+    // Check if pool is new - DLMM uses activationPoint
+    const exists = await poolCache.get(baseMintStr);
+    const activationPoint = parseInt(dlmmPoolState.activationPoint.toString());
+    // If activationPoint is 0, pool is immediately active
+    // Otherwise, check if activation time has passed
+    const isNewPool = !exists && (activationPoint === 0 || activationPoint > runTimestamp);
+
+    logger.debug(
+      {
+        mint: baseMintStr,
+        activationPoint,
+        runTimestamp,
+        isNew: isNewPool,
+        alreadyCached: !!exists,
+        poolType: 'DLMM',
+        binStep: dlmmPoolState.binStep,
+        activeId: dlmmPoolState.activeId,
+      },
+      isNewPool ? 'New DLMM pool detected - processing' : 'DLMM pool event received - skipping (not new or already cached)'
+    );
+
+    if (isNewPool && bot) {
+      // Save to cache using baseMint as key (same pattern as other pool types)
+      poolCache.save(updatedAccountInfo.accountId.toString(), dlmmPoolState as any);
+      await bot.buyDlmm(updatedAccountInfo.accountId, dlmmPoolState);
+    }
+  });
+
   listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {
     const accountData = AccountLayout.decode(updatedAccountInfo.accountInfo.data);
 
@@ -622,6 +668,7 @@ const runListener = async () => {
   const heartbeatIntervalMs = 5 * 60 * 1000; // 5 minutes
   let poolEventsReceived = 0;
   let cpmmPoolEventsReceived = 0;
+  let dlmmPoolEventsReceived = 0;
   let lastHeartbeat = Date.now();
 
   // Track pool events for heartbeat stats
@@ -633,6 +680,10 @@ const runListener = async () => {
     cpmmPoolEventsReceived++;
   });
 
+  listeners.on('dlmm-pool', () => {
+    dlmmPoolEventsReceived++;
+  });
+
   setInterval(() => {
     const uptimeMs = Date.now() - lastHeartbeat;
     const stateStore = getStateStore();
@@ -642,15 +693,17 @@ const runListener = async () => {
       {
         ammV4PoolsLast5min: poolEventsReceived,
         cpmmPoolsLast5min: cpmmPoolEventsReceived,
+        dlmmPoolsLast5min: dlmmPoolEventsReceived,
         seenPools: stats?.seenPools || 0,
         openPositions: stats?.positions.open || 0,
         uptimeMinutes: Math.floor(uptimeMs / 60000),
       },
-      `Heartbeat: AmmV4=${poolEventsReceived} CPMM=${cpmmPoolEventsReceived} pools last 5min | Total seen: ${stats?.seenPools || 0} | Open positions: ${stats?.positions.open || 0}`
+      `Heartbeat: AmmV4=${poolEventsReceived} CPMM=${cpmmPoolEventsReceived} DLMM=${dlmmPoolEventsReceived} pools last 5min | Total seen: ${stats?.seenPools || 0} | Open positions: ${stats?.positions.open || 0}`
     );
 
     poolEventsReceived = 0; // Reset counter
     cpmmPoolEventsReceived = 0;
+    dlmmPoolEventsReceived = 0;
     lastHeartbeat = Date.now();
   }, heartbeatIntervalMs);
 };

@@ -984,11 +984,12 @@ export class StateStore {
     const byPoolType = {
       AmmV4: { total: 0, bought: 0 },
       CPMM: { total: 0, bought: 0 },
+      DLMM: { total: 0, bought: 0 },
     };
 
     for (const row of poolTypeStats) {
       const poolType = row.pool_type || 'AmmV4';
-      if (poolType === 'AmmV4' || poolType === 'CPMM') {
+      if (poolType === 'AmmV4' || poolType === 'CPMM' || poolType === 'DLMM') {
         byPoolType[poolType] = { total: row.total || 0, bought: row.bought || 0 };
       }
     }

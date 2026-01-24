@@ -60,6 +60,7 @@ export interface ValidatedConfig {
   preLoadExistingMarkets: boolean;
   cacheNewMarkets: boolean;
   enableCpmm: boolean;
+  enableDlmm: boolean;
 
   // Risk Controls (Phase 2)
   maxTotalExposureSol: number;
@@ -285,6 +286,7 @@ export function validateConfig(): ValidatedConfig {
   const preLoadExistingMarkets = requireBoolean('PRE_LOAD_EXISTING_MARKETS', false);
   const cacheNewMarkets = requireBoolean('CACHE_NEW_MARKETS', false);
   const enableCpmm = requireBoolean('ENABLE_CPMM', true); // Enable CPMM pools by default
+  const enableDlmm = requireBoolean('ENABLE_DLMM', true); // Enable Meteora DLMM pools by default
 
   // === RISK CONTROLS (Phase 2) ===
   const maxTotalExposureSol = requireNumber('MAX_TOTAL_EXPOSURE_SOL', 0.5);
@@ -410,6 +412,7 @@ export function validateConfig(): ValidatedConfig {
     preLoadExistingMarkets,
     cacheNewMarkets,
     enableCpmm,
+    enableDlmm,
     maxTotalExposureSol,
     maxTradesPerHour,
     minWalletBufferSol,

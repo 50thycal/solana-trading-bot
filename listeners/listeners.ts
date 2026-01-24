@@ -3,7 +3,16 @@ import bs58 from 'bs58';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { EventEmitter } from 'events';
-import { logger, CPMM_PROGRAM_ID, CpmmPoolInfoLayout, CPMM_POOL_STATUS } from '../helpers';
+import {
+  logger,
+  CPMM_PROGRAM_ID,
+  CpmmPoolInfoLayout,
+  CPMM_POOL_STATUS,
+  DLMM_PROGRAM_ID,
+  DlmmLbPairLayout,
+  decodeDlmmPoolState,
+  isDlmmPoolEnabled,
+} from '../helpers';
 
 /**
  * Reconnection configuration
@@ -29,6 +38,7 @@ export interface ListenerConfig {
   autoSell: boolean;
   cacheNewMarkets: boolean;
   enableCpmm: boolean;
+  enableDlmm: boolean;
 }
 
 /**
@@ -38,6 +48,7 @@ export interface ListenerConfig {
  * - 'market': New OpenBook market detected
  * - 'pool': New Raydium AmmV4 pool detected
  * - 'cpmm-pool': New Raydium CPMM pool detected
+ * - 'dlmm-pool': New Meteora DLMM pool detected
  * - 'wallet': Wallet account changed
  * - 'connected': WebSocket connected/reconnected
  * - 'disconnected': WebSocket disconnected
@@ -100,6 +111,12 @@ export class Listeners extends EventEmitter {
         const cpmmSubscription = await this.subscribeToCpmmPools(this.config);
         this.subscriptions.push(cpmmSubscription);
         logger.info('CPMM pool subscription enabled');
+      }
+
+      if (this.config.enableDlmm) {
+        const dlmmSubscription = await this.subscribeToDlmmPools(this.config);
+        this.subscriptions.push(dlmmSubscription);
+        logger.info('Meteora DLMM pool subscription enabled');
       }
 
       if (this.config.autoSell) {
@@ -300,6 +317,61 @@ export class Listeners extends EventEmitter {
       this.connection.commitment,
       [
         { dataSize: CpmmPoolInfoLayout.span },
+      ],
+    );
+  }
+
+  /**
+   * Subscribe to Meteora DLMM pools
+   * DLMM (Dynamic Liquidity Market Maker) is Meteora's bin-based AMM
+   *
+   * Note: We only process pools that are enabled (status = 1).
+   * The WebSocket subscription will notify us when a pool's status changes.
+   */
+  private async subscribeToDlmmPools(config: { quoteToken: Token }): Promise<number> {
+    // DLMM uses tokenXMint/tokenYMint - the quote token can be in either position
+    // We filter only by dataSize and do quote token + status filtering in the handler
+
+    logger.info(
+      {
+        programId: DLMM_PROGRAM_ID.toBase58(),
+        quoteToken: config.quoteToken.mint.toBase58(),
+        dataSize: DlmmLbPairLayout.span,
+      },
+      'Setting up Meteora DLMM pool subscription'
+    );
+
+    return this.connection.onProgramAccountChange(
+      DLMM_PROGRAM_ID,
+      async (updatedAccountInfo) => {
+        // Decode and filter in handler - quote token can be tokenX OR tokenY
+        try {
+          const poolState = decodeDlmmPoolState(updatedAccountInfo.accountInfo.data);
+          const tokenXMint = poolState.tokenXMint;
+          const tokenYMint = poolState.tokenYMint;
+          const quoteTokenMint = config.quoteToken.mint;
+
+          // Check if either token is our quote token
+          const hasQuoteToken = tokenXMint.equals(quoteTokenMint) || tokenYMint.equals(quoteTokenMint);
+
+          if (hasQuoteToken) {
+            // Check if pool is enabled for trading
+            const isEnabled = isDlmmPoolEnabled(poolState.status);
+
+            if (isEnabled) {
+              // Pool is enabled - emit for processing
+              this.emit('dlmm-pool', updatedAccountInfo);
+            }
+            // Note: If pool is not enabled, we skip this event.
+            // The WebSocket will notify us again if/when the status changes.
+          }
+        } catch (error) {
+          logger.trace({ error }, 'Failed to decode DLMM pool data');
+        }
+      },
+      this.connection.commitment,
+      [
+        { dataSize: DlmmLbPairLayout.span },
       ],
     );
   }

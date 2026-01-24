@@ -30,9 +30,9 @@ export type BlacklistType = 'token' | 'creator';
 export type PoolAction = 'bought' | 'filtered' | 'blacklisted' | 'skipped' | 'error';
 
 /**
- * Pool type - AmmV4 (legacy) or CPMM (new)
+ * Pool type - AmmV4 (Raydium legacy), CPMM (Raydium new), DLMM (Meteora)
  */
-export type PoolType = 'AmmV4' | 'CPMM';
+export type PoolType = 'AmmV4' | 'CPMM' | 'DLMM';
 
 /**
  * Persisted position record
@@ -270,5 +270,6 @@ export interface PoolDetectionStats {
   byPoolType: {
     AmmV4: { total: number; bought: number };
     CPMM: { total: number; bought: number };
+    DLMM: { total: number; bought: number };
   };
 }
