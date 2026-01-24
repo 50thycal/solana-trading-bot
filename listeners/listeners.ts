@@ -433,12 +433,9 @@ export class Listeners extends EventEmitter {
 
           // Debug: Log first few decoded mints to verify layout is correct
           if (totalEvents <= 3) {
-            logger.info({
-              tokenXMint: tokenXMint.toBase58(),
-              tokenYMint: tokenYMint.toBase58(),
-              expectedQuote: quoteTokenMint.toBase58(),
-              dataLength: updatedAccountInfo.accountInfo.data.length,
-            }, 'DLMM DEBUG: Sample decoded mints');
+            logger.info(
+              `DLMM DEBUG: tokenX=${tokenXMint.toBase58()} | tokenY=${tokenYMint.toBase58()} | quote=${quoteTokenMint.toBase58()}`
+            );
           }
 
           // Check if either token is our quote token
