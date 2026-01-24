@@ -60,6 +60,7 @@ import {
   CpmmPoolInfoLayout,
   ENABLE_DLMM,
   decodeDlmmPoolState,
+  isDlmmPoolActivated,
 } from './helpers';
 import { initRpcManager } from './helpers/rpc-manager';
 import { startDashboardServer, DashboardServer } from './dashboard';
@@ -492,6 +493,13 @@ const runListener = async () => {
 
   const runTimestamp = Math.floor(new Date().getTime() / 1000);
 
+  // Pool detection stats tracking for heartbeat
+  const poolDetectionStats = {
+    ammV4: { detected: 0, alreadyCached: 0, isNew: 0, proceededToBuy: 0 },
+    cpmm: { detected: 0, alreadyCached: 0, isNew: 0, proceededToBuy: 0 },
+    dlmm: { detected: 0, alreadyCached: 0, isNew: 0, proceededToBuy: 0 },
+  };
+
   // Initialize listeners with reconnection support
   listeners = new Listeners(connection);
 
@@ -541,13 +549,23 @@ const runListener = async () => {
     const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
     const exists = await poolCache.get(poolState.baseMint.toString());
 
+    // Track stats
+    poolDetectionStats.ammV4.detected++;
+    if (exists) {
+      poolDetectionStats.ammV4.alreadyCached++;
+    }
+
     // Record activity
     if (dashboardServer) {
       dashboardServer.recordWebSocketActivity();
     }
 
-    // Log all pool events at debug level for visibility
+    // Determine if pool is new (not cached AND created after bot startup)
     const isNewPool = !exists && poolOpenTime > runTimestamp;
+    if (isNewPool) {
+      poolDetectionStats.ammV4.isNew++;
+    }
+
     logger.debug(
       {
         mint: poolState.baseMint.toString(),
@@ -555,11 +573,13 @@ const runListener = async () => {
         runTimestamp,
         isNew: isNewPool,
         alreadyCached: !!exists,
+        poolType: 'AmmV4',
       },
-      isNewPool ? 'New pool detected - processing' : 'Pool event received - skipping (not new or already cached)'
+      isNewPool ? 'New AmmV4 pool detected - processing' : 'AmmV4 pool event received - skipping (not new or already cached)'
     );
 
     if (isNewPool && bot) {
+      poolDetectionStats.ammV4.proceededToBuy++;
       poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
       await bot.buy(updatedAccountInfo.accountId, poolState);
     }
@@ -569,6 +589,9 @@ const runListener = async () => {
   listeners.on('cpmm-pool', async (updatedAccountInfo: KeyedAccountInfo) => {
     const cpmmPoolState = CpmmPoolInfoLayout.decode(updatedAccountInfo.accountInfo.data);
     const poolOpenTime = parseInt(cpmmPoolState.openTime.toString());
+
+    // Track stats
+    poolDetectionStats.cpmm.detected++;
 
     // Record activity
     if (dashboardServer) {
@@ -582,7 +605,14 @@ const runListener = async () => {
 
     // Check if pool is new
     const exists = await poolCache.get(baseMintStr);
+    if (exists) {
+      poolDetectionStats.cpmm.alreadyCached++;
+    }
+
     const isNewPool = !exists && poolOpenTime > runTimestamp;
+    if (isNewPool) {
+      poolDetectionStats.cpmm.isNew++;
+    }
 
     logger.debug(
       {
@@ -597,6 +627,7 @@ const runListener = async () => {
     );
 
     if (isNewPool && bot) {
+      poolDetectionStats.cpmm.proceededToBuy++;
       // Save to cache using baseMint as key (same pattern as AmmV4)
       poolCache.save(updatedAccountInfo.accountId.toString(), cpmmPoolState as any);
       await bot.buyCpmm(updatedAccountInfo.accountId, cpmmPoolState);
@@ -606,6 +637,9 @@ const runListener = async () => {
   // Handle Meteora DLMM pool events
   listeners.on('dlmm-pool', async (updatedAccountInfo: KeyedAccountInfo) => {
     const dlmmPoolState = decodeDlmmPoolState(updatedAccountInfo.accountInfo.data);
+
+    // Track stats
+    poolDetectionStats.dlmm.detected++;
 
     // Record activity
     if (dashboardServer) {
@@ -619,26 +653,38 @@ const runListener = async () => {
 
     // Check if pool is new - DLMM uses activationPoint
     const exists = await poolCache.get(baseMintStr);
-    const activationPoint = parseInt(dlmmPoolState.activationPoint.toString());
-    // If activationPoint is 0, pool is immediately active
-    // Otherwise, check if activation time has passed
-    const isNewPool = !exists && (activationPoint === 0 || activationPoint > runTimestamp);
+    if (exists) {
+      poolDetectionStats.dlmm.alreadyCached++;
+    }
 
+    // Check if pool is currently tradeable (activated)
+    // activationPoint === 0 means immediately active
+    // activationPoint <= currentTimestamp means activation time has passed
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    const isActivated = isDlmmPoolActivated(dlmmPoolState.activationPoint, currentTimestamp);
+    const isNewPool = !exists && isActivated;
+    if (isNewPool) {
+      poolDetectionStats.dlmm.isNew++;
+    }
+
+    const activationPoint = parseInt(dlmmPoolState.activationPoint.toString());
     logger.debug(
       {
         mint: baseMintStr,
         activationPoint,
-        runTimestamp,
+        currentTimestamp,
+        isActivated,
         isNew: isNewPool,
         alreadyCached: !!exists,
         poolType: 'DLMM',
         binStep: dlmmPoolState.binStep,
         activeId: dlmmPoolState.activeId,
       },
-      isNewPool ? 'New DLMM pool detected - processing' : 'DLMM pool event received - skipping (not new or already cached)'
+      isNewPool ? 'New DLMM pool detected - processing' : 'DLMM pool event received - skipping (not new, not activated, or already cached)'
     );
 
     if (isNewPool && bot) {
+      poolDetectionStats.dlmm.proceededToBuy++;
       // Save to cache using baseMint as key (same pattern as other pool types)
       poolCache.save(updatedAccountInfo.accountId.toString(), dlmmPoolState as any);
       await bot.buyDlmm(updatedAccountInfo.accountId, dlmmPoolState);
@@ -664,46 +710,44 @@ const runListener = async () => {
 
   printDetails(wallet, quoteToken, bot!);
 
-  // Periodic heartbeat log to show bot is still alive
+  // Periodic heartbeat log to show bot is still alive with pool detection stats
   const heartbeatIntervalMs = 5 * 60 * 1000; // 5 minutes
-  let poolEventsReceived = 0;
-  let cpmmPoolEventsReceived = 0;
-  let dlmmPoolEventsReceived = 0;
   let lastHeartbeat = Date.now();
-
-  // Track pool events for heartbeat stats
-  listeners.on('pool', () => {
-    poolEventsReceived++;
-  });
-
-  listeners.on('cpmm-pool', () => {
-    cpmmPoolEventsReceived++;
-  });
-
-  listeners.on('dlmm-pool', () => {
-    dlmmPoolEventsReceived++;
-  });
 
   setInterval(() => {
     const uptimeMs = Date.now() - lastHeartbeat;
     const stateStore = getStateStore();
     const stats = stateStore?.getStats();
 
+    // Calculate totals across all pool types
+    const totalDetected = poolDetectionStats.ammV4.detected + poolDetectionStats.cpmm.detected + poolDetectionStats.dlmm.detected;
+    const totalNew = poolDetectionStats.ammV4.isNew + poolDetectionStats.cpmm.isNew + poolDetectionStats.dlmm.isNew;
+    const totalBought = poolDetectionStats.ammV4.proceededToBuy + poolDetectionStats.cpmm.proceededToBuy + poolDetectionStats.dlmm.proceededToBuy;
+
+    // Log detailed stats as structured data (won't be truncated)
     logger.info(
       {
-        ammV4PoolsLast5min: poolEventsReceived,
-        cpmmPoolsLast5min: cpmmPoolEventsReceived,
-        dlmmPoolsLast5min: dlmmPoolEventsReceived,
+        period: '5min',
+        ammV4: { ...poolDetectionStats.ammV4 },
+        cpmm: { ...poolDetectionStats.cpmm },
+        dlmm: { ...poolDetectionStats.dlmm },
+        totals: {
+          detected: totalDetected,
+          alreadyCached: poolDetectionStats.ammV4.alreadyCached + poolDetectionStats.cpmm.alreadyCached + poolDetectionStats.dlmm.alreadyCached,
+          isNew: totalNew,
+          proceededToBuy: totalBought,
+        },
         seenPools: stats?.seenPools || 0,
         openPositions: stats?.positions.open || 0,
         uptimeMinutes: Math.floor(uptimeMs / 60000),
       },
-      `Heartbeat: AmmV4=${poolEventsReceived} CPMM=${cpmmPoolEventsReceived} DLMM=${dlmmPoolEventsReceived} pools last 5min | Total seen: ${stats?.seenPools || 0} | Open positions: ${stats?.positions.open || 0}`
+      `Heartbeat (5min): Detected=${totalDetected} New=${totalNew} Bought=${totalBought} | AmmV4: ${poolDetectionStats.ammV4.detected}/${poolDetectionStats.ammV4.isNew}/${poolDetectionStats.ammV4.proceededToBuy} | CPMM: ${poolDetectionStats.cpmm.detected}/${poolDetectionStats.cpmm.isNew}/${poolDetectionStats.cpmm.proceededToBuy} | DLMM: ${poolDetectionStats.dlmm.detected}/${poolDetectionStats.dlmm.isNew}/${poolDetectionStats.dlmm.proceededToBuy} | Total seen: ${stats?.seenPools || 0} | Open: ${stats?.positions.open || 0}`
     );
 
-    poolEventsReceived = 0; // Reset counter
-    cpmmPoolEventsReceived = 0;
-    dlmmPoolEventsReceived = 0;
+    // Reset counters for next period
+    poolDetectionStats.ammV4 = { detected: 0, alreadyCached: 0, isNew: 0, proceededToBuy: 0 };
+    poolDetectionStats.cpmm = { detected: 0, alreadyCached: 0, isNew: 0, proceededToBuy: 0 };
+    poolDetectionStats.dlmm = { detected: 0, alreadyCached: 0, isNew: 0, proceededToBuy: 0 };
     lastHeartbeat = Date.now();
   }, heartbeatIntervalMs);
 };
