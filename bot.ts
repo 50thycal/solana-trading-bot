@@ -37,6 +37,12 @@ import {
   computeCpmmSwapOutput,
   computeMinAmountOut,
   adaptCpmmPoolKeysForFilters,
+  DlmmPoolState,
+  DlmmPoolKeys,
+  createDlmmPoolKeys,
+  getDlmmSwapAccounts,
+  adaptDlmmPoolKeysForFilters,
+  DLMM_PROGRAM_ID,
 } from './helpers';
 import { Mutex } from 'async-mutex';
 import BN from 'bn.js';
@@ -1862,6 +1868,231 @@ export class Bot {
       }
     } finally {
       this.sellExecutionCount--;
+    }
+  }
+
+  // ============================================================================
+  // METEORA DLMM POOL SUPPORT
+  // ============================================================================
+
+  /**
+   * Buy tokens from a Meteora DLMM pool.
+   * DLMM pools use a bin-based liquidity model for concentrated liquidity.
+   */
+  public async buyDlmm(accountId: PublicKey, poolState: DlmmPoolState, options?: BuyOptions): Promise<BuyResult> {
+    // Determine which mint is the base token (the one we're buying)
+    // In DLMM, tokenX and tokenY can be in any order
+    const isQuoteX = poolState.tokenXMint.equals(this.config.quoteToken.mint);
+    const tokenMint = isQuoteX ? poolState.tokenYMint.toString() : poolState.tokenXMint.toString();
+    const poolId = accountId.toString();
+    const skipChecks = options?.skipChecks ?? false;
+
+    logger.debug({ mint: tokenMint, poolId, poolType: 'DLMM', skipChecks }, `Processing new DLMM pool...`);
+
+    // === PERSISTENCE CHECK: Seen pools ===
+    const stateStore = getStateStore();
+    if (stateStore && !skipChecks) {
+      if (stateStore.hasSeenPool(poolId)) {
+        logger.debug({ poolId, mint: tokenMint }, `Skipping - DLMM pool already processed`);
+        return { success: false, error: 'Pool already processed' };
+      }
+
+      if (stateStore.hasOpenPosition(tokenMint)) {
+        logger.debug({ mint: tokenMint }, `Skipping buy - already have open position`);
+        stateStore.recordSeenPool({
+          poolId,
+          tokenMint,
+          actionTaken: 'skipped',
+          filterReason: 'Already have open position',
+        });
+        return { success: false, error: 'Already have open position' };
+      }
+
+      const pendingTrade = stateStore.getPendingTradeForToken(tokenMint, 'buy');
+      if (pendingTrade) {
+        logger.debug({ mint: tokenMint, tradeId: pendingTrade.id }, `Skipping buy - pending trade exists`);
+        return { success: false, error: 'Pending trade exists' };
+      }
+    }
+
+    // === RISK CHECK 1: Blacklist ===
+    const blacklist = getBlacklist();
+    if (blacklist.isTokenBlacklisted(tokenMint)) {
+      logger.debug({ mint: tokenMint }, `Skipping buy - token is blacklisted`);
+      if (stateStore) {
+        stateStore.recordSeenPool({
+          poolId,
+          tokenMint,
+          actionTaken: 'blacklisted',
+          filterReason: 'Token is blacklisted',
+        });
+        stateStore.recordPoolDetection({
+          poolId,
+          tokenMint,
+          action: 'blacklisted',
+          poolType: 'DLMM',
+          filterResults: [],
+          riskCheckPassed: false,
+          riskCheckReason: 'Token is blacklisted',
+          summary: 'Blacklisted token - skipped',
+        });
+      }
+      return { success: false, error: 'Token is blacklisted' };
+    }
+
+    if (!skipChecks && this.config.useSnipeList && !this.snipeListCache?.isInList(tokenMint)) {
+      logger.debug({ mint: tokenMint }, `Skipping buy because token is not in a snipe list`);
+      if (stateStore) {
+        stateStore.recordSeenPool({
+          poolId,
+          tokenMint,
+          actionTaken: 'skipped',
+          filterReason: 'Not in snipe list',
+        });
+        stateStore.recordPoolDetection({
+          poolId,
+          tokenMint,
+          action: 'skipped',
+          poolType: 'DLMM',
+          filterResults: [],
+          riskCheckPassed: true,
+          riskCheckReason: 'Not in snipe list',
+          summary: 'Not in snipe list - skipped',
+        });
+      }
+      return { success: false, error: 'Not in snipe list' };
+    }
+
+    // === RISK CHECK 2: Exposure and balance ===
+    const exposureManager = getExposureManager();
+    if (exposureManager) {
+      const tradeAmount = parseFloat(this.config.quoteAmount.toFixed());
+      const exposureCheck = await exposureManager.canTrade(tradeAmount);
+
+      if (!exposureCheck.allowed) {
+        logger.warn({ mint: tokenMint, reason: exposureCheck.reason }, `Skipping buy - risk limit exceeded`);
+        if (stateStore) {
+          stateStore.recordSeenPool({
+            poolId,
+            tokenMint,
+            actionTaken: 'skipped',
+            filterReason: exposureCheck.reason || 'Risk limit exceeded',
+          });
+          stateStore.recordPoolDetection({
+            poolId,
+            tokenMint,
+            action: 'skipped',
+            poolType: 'DLMM',
+            filterResults: [],
+            riskCheckPassed: false,
+            riskCheckReason: exposureCheck.reason || 'Risk limit exceeded',
+            summary: `Risk limit: ${exposureCheck.reason || 'Exposure limit exceeded'}`,
+          });
+        }
+        return { success: false, error: exposureCheck.reason || 'Risk limit exceeded' };
+      }
+    }
+
+    if (this.config.autoBuyDelay > 0) {
+      logger.debug({ mint: tokenMint }, `Waiting for ${this.config.autoBuyDelay} ms before buy`);
+      await sleep(this.config.autoBuyDelay);
+    }
+
+    if (this.config.oneTokenAtATime) {
+      if (this.mutex.isLocked() || this.sellExecutionCount > 0) {
+        logger.debug(
+          { mint: tokenMint },
+          `Skipping buy because one token at a time is turned on and token is already being processed`,
+        );
+        return { success: false, error: 'Another trade is in progress' };
+      }
+      await this.mutex.acquire();
+    }
+
+    try {
+      // Create DLMM pool keys
+      const poolKeys = createDlmmPoolKeys(accountId, poolState);
+      const baseMint = isQuoteX ? poolKeys.tokenYMint : poolKeys.tokenXMint;
+      const mintAta = await getAssociatedTokenAddress(baseMint, this.config.wallet.publicKey);
+
+      // Apply filters to DLMM pools just like other pool types
+      // Adapt DLMM pool keys to work with existing filter system
+      let filterResults: PoolFilterResults | null = null;
+
+      if (!this.config.useSnipeList && !skipChecks) {
+        const adaptedPoolKeys = adaptDlmmPoolKeysForFilters(poolKeys, this.config.quoteToken.mint);
+        // Cast to LiquidityPoolKeysV4 - the adapter provides the fields needed by filters
+        filterResults = await this.filterMatchWithDetails(adaptedPoolKeys as unknown as LiquidityPoolKeysV4);
+
+        if (!filterResults.allPassed) {
+          logger.debug(
+            { mint: tokenMint, summary: filterResults.summary, poolType: 'DLMM' },
+            `Skipping DLMM buy because pool doesn't match filters`
+          );
+
+          // Record detailed filter results for dashboard
+          if (stateStore) {
+            stateStore.recordSeenPool({
+              poolId,
+              tokenMint,
+              actionTaken: 'filtered',
+              filterReason: filterResults.summary,
+            });
+
+            stateStore.recordPoolDetection({
+              poolId,
+              tokenMint,
+              action: 'filtered',
+              poolType: 'DLMM',
+              filterResults: this.convertToStoredFilterResults(filterResults.filters),
+              riskCheckPassed: true,
+              summary: filterResults.summary,
+            });
+          }
+
+          return { success: false, error: `Filter failed: ${filterResults.summary}` };
+        }
+
+        logger.debug({ mint: tokenMint, poolType: 'DLMM' }, 'DLMM pool passed all filters');
+      } else if (skipChecks) {
+        logger.debug({ mint: tokenMint, poolType: 'DLMM' }, 'Skipping filter checks (skipChecks=true)');
+      } else {
+        logger.debug({ mint: tokenMint, poolType: 'DLMM' }, 'Skipping filter checks (using snipe list)');
+      }
+
+      // Note: DLMM swap transaction building requires the Meteora SDK
+      // For now, we record the detection but skip actual transaction execution
+      // TODO: Implement DLMM swap transaction building with @meteora-ag/dlmm SDK
+      logger.info(
+        { mint: tokenMint, poolId, poolType: 'DLMM', binStep: poolKeys.binStep, activeId: poolKeys.activeId },
+        'DLMM pool detected and passed filters - transaction execution not yet implemented'
+      );
+
+      // Record as filtered for now since we can't execute
+      if (stateStore) {
+        stateStore.recordSeenPool({
+          poolId,
+          tokenMint,
+          actionTaken: 'skipped',
+          filterReason: 'DLMM transaction execution not yet implemented',
+        });
+
+        stateStore.recordPoolDetection({
+          poolId,
+          tokenMint,
+          action: 'skipped',
+          poolType: 'DLMM',
+          filterResults: filterResults ? this.convertToStoredFilterResults(filterResults.filters) : [],
+          riskCheckPassed: true,
+          summary: 'DLMM pool passed filters - execution pending implementation',
+        });
+      }
+
+      return { success: false, error: 'DLMM transaction execution not yet implemented' };
+    } finally {
+      if (this.config.oneTokenAtATime) {
+        this.mutex.release();
+      }
     }
   }
 }

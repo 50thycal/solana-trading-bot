@@ -28,6 +28,7 @@ const elements = {
   statWinRate: document.getElementById('stat-win-rate'),
   statAmmv4Pools: document.getElementById('stat-ammv4-pools'),
   statCpmmPools: document.getElementById('stat-cpmm-pools'),
+  statDlmmPools: document.getElementById('stat-dlmm-pools'),
   rejectionList: document.getElementById('rejection-list'),
   poolTypeFilter: document.getElementById('pool-type-filter'),
   poolModal: document.getElementById('pool-modal'),
@@ -140,8 +141,10 @@ async function updateStats() {
     if (statsData.pools.byPoolType) {
       const ammv4 = statsData.pools.byPoolType.AmmV4 || { total: 0, bought: 0 };
       const cpmm = statsData.pools.byPoolType.CPMM || { total: 0, bought: 0 };
+      const dlmm = statsData.pools.byPoolType.DLMM || { total: 0, bought: 0 };
       elements.statAmmv4Pools.textContent = `${ammv4.total} (${ammv4.bought} bought)`;
       elements.statCpmmPools.textContent = `${cpmm.total} (${cpmm.bought} bought)`;
+      elements.statDlmmPools.textContent = `${dlmm.total} (${dlmm.bought} bought)`;
     }
   }
 
