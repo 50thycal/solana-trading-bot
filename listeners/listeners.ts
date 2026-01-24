@@ -276,6 +276,35 @@ export class Listeners extends EventEmitter {
     // We filter only by dataSize and do quote token filtering in the event handler
     // This is more reliable than guessing memcmp offsets
 
+    // Diagnostic counters for debugging
+    let totalEvents = 0;
+    let decodeErrors = 0;
+    let noQuoteToken = 0;
+    let swapNotEnabled = 0;
+    let emitted = 0;
+
+    // Log stats every 60 seconds for diagnostics
+    setInterval(() => {
+      if (totalEvents > 0 || emitted > 0) {
+        logger.info(
+          {
+            totalEvents,
+            decodeErrors,
+            noQuoteToken,
+            swapNotEnabled,
+            emitted,
+          },
+          `CPMM listener stats (60s): ${totalEvents} raw events, ${emitted} emitted`
+        );
+      }
+      // Reset counters
+      totalEvents = 0;
+      decodeErrors = 0;
+      noQuoteToken = 0;
+      swapNotEnabled = 0;
+      emitted = 0;
+    }, 60000);
+
     logger.info(
       {
         programId: CPMM_PROGRAM_ID.toBase58(),
@@ -288,6 +317,8 @@ export class Listeners extends EventEmitter {
     return this.connection.onProgramAccountChange(
       CPMM_PROGRAM_ID,
       async (updatedAccountInfo) => {
+        totalEvents++;
+
         // Decode and filter in handler - quote token can be mintA OR mintB
         try {
           const poolState = CpmmPoolInfoLayout.decode(updatedAccountInfo.accountInfo.data);
@@ -304,13 +335,19 @@ export class Listeners extends EventEmitter {
             const swapEnabled = (status & 4) !== 0;
 
             if (swapEnabled) {
+              emitted++;
               // Swap is enabled - emit the pool for processing
               this.emit('cpmm-pool', updatedAccountInfo);
+            } else {
+              swapNotEnabled++;
             }
             // Note: If swap is not enabled, we simply skip this event.
             // The WebSocket will notify us again if/when the status changes.
+          } else {
+            noQuoteToken++;
           }
         } catch (error) {
+          decodeErrors++;
           logger.trace({ error }, 'Failed to decode CPMM pool data');
         }
       },
@@ -336,7 +373,38 @@ export class Listeners extends EventEmitter {
     // DLMM uses tokenXMint/tokenYMint - the quote token can be in either position
     // We don't filter by dataSize because LbPair accounts are much larger than our layout
     // (they contain bin arrays). We filter by quote token + status in the handler.
-    // Note: Stats are now tracked in index.ts heartbeat (consolidated for all pool types)
+
+    // Diagnostic counters for debugging
+    let totalEvents = 0;
+    let tooSmall = 0;
+    let decodeErrors = 0;
+    let noQuoteToken = 0;
+    let notEnabled = 0;
+    let emitted = 0;
+
+    // Log stats every 60 seconds for diagnostics
+    setInterval(() => {
+      if (totalEvents > 0 || emitted > 0) {
+        logger.info(
+          {
+            totalEvents,
+            tooSmall,
+            decodeErrors,
+            noQuoteToken,
+            notEnabled,
+            emitted,
+          },
+          `DLMM listener stats (60s): ${totalEvents} raw events, ${emitted} emitted`
+        );
+      }
+      // Reset counters
+      totalEvents = 0;
+      tooSmall = 0;
+      decodeErrors = 0;
+      noQuoteToken = 0;
+      notEnabled = 0;
+      emitted = 0;
+    }, 60000);
 
     logger.info(
       {
@@ -349,8 +417,11 @@ export class Listeners extends EventEmitter {
     return this.connection.onProgramAccountChange(
       DLMM_PROGRAM_ID,
       async (updatedAccountInfo) => {
+        totalEvents++;
+
         // Only process accounts large enough to be LbPair accounts (>= 300 bytes)
         if (updatedAccountInfo.accountInfo.data.length < 300) {
+          tooSmall++;
           return; // Skip small accounts (not LbPair)
         }
 
@@ -368,13 +439,19 @@ export class Listeners extends EventEmitter {
             const isEnabled = isDlmmPoolEnabled(poolState.status);
 
             if (isEnabled) {
+              emitted++;
               // Pool is enabled - emit for processing
               this.emit('dlmm-pool', updatedAccountInfo);
+            } else {
+              notEnabled++;
             }
             // Note: If pool is not enabled, we skip this event.
             // The WebSocket will notify us again if/when the status changes.
+          } else {
+            noQuoteToken++;
           }
         } catch (error) {
+          decodeErrors++;
           logger.trace({ error, dataLength: updatedAccountInfo.accountInfo.data.length }, 'Failed to decode DLMM pool data');
         }
       },
