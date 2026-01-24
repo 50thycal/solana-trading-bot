@@ -12,6 +12,7 @@ import {
   DlmmLbPairLayout,
   decodeDlmmPoolState,
   isDlmmPoolEnabled,
+  isLbPairAccount,
 } from '../helpers';
 
 /**
@@ -377,6 +378,7 @@ export class Listeners extends EventEmitter {
     // Diagnostic counters for debugging
     let totalEvents = 0;
     let tooSmall = 0;
+    let notLbPair = 0;
     let decodeErrors = 0;
     let noQuoteToken = 0;
     let notEnabled = 0;
@@ -389,17 +391,19 @@ export class Listeners extends EventEmitter {
           {
             totalEvents,
             tooSmall,
+            notLbPair,
             decodeErrors,
             noQuoteToken,
             notEnabled,
             emitted,
           },
-          `DLMM listener stats (60s): raw=${totalEvents} | tooSmall=${tooSmall} | noQuote=${noQuoteToken} | notEnabled=${notEnabled} | decodeErr=${decodeErrors} | emitted=${emitted}`
+          `DLMM listener stats (60s): raw=${totalEvents} | tooSmall=${tooSmall} | notLbPair=${notLbPair} | noQuote=${noQuoteToken} | notEnabled=${notEnabled} | decodeErr=${decodeErrors} | emitted=${emitted}`
         );
       }
       // Reset counters
       totalEvents = 0;
       tooSmall = 0;
+      notLbPair = 0;
       decodeErrors = 0;
       noQuoteToken = 0;
       notEnabled = 0;
@@ -425,16 +429,22 @@ export class Listeners extends EventEmitter {
           return; // Skip small accounts (not LbPair)
         }
 
+        // Check discriminator to ensure this is an LbPair account (not BinArray, Position, etc.)
+        if (!isLbPairAccount(updatedAccountInfo.accountInfo.data)) {
+          notLbPair++;
+          return; // Skip non-LbPair accounts
+        }
+
         try {
           const poolState = decodeDlmmPoolState(updatedAccountInfo.accountInfo.data);
           const tokenXMint = poolState.tokenXMint;
           const tokenYMint = poolState.tokenYMint;
           const quoteTokenMint = config.quoteToken.mint;
 
-          // Debug: Log first few decoded mints to verify layout is correct
-          if (totalEvents <= 3) {
+          // Debug: Log first few LbPair accounts to verify layout is correct
+          if (emitted === 0 && noQuoteToken <= 3) {
             logger.info(
-              `DLMM DEBUG: tokenX=${tokenXMint.toBase58()} | tokenY=${tokenYMint.toBase58()} | quote=${quoteTokenMint.toBase58()}`
+              `DLMM DEBUG (LbPair): tokenX=${tokenXMint.toBase58()} | tokenY=${tokenYMint.toBase58()} | quote=${quoteTokenMint.toBase58()}`
             );
           }
 
