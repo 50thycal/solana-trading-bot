@@ -9,6 +9,7 @@ const API_BASE = '';
 
 // State
 let currentPoolFilter = '';
+let currentPoolTypeFilter = '';
 let selectedPoolId = null;
 
 // DOM Elements
@@ -25,7 +26,10 @@ const elements = {
   statPoolsBought: document.getElementById('stat-pools-bought'),
   statBuyRate: document.getElementById('stat-buy-rate'),
   statWinRate: document.getElementById('stat-win-rate'),
+  statAmmv4Pools: document.getElementById('stat-ammv4-pools'),
+  statCpmmPools: document.getElementById('stat-cpmm-pools'),
   rejectionList: document.getElementById('rejection-list'),
+  poolTypeFilter: document.getElementById('pool-type-filter'),
   poolModal: document.getElementById('pool-modal'),
   poolModalBody: document.getElementById('pool-modal-body'),
   // Test trade elements
@@ -97,7 +101,8 @@ async function updateStatus() {
 
 async function updatePools() {
   const filterParam = currentPoolFilter ? `&action=${currentPoolFilter}` : '';
-  const data = await fetchApi(`/api/pools?limit=50${filterParam}`);
+  const poolTypeParam = currentPoolTypeFilter ? `&poolType=${currentPoolTypeFilter}` : '';
+  const data = await fetchApi(`/api/pools?limit=50${filterParam}${poolTypeParam}`);
   if (!data || !data.pools) return;
 
   if (data.pools.length === 0) {
@@ -130,6 +135,14 @@ async function updateStats() {
     elements.statPoolsDetected.textContent = statsData.pools.totalDetected;
     elements.statPoolsBought.textContent = statsData.pools.bought;
     elements.statBuyRate.textContent = `${statsData.pools.buyRate}%`;
+
+    // Pool type breakdown
+    if (statsData.pools.byPoolType) {
+      const ammv4 = statsData.pools.byPoolType.AmmV4 || { total: 0, bought: 0 };
+      const cpmm = statsData.pools.byPoolType.CPMM || { total: 0, bought: 0 };
+      elements.statAmmv4Pools.textContent = `${ammv4.total} (${ammv4.bought} bought)`;
+      elements.statCpmmPools.textContent = `${cpmm.total} (${cpmm.bought} bought)`;
+    }
   }
 
   if (pnlData) {
@@ -186,6 +199,8 @@ async function updatePoolSelector() {
 function renderPoolItem(pool) {
   const time = formatTimeAgo(pool.detectedAt);
   const tokenShort = shortenAddress(pool.tokenMint);
+  const poolType = pool.poolType || 'AmmV4';
+  const poolTypeClass = poolType.toLowerCase();
 
   // Filter badges (show first 3 failed or all passed)
   const filterBadges = renderFilterBadges(pool.filterResults);
@@ -195,6 +210,7 @@ function renderPoolItem(pool) {
       <div class="pool-header">
         <div>
           <span class="pool-action ${pool.action}">${pool.action}</span>
+          <span class="pool-type ${poolTypeClass}">${poolType}</span>
           <span class="pool-token">${tokenShort}</span>
         </div>
         <span class="pool-time">${time}</span>
@@ -266,6 +282,8 @@ function closePoolModal() {
 
 function renderPoolDetailContent(pool) {
   const time = new Date(pool.detectedAt).toLocaleString();
+  const poolType = pool.poolType || 'AmmV4';
+  const poolTypeClass = poolType.toLowerCase();
 
   // Token info section
   const tokenInfo = `
@@ -279,6 +297,12 @@ function renderPoolDetailContent(pool) {
         <div class="token-field">
           <div class="token-field-label">Pool ID</div>
           <div class="token-field-value">${pool.poolId}</div>
+        </div>
+        <div class="token-field">
+          <div class="token-field-label">Pool Type</div>
+          <div class="token-field-value">
+            <span class="pool-type ${poolTypeClass}">${poolType}</span>
+          </div>
         </div>
         <div class="token-field">
           <div class="token-field-label">Detected At</div>
@@ -409,6 +433,11 @@ function formatTimeAgo(timestamp) {
 
 elements.poolFilter.addEventListener('change', (e) => {
   currentPoolFilter = e.target.value;
+  updatePools();
+});
+
+elements.poolTypeFilter.addEventListener('change', (e) => {
+  currentPoolTypeFilter = e.target.value;
   updatePools();
 });
 

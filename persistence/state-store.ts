@@ -26,6 +26,7 @@ import {
   PositionStatus,
   BlacklistType,
   PoolAction,
+  PoolType,
   PoolDetectionRecord,
   RecordPoolDetectionInput,
   PoolDetectionQueryOptions,
@@ -36,7 +37,7 @@ import {
 /**
  * Current schema version - increment when making schema changes
  */
-const CURRENT_SCHEMA_VERSION = 2;
+const CURRENT_SCHEMA_VERSION = 3;
 
 /**
  * SQLite State Store - manages all persistent data
@@ -132,6 +133,10 @@ export class StateStore {
 
       if (currentVersion < 2) {
         this.migrateToV2();
+      }
+
+      if (currentVersion < 3) {
+        this.migrateToV3();
       }
 
       logger.info({ version: CURRENT_SCHEMA_VERSION }, 'Database migrations complete');
@@ -261,6 +266,24 @@ export class StateStore {
     `);
 
     logger.info('Applied migration v2: Pool detections table for dashboard');
+  }
+
+  /**
+   * Migration to version 3 - Add pool_type column for CPMM support
+   */
+  private migrateToV3(): void {
+    this.db.exec(`
+      -- Add pool_type column to pool_detections
+      ALTER TABLE pool_detections ADD COLUMN pool_type TEXT DEFAULT 'AmmV4';
+
+      -- Create index for efficient pool type filtering
+      CREATE INDEX IF NOT EXISTS idx_pool_detections_pool_type ON pool_detections(pool_type);
+
+      -- Record migration
+      INSERT INTO schema_version (version, applied_at) VALUES (3, ${Date.now()});
+    `);
+
+    logger.info('Applied migration v3: Added pool_type column for CPMM support');
   }
 
   /**
@@ -815,6 +838,7 @@ export class StateStore {
       tokenMint: input.tokenMint,
       detectedAt: now,
       action: input.action,
+      poolType: input.poolType ?? 'AmmV4',
       filterResults: input.filterResults,
       riskCheckPassed: input.riskCheckPassed ?? true,
       riskCheckReason: input.riskCheckReason,
@@ -824,16 +848,17 @@ export class StateStore {
 
     this.db.prepare(`
       INSERT INTO pool_detections (
-        id, pool_id, token_mint, detected_at, action,
+        id, pool_id, token_mint, detected_at, action, pool_type,
         filter_results, risk_check_passed, risk_check_reason,
         pool_quote_reserve, summary
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       detection.id,
       detection.poolId,
       detection.tokenMint,
       detection.detectedAt,
       detection.action,
+      detection.poolType,
       JSON.stringify(detection.filterResults),
       detection.riskCheckPassed ? 1 : 0,
       detection.riskCheckReason ?? null,
@@ -841,7 +866,7 @@ export class StateStore {
       detection.summary
     );
 
-    logger.debug({ detectionId: id, poolId: input.poolId, action: input.action }, 'Pool detection recorded');
+    logger.debug({ detectionId: id, poolId: input.poolId, action: input.action, poolType: detection.poolType }, 'Pool detection recorded');
     return detection;
   }
 
@@ -849,7 +874,7 @@ export class StateStore {
    * Get pool detections with optional filtering
    */
   getPoolDetections(options: PoolDetectionQueryOptions = {}): PoolDetectionRecord[] {
-    const { limit = 50, offset = 0, action, fromTimestamp, toTimestamp } = options;
+    const { limit = 50, offset = 0, action, poolType, fromTimestamp, toTimestamp } = options;
 
     let sql = 'SELECT * FROM pool_detections WHERE 1=1';
     const params: any[] = [];
@@ -857,6 +882,11 @@ export class StateStore {
     if (action) {
       sql += ' AND action = ?';
       params.push(action);
+    }
+
+    if (poolType) {
+      sql += ' AND pool_type = ?';
+      params.push(poolType);
     }
 
     if (fromTimestamp) {
@@ -897,17 +927,26 @@ export class StateStore {
   /**
    * Get total count of pool detections
    */
-  getPoolDetectionCount(action?: PoolAction): number {
+  getPoolDetectionCount(action?: PoolAction, poolType?: PoolType): number {
+    const conditions: string[] = [];
+    const params: (string)[] = [];
+
     if (action) {
-      const result = this.db.prepare(
-        'SELECT COUNT(*) as count FROM pool_detections WHERE action = ?'
-      ).get(action) as { count: number };
-      return result.count;
+      conditions.push('action = ?');
+      params.push(action);
+    }
+    if (poolType) {
+      conditions.push('pool_type = ?');
+      params.push(poolType);
     }
 
+    const whereClause = conditions.length > 0
+      ? `WHERE ${conditions.join(' AND ')}`
+      : '';
+
     const result = this.db.prepare(
-      'SELECT COUNT(*) as count FROM pool_detections'
-    ).get() as { count: number };
+      `SELECT COUNT(*) as count FROM pool_detections ${whereClause}`
+    ).get(...params) as { count: number };
     return result.count;
   }
 
@@ -931,6 +970,28 @@ export class StateStore {
       skipped: number;
       blacklisted: number;
     };
+
+    // Get pool type breakdown
+    const poolTypeStats = this.db.prepare(`
+      SELECT
+        pool_type,
+        COUNT(*) as total,
+        SUM(CASE WHEN action = 'bought' THEN 1 ELSE 0 END) as bought
+      FROM pool_detections
+      GROUP BY pool_type
+    `).all() as { pool_type: string; total: number; bought: number }[];
+
+    const byPoolType = {
+      AmmV4: { total: 0, bought: 0 },
+      CPMM: { total: 0, bought: 0 },
+    };
+
+    for (const row of poolTypeStats) {
+      const poolType = row.pool_type || 'AmmV4';
+      if (poolType === 'AmmV4' || poolType === 'CPMM') {
+        byPoolType[poolType] = { total: row.total || 0, bought: row.bought || 0 };
+      }
+    }
 
     // Get filter rejection counts by analyzing filter_results JSON
     // This queries all filtered pools and aggregates which filters failed
@@ -960,6 +1021,7 @@ export class StateStore {
       totalSkipped: actionStats.skipped || 0,
       totalBlacklisted: actionStats.blacklisted || 0,
       filterRejectionCounts,
+      byPoolType,
     };
   }
 
@@ -994,6 +1056,7 @@ export class StateStore {
       tokenMint: row.token_mint,
       detectedAt: row.detected_at,
       action: row.action as PoolAction,
+      poolType: (row.pool_type as PoolType) || 'AmmV4',
       filterResults,
       riskCheckPassed: row.risk_check_passed === 1,
       riskCheckReason: row.risk_check_reason ?? undefined,

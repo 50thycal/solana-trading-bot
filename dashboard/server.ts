@@ -12,7 +12,7 @@ import { URL } from 'url';
 import { logger } from '../helpers';
 import { getStateStore } from '../persistence';
 import { getPnlTracker, getExposureManager, getPositionMonitor } from '../risk';
-import { PoolAction } from '../persistence/models';
+import { PoolAction, PoolType } from '../persistence/models';
 
 // Dynamic import for test-trade to avoid crash if file doesn't exist
 let executeTestTrade: ((options: { poolId: string; dryRun: boolean; amount?: number }) => Promise<any>) | null = null;
@@ -447,14 +447,16 @@ export class DashboardServer {
     const limit = parseInt(url.searchParams.get('limit') || '50', 10);
     const offset = parseInt(url.searchParams.get('offset') || '0', 10);
     const action = url.searchParams.get('action') as PoolAction | null;
+    const poolType = url.searchParams.get('poolType') as PoolType | null;
 
     const pools = stateStore.getPoolDetections({
       limit,
       offset,
       action: action || undefined,
+      poolType: poolType || undefined,
     });
 
-    const total = stateStore.getPoolDetectionCount(action || undefined);
+    const total = stateStore.getPoolDetectionCount(action || undefined, poolType || undefined);
 
     return {
       pools,

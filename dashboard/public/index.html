@@ -87,6 +87,11 @@
         <div class="panel-header">
           <h2>Pool Activity</h2>
           <div class="filter-controls">
+            <select id="pool-type-filter" style="margin-right: 0.5rem;">
+              <option value="">All Types</option>
+              <option value="AmmV4">AmmV4</option>
+              <option value="CPMM">CPMM</option>
+            </select>
             <select id="pool-filter">
               <option value="">All</option>
               <option value="bought">Bought</option>
@@ -134,6 +139,14 @@
             <div class="stat-row">
               <span class="stat-label">Win Rate</span>
               <span class="stat-value" id="stat-win-rate">--%</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">AmmV4 Pools</span>
+              <span class="stat-value" id="stat-ammv4-pools">--</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">CPMM Pools</span>
+              <span class="stat-value" id="stat-cpmm-pools">--</span>
             </div>
           </div>
 

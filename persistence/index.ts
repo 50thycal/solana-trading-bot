@@ -16,6 +16,7 @@ export {
   TradeType,
   BlacklistType,
   PoolAction,
+  PoolType,
   // Records
   PositionRecord,
   TradeRecord,

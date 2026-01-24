@@ -30,6 +30,11 @@ export type BlacklistType = 'token' | 'creator';
 export type PoolAction = 'bought' | 'filtered' | 'blacklisted' | 'skipped' | 'error';
 
 /**
+ * Pool type - AmmV4 (legacy) or CPMM (new)
+ */
+export type PoolType = 'AmmV4' | 'CPMM';
+
+/**
  * Persisted position record
  */
 export interface PositionRecord {
@@ -207,6 +212,9 @@ export interface PoolDetectionRecord {
   detectedAt: number;
   action: PoolAction;
 
+  // Pool type (AmmV4 or CPMM)
+  poolType: PoolType;
+
   // Detailed filter results stored as JSON
   filterResults: StoredFilterResult[];
 
@@ -228,6 +236,7 @@ export interface RecordPoolDetectionInput {
   poolId: string;
   tokenMint: string;
   action: PoolAction;
+  poolType?: PoolType;  // Defaults to 'AmmV4' for backwards compatibility
   filterResults: StoredFilterResult[];
   riskCheckPassed?: boolean;
   riskCheckReason?: string;
@@ -242,6 +251,7 @@ export interface PoolDetectionQueryOptions {
   limit?: number;
   offset?: number;
   action?: PoolAction;
+  poolType?: PoolType;
   fromTimestamp?: number;
   toTimestamp?: number;
 }
@@ -256,4 +266,9 @@ export interface PoolDetectionStats {
   totalSkipped: number;
   totalBlacklisted: number;
   filterRejectionCounts: Record<string, number>;
+  // Pool type breakdown
+  byPoolType: {
+    AmmV4: { total: number; bought: number };
+    CPMM: { total: number; bought: number };
+  };
 }
