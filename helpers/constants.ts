@@ -124,6 +124,12 @@ export const HEALTH_PORT = config.healthPort;
 export const DATA_DIR = config.dataDir;
 
 // ============================================================================
+// TOKEN AGE VALIDATION (Pool Detection Phase 1)
+// ============================================================================
+export const MAX_TOKEN_AGE_SECONDS = config.maxTokenAgeSeconds;
+export const ENABLE_TOKEN_AGE_CHECK = config.enableTokenAgeCheck;
+
+// ============================================================================
 // LOGGING
 // ============================================================================
 

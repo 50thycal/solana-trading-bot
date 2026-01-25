@@ -11,3 +11,4 @@ export * from './config-validator';
 export * from './filter-presets';
 export * from './rpc-manager';
 export * from './fee-estimator';
+export * from './token-validator';
