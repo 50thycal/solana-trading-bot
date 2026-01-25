@@ -687,7 +687,11 @@ const runListener = async () => {
       poolDetectionStats.dlmm.proceededToBuy++;
       // Save to cache using baseMint as key (same pattern as other pool types)
       poolCache.save(updatedAccountInfo.accountId.toString(), dlmmPoolState as any);
-      await bot.buyDlmm(updatedAccountInfo.accountId, dlmmPoolState);
+      try {
+        await bot.buyDlmm(updatedAccountInfo.accountId, dlmmPoolState);
+      } catch (error) {
+        logger.error({ error, mint: baseMintStr, poolType: 'DLMM' }, 'Error processing DLMM pool');
+      }
     }
   });
 
