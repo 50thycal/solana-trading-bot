@@ -52,30 +52,32 @@ export interface DlmmPoolState {
  * - activationType: 88 (1 byte)
  * - creatorPoolOnOffControl: 89 (1 byte)
  * - tokenXMint: 90-121 (32 bytes) ***
- * - tokenYMint: 122-153 (32 bytes) ***
- * - reserveX: 154-185 (32 bytes)
- * - reserveY: 186-217 (32 bytes)
+ * - tokenXMint: 120-151 (32 bytes) ***
+ * - tokenYMint: 152-183 (32 bytes) ***
+ * - reserveX: 184-215 (32 bytes)
+ * - reserveY: 216-247 (32 bytes)
  */
 export const DLMM_OFFSETS = {
   DISCRIMINATOR: 0,
   ACTIVE_ID: 78,
   BIN_STEP: 82,
   STATUS: 84,
-  TOKEN_X_MINT: 90,
-  TOKEN_Y_MINT: 122,
-  RESERVE_X: 154,
-  RESERVE_Y: 186,
+  // Empirically verified: WSOL found at offset 120 in live data
+  TOKEN_X_MINT: 120,
+  TOKEN_Y_MINT: 152,
+  RESERVE_X: 184,
+  RESERVE_Y: 216,
   // Fields after reserveY require offset calculation through complex structs:
   // protocolFee (16) + padding1 (32) + rewardInfos (2 x 128 = 256) = 304 bytes
-  // So oracle starts at 186 + 32 + 304 = 522
-  ORACLE: 522,
+  // So oracle starts at 216 + 32 + 304 = 552
+  ORACLE: 552,
   // After oracle: binArrayBitmap (128) + lastUpdatedAt (8) + padding2 (32) +
   // preActivationSwapAddress (32) + baseKey (32) = 232 bytes
-  // So activationPoint at 522 + 32 + 232 = 786
-  ACTIVATION_POINT: 786,
+  // So activationPoint at 552 + 32 + 232 = 816
+  ACTIVATION_POINT: 816,
   // After activationPoint (8) + preActivationDuration (8) + padding3 (8) + padding4 (8) = 32 bytes
-  // So creator at 786 + 8 + 32 = 826
-  CREATOR: 826,
+  // So creator at 816 + 8 + 32 = 856
+  CREATOR: 856,
 } as const;
 
 /**
@@ -86,7 +88,9 @@ export const DLMM_MIN_ACCOUNT_SIZE = 858;
 
 /**
  * Minimal layout for the fixed-position fields we need from LbPair
- * This reads only the first 218 bytes which contain all essential trading fields.
+ * This reads only the first 248 bytes which contain all essential trading fields.
+ *
+ * EMPIRICALLY VERIFIED: WSOL found at offset 120 in live Meteora pool data.
  */
 interface RawDlmmEssentialData {
   discriminator: Uint8Array;
@@ -102,6 +106,8 @@ interface RawDlmmEssentialData {
   baseFactorSeed: Uint8Array;
   activationType: number;
   creatorPoolOnOffControl: number;
+  // 30 bytes of additional fields/padding before token mints
+  preMintPadding: Uint8Array;
   tokenXMint: Uint8Array;
   tokenYMint: Uint8Array;
   reserveX: Uint8Array;
@@ -109,9 +115,12 @@ interface RawDlmmEssentialData {
 }
 
 /**
- * DLMM LbPair essential layout (first 218 bytes)
+ * DLMM LbPair essential layout (first 248 bytes)
  * Contains all fields needed for pool detection and trading.
  * The full account is ~10KB+ but we only need these fields.
+ *
+ * IMPORTANT: Offsets empirically verified against live Meteora pool data.
+ * tokenXMint is at offset 120, NOT 90 as the IDL might suggest.
  */
 export const DlmmLbPairLayout = BufferLayout.struct<RawDlmmEssentialData>([
   // Account discriminator (8 bytes) - offset 0-7
@@ -154,16 +163,20 @@ export const DlmmLbPairLayout = BufferLayout.struct<RawDlmmEssentialData>([
   // creator_pool_on_off_control (1 byte) - offset 89
   BufferLayout.u8('creatorPoolOnOffControl'),
 
-  // token_x_mint (32 bytes) - offset 90-121 *** TOKEN MINTS ***
+  // Additional fields/padding before token mints (30 bytes) - offset 90-119
+  // This accounts for fields not in the basic IDL (whitelisted_wallet, lock_durations, etc.)
+  BufferLayout.blob(30, 'preMintPadding'),
+
+  // token_x_mint (32 bytes) - offset 120-151 *** TOKEN MINTS (VERIFIED) ***
   BufferLayout.blob(32, 'tokenXMint'),
 
-  // token_y_mint (32 bytes) - offset 122-153
+  // token_y_mint (32 bytes) - offset 152-183
   BufferLayout.blob(32, 'tokenYMint'),
 
-  // reserve_x (32 bytes) - offset 154-185
+  // reserve_x (32 bytes) - offset 184-215
   BufferLayout.blob(32, 'reserveX'),
 
-  // reserve_y (32 bytes) - offset 186-217
+  // reserve_y (32 bytes) - offset 216-247
   BufferLayout.blob(32, 'reserveY'),
 ]);
 
