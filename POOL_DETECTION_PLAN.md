@@ -1,6 +1,6 @@
 # Pool Detection Standardization Plan
 
-> **Status:** Phase 0 - Not Started (v2.0 plan supersedes v1.x implementation)
+> **Status:** Phase 0 - Complete, Phase 1A - Not Started
 > **Objective:** Detect genuinely NEW token launches across all pool types
 > **Pool Types:** AMMV4, CPMM, DLMM
 > **Last Updated:** 2025-01-25 (v2.0 - Mint-First Architecture)
@@ -1133,12 +1133,12 @@ ENABLE_TOKEN_AGE_CHECK=true
 
 ### Manual Testing Checklist
 
-#### Phase 0
-- [ ] Mint cache compiles and runs
-- [ ] Mint listener subscribes successfully
-- [ ] New mints appear in cache
-- [ ] Cache TTL cleanup works
-- [ ] Fallback uses `sortOrder: "asc"`
+#### Phase 0 (IMPLEMENTED)
+- [x] Mint cache compiles and runs
+- [x] Mint listener subscribes successfully
+- [x] New mints appear in cache
+- [x] Cache TTL cleanup works
+- [x] Fallback uses `sortOrder: "asc"`
 
 #### Phase 1A (CPMM)
 - [ ] Launch scorer calculates correctly
@@ -1200,6 +1200,7 @@ ENABLE_TOKEN_AGE_CHECK=true
 | 2025-01-25 | 1.0 | Initial plan created |
 | 2025-01-25 | 1.1 | Phase 1A completed: CPMM token age validation implemented (v1.x approach) |
 | 2025-01-25 | 2.0 | Major revision: mint-first architecture, confidence scoring, pre-filtering, fixed signature order bug |
+| 2025-01-25 | 2.1 | Phase 0 completed: Mint cache, Helius mint listener, token-validator with sortOrder:asc fallback |
 
 > **Note:** v2.0 introduces a fundamentally different approach (mint-first detection) that supersedes the v1.x implementation. The v1.x Phase 1A work provides useful token age validation but will be refactored to integrate with the mint cache system.
 

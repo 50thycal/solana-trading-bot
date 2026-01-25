@@ -91,6 +91,9 @@ export interface ValidatedConfig {
   // Token Age Validation (Pool Detection Phase 1)
   maxTokenAgeSeconds: number;
   enableTokenAgeCheck: boolean;
+
+  // Mint Detection (Pool Detection Phase 0)
+  enableHeliusMintDetection: boolean;
 }
 
 interface ValidationError {
@@ -347,6 +350,9 @@ export function validateConfig(): ValidatedConfig {
   }
   const enableTokenAgeCheck = requireBoolean('ENABLE_TOKEN_AGE_CHECK', true);
 
+  // === MINT DETECTION (Pool Detection Phase 0) ===
+  const enableHeliusMintDetection = requireBoolean('ENABLE_HELIUS_MINT_DETECTION', true);
+
   // Validate private key format (base58)
   if (privateKey) {
     try {
@@ -444,6 +450,7 @@ export function validateConfig(): ValidatedConfig {
     dashboardPollInterval,
     maxTokenAgeSeconds,
     enableTokenAgeCheck,
+    enableHeliusMintDetection,
   };
 
   // Log dry run mode warning
