@@ -1,6 +1,6 @@
 # Pool Detection Standardization Plan
 
-> **Status:** Phase 0 - Not Started
+> **Status:** Phase 0 - Not Started (v2.0 plan supersedes v1.x implementation)
 > **Objective:** Detect genuinely NEW token launches across all pool types
 > **Pool Types:** AMMV4, CPMM, DLMM
 > **Last Updated:** 2025-01-25 (v2.0 - Mint-First Architecture)
@@ -1198,7 +1198,10 @@ ENABLE_TOKEN_AGE_CHECK=true
 | Date | Version | Changes |
 |------|---------|---------|
 | 2025-01-25 | 1.0 | Initial plan created |
+| 2025-01-25 | 1.1 | Phase 1A completed: CPMM token age validation implemented (v1.x approach) |
 | 2025-01-25 | 2.0 | Major revision: mint-first architecture, confidence scoring, pre-filtering, fixed signature order bug |
+
+> **Note:** v2.0 introduces a fundamentally different approach (mint-first detection) that supersedes the v1.x implementation. The v1.x Phase 1A work provides useful token age validation but will be refactored to integrate with the mint cache system.
 
 ---
 

@@ -61,6 +61,9 @@ import {
   ENABLE_DLMM,
   decodeDlmmPoolState,
   isDlmmPoolActivated,
+  getTokenAge,
+  MAX_TOKEN_AGE_SECONDS,
+  ENABLE_TOKEN_AGE_CHECK,
 } from './helpers';
 import { initRpcManager } from './helpers/rpc-manager';
 import { startDashboardServer, DashboardServer } from './dashboard';
@@ -495,9 +498,9 @@ const runListener = async () => {
 
   // Pool detection stats tracking for heartbeat
   const poolDetectionStats = {
-    ammV4: { detected: 0, alreadyCached: 0, isNew: 0, proceededToBuy: 0 },
-    cpmm: { detected: 0, alreadyCached: 0, isNew: 0, proceededToBuy: 0 },
-    dlmm: { detected: 0, alreadyCached: 0, isNew: 0, proceededToBuy: 0 },
+    ammV4: { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 },
+    cpmm: { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 },
+    dlmm: { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 },
   };
 
   // Initialize listeners with reconnection support
@@ -623,11 +626,51 @@ const runListener = async () => {
         alreadyCached: !!exists,
         poolType: 'CPMM',
       },
-      isNewPool ? 'New CPMM pool detected - processing' : 'CPMM pool event received - skipping (not new or already cached)'
+      isNewPool ? 'New CPMM pool detected - checking token age' : 'CPMM pool event received - skipping (not new or already cached)'
     );
 
+    // If pool passes basic checks, verify token age
     if (isNewPool && bot) {
+      // Token age validation (Phase 1)
+      if (ENABLE_TOKEN_AGE_CHECK) {
+        const tokenAgeResult = await getTokenAge(connection, baseMint, MAX_TOKEN_AGE_SECONDS);
+
+        logger.info(
+          {
+            mint: baseMintStr,
+            ageSeconds: tokenAgeResult.ageSeconds,
+            maxAgeSeconds: MAX_TOKEN_AGE_SECONDS,
+            isNew: tokenAgeResult.isNew,
+            poolType: 'CPMM',
+          },
+          `[CPMM] Token age check: ${tokenAgeResult.ageSeconds}s (max: ${MAX_TOKEN_AGE_SECONDS}s) ${tokenAgeResult.isNew ? 'PASS' : 'FAIL'}`
+        );
+
+        if (!tokenAgeResult.isNew) {
+          poolDetectionStats.cpmm.tokenTooOld++;
+          logger.info(
+            {
+              mint: baseMintStr,
+              ageSeconds: tokenAgeResult.ageSeconds,
+              maxAgeSeconds: MAX_TOKEN_AGE_SECONDS,
+              poolType: 'CPMM',
+            },
+            `[CPMM] REJECTED: Token too old (${tokenAgeResult.ageSeconds}s > ${MAX_TOKEN_AGE_SECONDS}s)`
+          );
+          return;
+        }
+      }
+
+      // All checks passed - proceed to buy
       poolDetectionStats.cpmm.proceededToBuy++;
+      logger.info(
+        {
+          mint: baseMintStr,
+          poolId: updatedAccountInfo.accountId.toString(),
+          poolType: 'CPMM',
+        },
+        '[CPMM] EMITTING: New token pool detected - proceeding to buy'
+      );
       // Save to cache using baseMint as key (same pattern as AmmV4)
       poolCache.save(updatedAccountInfo.accountId.toString(), cpmmPoolState as any);
       await bot.buyCpmm(updatedAccountInfo.accountId, cpmmPoolState);
@@ -726,6 +769,7 @@ const runListener = async () => {
     // Calculate totals across all pool types
     const totalDetected = poolDetectionStats.ammV4.detected + poolDetectionStats.cpmm.detected + poolDetectionStats.dlmm.detected;
     const totalNew = poolDetectionStats.ammV4.isNew + poolDetectionStats.cpmm.isNew + poolDetectionStats.dlmm.isNew;
+    const totalTokenTooOld = poolDetectionStats.ammV4.tokenTooOld + poolDetectionStats.cpmm.tokenTooOld + poolDetectionStats.dlmm.tokenTooOld;
     const totalBought = poolDetectionStats.ammV4.proceededToBuy + poolDetectionStats.cpmm.proceededToBuy + poolDetectionStats.dlmm.proceededToBuy;
 
     // Log detailed stats as structured data (won't be truncated)
@@ -739,19 +783,20 @@ const runListener = async () => {
           detected: totalDetected,
           alreadyCached: poolDetectionStats.ammV4.alreadyCached + poolDetectionStats.cpmm.alreadyCached + poolDetectionStats.dlmm.alreadyCached,
           isNew: totalNew,
+          tokenTooOld: totalTokenTooOld,
           proceededToBuy: totalBought,
         },
         seenPools: stats?.seenPools || 0,
         openPositions: stats?.positions.open || 0,
         uptimeMinutes: Math.floor(uptimeMs / 60000),
       },
-      `Heartbeat (5min): Detected=${totalDetected} New=${totalNew} Bought=${totalBought} | AmmV4: ${poolDetectionStats.ammV4.detected}/${poolDetectionStats.ammV4.isNew}/${poolDetectionStats.ammV4.proceededToBuy} | CPMM: ${poolDetectionStats.cpmm.detected}/${poolDetectionStats.cpmm.isNew}/${poolDetectionStats.cpmm.proceededToBuy} | DLMM: ${poolDetectionStats.dlmm.detected}/${poolDetectionStats.dlmm.isNew}/${poolDetectionStats.dlmm.proceededToBuy} | Total seen: ${stats?.seenPools || 0} | Open: ${stats?.positions.open || 0}`
+      `Heartbeat (5min): Detected=${totalDetected} New=${totalNew} TokenOld=${totalTokenTooOld} Bought=${totalBought} | AmmV4: ${poolDetectionStats.ammV4.detected}/${poolDetectionStats.ammV4.isNew}/${poolDetectionStats.ammV4.proceededToBuy} | CPMM: ${poolDetectionStats.cpmm.detected}/${poolDetectionStats.cpmm.isNew}/${poolDetectionStats.cpmm.tokenTooOld}/${poolDetectionStats.cpmm.proceededToBuy} | DLMM: ${poolDetectionStats.dlmm.detected}/${poolDetectionStats.dlmm.isNew}/${poolDetectionStats.dlmm.proceededToBuy} | Total seen: ${stats?.seenPools || 0} | Open: ${stats?.positions.open || 0}`
     );
 
     // Reset counters for next period
-    poolDetectionStats.ammV4 = { detected: 0, alreadyCached: 0, isNew: 0, proceededToBuy: 0 };
-    poolDetectionStats.cpmm = { detected: 0, alreadyCached: 0, isNew: 0, proceededToBuy: 0 };
-    poolDetectionStats.dlmm = { detected: 0, alreadyCached: 0, isNew: 0, proceededToBuy: 0 };
+    poolDetectionStats.ammV4 = { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 };
+    poolDetectionStats.cpmm = { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 };
+    poolDetectionStats.dlmm = { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 };
     lastHeartbeat = Date.now();
   }, heartbeatIntervalMs);
 };

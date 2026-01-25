@@ -87,6 +87,10 @@ export interface ValidatedConfig {
   dashboardEnabled: boolean;
   dashboardPort: number;
   dashboardPollInterval: number;
+
+  // Token Age Validation (Pool Detection Phase 1)
+  maxTokenAgeSeconds: number;
+  enableTokenAgeCheck: boolean;
 }
 
 interface ValidationError {
@@ -336,6 +340,13 @@ export function validateConfig(): ValidatedConfig {
   const dashboardPort = requireNumber('DASHBOARD_PORT', 8080); // Same as health port by default
   const dashboardPollInterval = requireNumber('DASHBOARD_POLL_INTERVAL', 5000);
 
+  // === TOKEN AGE VALIDATION (Pool Detection Phase 1) ===
+  const maxTokenAgeSeconds = requireNumber('MAX_TOKEN_AGE_SECONDS', 300); // 5 minutes default
+  if (maxTokenAgeSeconds < 0) {
+    errors.push({ variable: 'MAX_TOKEN_AGE_SECONDS', message: 'MAX_TOKEN_AGE_SECONDS cannot be negative' });
+  }
+  const enableTokenAgeCheck = requireBoolean('ENABLE_TOKEN_AGE_CHECK', true);
+
   // Validate private key format (base58)
   if (privateKey) {
     try {
@@ -431,6 +442,8 @@ export function validateConfig(): ValidatedConfig {
     dashboardEnabled,
     dashboardPort,
     dashboardPollInterval,
+    maxTokenAgeSeconds,
+    enableTokenAgeCheck,
   };
 
   // Log dry run mode warning
