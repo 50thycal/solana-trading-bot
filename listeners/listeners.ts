@@ -13,6 +13,7 @@ import {
   decodeDlmmPoolState,
   isDlmmPoolEnabled,
   isLbPairAccount,
+  DLMM_MIN_ACCOUNT_SIZE,
 } from '../helpers';
 
 /**
@@ -423,8 +424,9 @@ export class Listeners extends EventEmitter {
       async (updatedAccountInfo) => {
         totalEvents++;
 
-        // Only process accounts large enough to be LbPair accounts (>= 300 bytes)
-        if (updatedAccountInfo.accountInfo.data.length < 300) {
+        // Only process accounts large enough to be LbPair accounts
+        // Need at least DLMM_MIN_ACCOUNT_SIZE bytes for essential field decoding
+        if (updatedAccountInfo.accountInfo.data.length < DLMM_MIN_ACCOUNT_SIZE) {
           tooSmall++;
           return; // Skip small accounts (not LbPair)
         }
@@ -441,39 +443,8 @@ export class Listeners extends EventEmitter {
           const tokenYMint = poolState.tokenYMint;
           const quoteTokenMint = config.quoteToken.mint;
 
-          // Debug: Log first few LbPair accounts with raw byte info to verify layout
-          if (emitted === 0 && noQuoteToken <= 2) {
-            const data = updatedAccountInfo.accountInfo.data;
-            const disc = data.subarray(0, 8);
-
-            // Check more offsets to find where mints really are
-            const at8 = new PublicKey(data.subarray(8, 40)).toBase58();
-            const at40 = new PublicKey(data.subarray(40, 72)).toBase58();
-            const at72 = new PublicKey(data.subarray(72, 104)).toBase58();
-            const at104 = new PublicKey(data.subarray(104, 136)).toBase58();
-            const at136 = new PublicKey(data.subarray(136, 168)).toBase58();
-            const at168 = new PublicKey(data.subarray(168, 200)).toBase58();
-            const at200 = new PublicKey(data.subarray(200, 232)).toBase58();
-
-            // Search for WSOL (So111...) in the data by checking if any offset matches
-            const wsolMint = quoteTokenMint.toBase58();
-            let foundAt = 'not found';
-            for (let offset = 8; offset <= 300; offset += 32) {
-              try {
-                const pk = new PublicKey(data.subarray(offset, offset + 32)).toBase58();
-                if (pk === wsolMint) {
-                  foundAt = `offset ${offset}`;
-                  break;
-                }
-              } catch (e) {}
-            }
-
-            logger.info(
-              `DLMM BYTE DEBUG: disc=[${Array.from(disc).join(',')}] | WSOL=${foundAt} | at8=${at8.slice(0,8)}... | at40=${at40.slice(0,8)}... | at72=${at72.slice(0,8)}... | at104=${at104.slice(0,8)}... | at136=${at136.slice(0,8)}... | at168=${at168.slice(0,8)}... | at200=${at200.slice(0,8)}...`
-            );
-          }
-
           // Check if either token is our quote token
+          // tokenXMint is at byte offset 90, tokenYMint at offset 122 (after IDL v0.8.5 fix)
           const hasQuoteToken = tokenXMint.equals(quoteTokenMint) || tokenYMint.equals(quoteTokenMint);
 
           if (hasQuoteToken) {
