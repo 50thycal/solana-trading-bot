@@ -602,30 +602,57 @@ const runListener = async () => {
           return;
         }
 
-        // TODO: Execute buy on pump.fun bonding curve
-        // For now, we're just detecting and logging
-        // The buy logic will be enabled once pump.fun trading is fully tested
+        // Execute buy on pump.fun bonding curve
         poolDetectionStats.pumpfun.proceededToBuy++;
+
         logger.info(
           {
             mint: token.mint.toString(),
+            name: token.name || 'Unknown',
+            symbol: token.symbol || 'Unknown',
             virtualSolReserves: bondingCurveState.virtualSolReserves.toString(),
             virtualTokenReserves: bondingCurveState.virtualTokenReserves.toString(),
           },
-          '[pump.fun] Token detected - buy execution pending (pump.fun trading not yet enabled)'
+          '[pump.fun] Executing buy on bonding curve'
         );
 
-        // Placeholder for actual buy execution:
-        // const buyResult = await buyOnPumpFun({
-        //   connection,
-        //   wallet,
-        //   mint: token.mint,
-        //   bondingCurve: token.bondingCurve,
-        //   amountSol: Number(QUOTE_AMOUNT),
-        //   slippageBps: BUY_SLIPPAGE * 100,
-        //   computeUnitLimit: COMPUTE_UNIT_LIMIT,
-        //   computeUnitPrice: COMPUTE_UNIT_PRICE,
-        // });
+        if (DRY_RUN) {
+          logger.info(
+            { mint: token.mint.toString(), amountSol: QUOTE_AMOUNT.toString() },
+            '[pump.fun] DRY RUN - would have bought token'
+          );
+        } else {
+          const buyResult = await buyOnPumpFun({
+            connection,
+            wallet,
+            mint: token.mint,
+            bondingCurve: token.bondingCurve,
+            amountSol: Number(QUOTE_AMOUNT),
+            slippageBps: BUY_SLIPPAGE * 100,
+            computeUnitLimit: COMPUTE_UNIT_LIMIT,
+            computeUnitPrice: COMPUTE_UNIT_PRICE,
+          });
+
+          if (buyResult.success) {
+            logger.info(
+              {
+                mint: token.mint.toString(),
+                signature: buyResult.signature,
+                tokensReceived: buyResult.tokensReceived,
+                amountSol: QUOTE_AMOUNT.toString(),
+              },
+              '[pump.fun] Buy successful'
+            );
+          } else {
+            logger.error(
+              {
+                mint: token.mint.toString(),
+                error: buyResult.error,
+              },
+              '[pump.fun] Buy failed'
+            );
+          }
+        }
 
       } catch (error) {
         poolDetectionStats.pumpfun.errors++;
