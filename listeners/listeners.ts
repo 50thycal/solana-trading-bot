@@ -444,21 +444,32 @@ export class Listeners extends EventEmitter {
           // Debug: Log first few LbPair accounts with raw byte info to verify layout
           if (emitted === 0 && noQuoteToken <= 2) {
             const data = updatedAccountInfo.accountInfo.data;
-            // Log discriminator and check various offsets for WSOL
             const disc = data.subarray(0, 8);
-            // Check if WSOL appears anywhere in first 200 bytes
-            const wsol = 'So11111111111111111111111111111111111111112';
-            const wsolBytes = Buffer.from([6,155,136,87,254,171,129,132,251,104,127,99,70,24,192,53,218,196,57,220,26,235,59,85,152,160,240,0,0,0,0,1]);
 
-            // Try reading pubkey at different offsets to find where mints really are
+            // Check more offsets to find where mints really are
             const at8 = new PublicKey(data.subarray(8, 40)).toBase58();
             const at40 = new PublicKey(data.subarray(40, 72)).toBase58();
             const at72 = new PublicKey(data.subarray(72, 104)).toBase58();
             const at104 = new PublicKey(data.subarray(104, 136)).toBase58();
             const at136 = new PublicKey(data.subarray(136, 168)).toBase58();
+            const at168 = new PublicKey(data.subarray(168, 200)).toBase58();
+            const at200 = new PublicKey(data.subarray(200, 232)).toBase58();
+
+            // Search for WSOL (So111...) in the data by checking if any offset matches
+            const wsolMint = quoteTokenMint.toBase58();
+            let foundAt = 'not found';
+            for (let offset = 8; offset <= 300; offset += 32) {
+              try {
+                const pk = new PublicKey(data.subarray(offset, offset + 32)).toBase58();
+                if (pk === wsolMint) {
+                  foundAt = `offset ${offset}`;
+                  break;
+                }
+              } catch (e) {}
+            }
 
             logger.info(
-              `DLMM BYTE DEBUG: disc=[${Array.from(disc).join(',')}] | at8=${at8} | at40=${at40} | at72=${at72} | at104=${at104} | at136=${at136} | quote=${quoteTokenMint.toBase58()}`
+              `DLMM BYTE DEBUG: disc=[${Array.from(disc).join(',')}] | WSOL=${foundAt} | at8=${at8.slice(0,8)}... | at40=${at40.slice(0,8)}... | at72=${at72.slice(0,8)}... | at104=${at104.slice(0,8)}... | at136=${at136.slice(0,8)}... | at168=${at168.slice(0,8)}... | at200=${at200.slice(0,8)}...`
             );
           }
 
