@@ -2,6 +2,12 @@ import { Connection, PublicKey, Logs, ParsedTransactionWithMeta } from '@solana/
 import { EventEmitter } from 'events';
 import { getMintCache } from '../cache/mint.cache';
 import { logger } from '../helpers/logger';
+import {
+  DetectedToken,
+  PumpFunState,
+  PlatformStats,
+  createEmptyPlatformStats,
+} from '../types';
 
 /**
  * pump.fun Program ID
@@ -25,7 +31,12 @@ export const PUMP_FUN_FEE_RECIPIENT = new PublicKey('CebN5WGQ4jvEPvsVU4EoHEpgzq1
 export const PUMP_FUN_EVENT_AUTHORITY = new PublicKey('Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1');
 
 /**
- * Data structure for a pump.fun token
+ * WSOL mint address (quote token for pump.fun)
+ */
+const WSOL_MINT = new PublicKey('So11111111111111111111111111111111111111112');
+
+/**
+ * Data structure for a pump.fun token (internal parsing)
  */
 export interface PumpFunToken {
   mint: PublicKey;
@@ -43,9 +54,15 @@ export interface PumpFunToken {
  * Events emitted by PumpFunListener
  */
 export interface PumpFunListenerEvents {
-  'token-created': (token: PumpFunToken) => void;
+  /** Unified event - new token detected and ready for buy */
+  'new-token': (token: DetectedToken) => void;
+  /** Token rejected during processing */
+  'token-rejected': (token: Partial<DetectedToken>, reason: string) => void;
+  /** Error occurred */
   'error': (error: Error) => void;
+  /** Listener started */
   'started': () => void;
+  /** Listener stopped */
   'stopped': () => void;
 }
 
@@ -65,7 +82,8 @@ interface PumpFunListenerStats {
  *
  * This listener monitors the pump.fun program for "Create" instructions,
  * which indicate a new token is being launched on the bonding curve.
- * When detected, the token is added to the mint cache and an event is emitted.
+ * When detected, the token is added to the mint cache and a unified
+ * 'new-token' event is emitted with the DetectedToken interface.
  *
  * pump.fun tokens launch on a bonding curve mechanism:
  * - Price starts low and increases as people buy
@@ -77,10 +95,12 @@ interface PumpFunListenerStats {
  * const listener = new PumpFunListener(connection);
  * await listener.start();
  *
- * listener.on('token-created', (token) => {
- *   console.log(`New pump.fun token: ${token.name} (${token.symbol})`);
- *   console.log(`Mint: ${token.mint.toString()}`);
- *   console.log(`Bonding Curve: ${token.bondingCurve.toString()}`);
+ * listener.on('new-token', (token: DetectedToken) => {
+ *   if (token.source === 'pumpfun') {
+ *     console.log(`New pump.fun token: ${token.name} (${token.symbol})`);
+ *     console.log(`Mint: ${token.mint.toString()}`);
+ *     console.log(`Bonding Curve: ${token.bondingCurve?.toString()}`);
+ *   }
  * });
  * ```
  */
@@ -95,6 +115,9 @@ export class PumpFunListener extends EventEmitter {
     errors: 0,
     lastDetectedAt: null,
   };
+
+  // Platform stats for unified reporting
+  private platformStats: PlatformStats = createEmptyPlatformStats();
 
   // Track recently processed signatures to avoid duplicates
   private processedSignatures: Set<string> = new Set();
@@ -172,6 +195,7 @@ export class PumpFunListener extends EventEmitter {
     }
 
     this.stats.createInstructionsDetected++;
+    this.platformStats.detected++;
 
     // Add to processed signatures
     this.addProcessedSignature(signature);
@@ -180,6 +204,7 @@ export class PumpFunListener extends EventEmitter {
     this.processCreateTransaction(signature).catch((error) => {
       logger.error({ signature, error }, 'Error processing pump.fun create transaction');
       this.stats.errors++;
+      this.platformStats.errors++;
     });
   }
 
@@ -208,9 +233,41 @@ export class PumpFunListener extends EventEmitter {
         // Update stats
         this.stats.tokensProcessed++;
         this.stats.lastDetectedAt = Date.now();
+        this.platformStats.isNew++;
 
-        // Emit event
-        this.emit('token-created', token);
+        // Build the unified DetectedToken
+        const currentTime = Math.floor(Date.now() / 1000);
+
+        const pumpFunState: PumpFunState = {
+          bondingCurve: token.bondingCurve,
+          associatedBondingCurve: token.associatedBondingCurve,
+          complete: false, // Just created, not graduated yet
+        };
+
+        const detectedToken: DetectedToken = {
+          source: 'pumpfun',
+          mint: token.mint,
+          bondingCurve: token.bondingCurve,
+          associatedBondingCurve: token.associatedBondingCurve,
+          quoteMint: WSOL_MINT,
+          name: token.name || undefined,
+          symbol: token.symbol || undefined,
+          uri: token.uri || undefined,
+          creator: token.creator,
+          detectedAt: currentTime,
+          inMintCache: true, // We just added it
+          verificationSource: 'mint-cache',
+          verified: true,
+          signature: token.signature,
+          poolState: {
+            type: 'pumpfun',
+            state: pumpFunState,
+          },
+        };
+
+        // Update stats and emit unified event
+        this.platformStats.buyAttempted++;
+        this.emit('new-token', detectedToken);
 
         logger.info(
           {
@@ -228,6 +285,7 @@ export class PumpFunListener extends EventEmitter {
       // Log at debug level - transaction fetch failures can happen
       logger.debug({ signature, error }, 'Failed to fetch pump.fun transaction details');
       this.stats.errors++;
+      this.platformStats.errors++;
     }
   }
 
@@ -459,10 +517,17 @@ export class PumpFunListener extends EventEmitter {
   }
 
   /**
-   * Get listener statistics
+   * Get listener statistics (internal stats)
    */
   getStats(): PumpFunListenerStats {
     return { ...this.stats };
+  }
+
+  /**
+   * Get platform statistics (unified format)
+   */
+  getPlatformStats(): PlatformStats {
+    return { ...this.platformStats };
   }
 
   /**
@@ -476,6 +541,7 @@ export class PumpFunListener extends EventEmitter {
       errors: 0,
       lastDetectedAt: null,
     };
+    this.platformStats = createEmptyPlatformStats();
   }
 
   /**

@@ -1,4 +1,11 @@
 import { PublicKey } from '@solana/web3.js';
+import { LiquidityStateV4 } from '@raydium-io/raydium-sdk';
+import { CpmmPoolState } from '../helpers/cpmm';
+import { DlmmPoolState } from '../helpers/dlmm';
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Core Types
+// ══════════════════════════════════════════════════════════════════════════════
 
 /**
  * Source platform for a detected token/pool
@@ -6,75 +13,151 @@ import { PublicKey } from '@solana/web3.js';
 export type TokenSource = 'pumpfun' | 'raydium-ammv4' | 'raydium-cpmm' | 'meteora-dlmm';
 
 /**
+ * How the token's age was verified
+ */
+export type VerificationSource = 'mint-cache' | 'dexscreener' | 'on-chain' | 'not-indexed' | 'none';
+
+/**
+ * Pool state types - discriminated union for type safety
+ */
+export type PoolState =
+  | { type: 'ammv4'; state: LiquidityStateV4 }
+  | { type: 'cpmm'; state: CpmmPoolState }
+  | { type: 'dlmm'; state: DlmmPoolState }
+  | { type: 'pumpfun'; state: PumpFunState };
+
+/**
+ * pump.fun bonding curve state
+ */
+export interface PumpFunState {
+  bondingCurve: PublicKey;
+  associatedBondingCurve: PublicKey;
+  virtualSolReserves?: bigint;
+  virtualTokenReserves?: bigint;
+  complete: boolean;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Unified Detection Interface
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
  * Unified interface for a detected token across all platforms
  *
- * This interface provides a common structure for tokens detected
- * on any supported platform, enabling a unified processing pipeline.
+ * This is the primary interface emitted by the 'new-token' event,
+ * providing a consistent structure for all platforms (pump.fun, Raydium, Meteora).
+ *
+ * @example
+ * ```typescript
+ * listeners.on('new-token', async (token: DetectedToken) => {
+ *   switch (token.source) {
+ *     case 'pumpfun':
+ *       await buyOnPumpFun(token);
+ *       break;
+ *     case 'raydium-ammv4':
+ *       await bot.buy(token.poolId!, token.poolState.state);
+ *       break;
+ *     // ... etc
+ *   }
+ * });
+ * ```
  */
 export interface DetectedToken {
+  // ────────────────────────────────────────────────────────────────────────────
+  // Identity (required for all sources)
+  // ────────────────────────────────────────────────────────────────────────────
+
   /** Platform where the token was detected */
   source: TokenSource;
 
   /** Token mint address */
   mint: PublicKey;
 
-  /** Pool ID (for Raydium/Meteora) */
+  // ────────────────────────────────────────────────────────────────────────────
+  // Pool/Curve Identity (platform-specific)
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /** Pool account ID (Raydium/Meteora only) */
   poolId?: PublicKey;
 
-  /** Bonding curve address (for pump.fun) */
+  /** Bonding curve address (pump.fun only) */
   bondingCurve?: PublicKey;
 
-  /** Associated bonding curve token account (for pump.fun) */
+  /** Associated bonding curve token account (pump.fun only) */
   associatedBondingCurve?: PublicKey;
 
-  /** Quote token mint (e.g., WSOL) */
-  quoteMint?: PublicKey;
+  /** Quote token mint - typically WSOL */
+  quoteMint: PublicKey;
 
-  /** Token creator wallet (if available) */
-  creator?: PublicKey;
+  // ────────────────────────────────────────────────────────────────────────────
+  // Token Metadata (optional, when available)
+  // ────────────────────────────────────────────────────────────────────────────
 
-  /** Token name (if available) */
+  /** Token name */
   name?: string;
 
-  /** Token symbol (if available) */
+  /** Token symbol */
   symbol?: string;
 
-  /** Token metadata URI (if available) */
+  /** Token metadata URI */
   uri?: string;
 
-  /** Unix timestamp (ms) when the token was detected */
+  /** Token creator wallet */
+  creator?: PublicKey;
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Timing Information
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /** Unix timestamp (seconds) when detected */
   detectedAt: number;
 
-  /** Whether the token was found in the mint cache */
-  inMintCache: boolean;
-
-  /** Verification status (for cache misses) */
-  verified?: boolean;
-
-  /** Token age in seconds (if known) */
-  ageSeconds?: number;
-
-  /** Initial liquidity in SOL (for pools) */
-  initialLiquiditySol?: number;
-
-  /** Pool open time (Unix timestamp) */
+  /** Pool open time / activation time (Unix timestamp in seconds) */
   poolOpenTime?: number;
 
-  /** Whether the pool is currently active/tradeable */
-  isActive?: boolean;
+  /** Token age in seconds (if verified) */
+  ageSeconds?: number;
 
-  /** Launch confidence score (if using scoring) */
+  // ────────────────────────────────────────────────────────────────────────────
+  // Verification Status
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /** Whether the token was found in the mint cache (Helius-detected) */
+  inMintCache: boolean;
+
+  /** How the token age was verified */
+  verificationSource: VerificationSource;
+
+  /** Whether the token passed verification */
+  verified: boolean;
+
+  /** Reason for rejection (if verified === false) */
+  rejectionReason?: string;
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Pool State (for buy execution)
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /** Typed pool state for buy execution */
+  poolState: PoolState;
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Optional Enrichment Data
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /** Initial liquidity in SOL (if available) */
+  initialLiquiditySol?: number;
+
+  /** Launch confidence score (future: for scoring system) */
   launchScore?: number;
 
-  /** How the token was verified */
-  verificationSource?: 'mint-cache' | 'dexscreener' | 'on-chain' | 'none';
-
-  /** Transaction signature that created the token/pool */
+  /** Transaction signature that triggered detection */
   signature?: string;
-
-  /** Raw pool state data (platform-specific) */
-  rawState?: any;
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Pipeline Results
+// ══════════════════════════════════════════════════════════════════════════════
 
 /**
  * Result of attempting to buy a detected token
@@ -95,16 +178,7 @@ export interface VerificationResult {
   isValid: boolean;
   reason?: string;
   ageSeconds?: number;
-  verificationSource: 'mint-cache' | 'dexscreener' | 'on-chain' | 'none';
-}
-
-/**
- * Filter result for a detected token
- */
-export interface FilterResult {
-  passed: boolean;
-  failedFilter?: string;
-  reason?: string;
+  source: VerificationSource;
 }
 
 /**
@@ -113,31 +187,46 @@ export interface FilterResult {
 export interface TokenPipelineResult {
   token: DetectedToken;
   verification: VerificationResult;
-  filters?: FilterResult;
   buy?: BuyResult;
   processingTimeMs: number;
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Statistics
+// ══════════════════════════════════════════════════════════════════════════════
 
 /**
  * Statistics for token detection by platform
  */
 export interface PlatformStats {
+  /** Total tokens detected */
   detected: number;
+  /** Tokens already in mint cache (duplicates) */
   alreadyCached: number;
+  /** Tokens that passed newness check */
   isNew: number;
+  /** Tokens rejected - too old */
   tokenTooOld: number;
+  /** Tokens rejected - verification failed */
   verificationFailed: number;
+  /** Tokens rejected - filter failed */
   filterFailed: number;
+  /** Buy attempts made */
   buyAttempted: number;
+  /** Successful buys */
   buySucceeded: number;
+  /** Failed buys */
   buyFailed: number;
+  /** Errors during processing */
   errors: number;
+  /** pump.fun specific: graduated from bonding curve */
+  graduated?: number;
 }
 
 /**
  * Aggregate statistics across all platforms
  */
-export interface DetectionStats {
+export interface UnifiedDetectionStats {
   pumpfun: PlatformStats;
   raydiumAmmv4: PlatformStats;
   raydiumCpmm: PlatformStats;
@@ -157,37 +246,53 @@ export interface DetectionStats {
   };
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Event Type Definitions
+// ══════════════════════════════════════════════════════════════════════════════
+
 /**
  * Event types emitted by the unified token detection system
  */
-export interface TokenDetectionEvents {
-  /** Emitted when a new token is detected (before verification) */
-  'token-detected': (token: DetectedToken) => void;
+export interface UnifiedTokenEvents {
+  /**
+   * Emitted when a new token is detected and verified.
+   * This is the primary event for the unified handler.
+   */
+  'new-token': (token: DetectedToken) => void;
 
-  /** Emitted when a token passes verification */
-  'token-verified': (token: DetectedToken, result: VerificationResult) => void;
+  /**
+   * Emitted when a token is rejected during verification.
+   * Useful for debugging and stats.
+   */
+  'token-rejected': (token: Partial<DetectedToken>, reason: string) => void;
 
-  /** Emitted when a token fails verification */
-  'token-rejected': (token: DetectedToken, result: VerificationResult) => void;
-
-  /** Emitted when a token passes all filters */
-  'token-approved': (token: DetectedToken, filters: FilterResult) => void;
-
-  /** Emitted when a buy is attempted */
+  /**
+   * Emitted when a buy is attempted
+   */
   'buy-attempted': (token: DetectedToken) => void;
 
-  /** Emitted when a buy succeeds */
+  /**
+   * Emitted when a buy succeeds
+   */
   'buy-succeeded': (token: DetectedToken, result: BuyResult) => void;
 
-  /** Emitted when a buy fails */
+  /**
+   * Emitted when a buy fails
+   */
   'buy-failed': (token: DetectedToken, result: BuyResult) => void;
 
-  /** Emitted for pipeline statistics */
-  'pipeline-stats': (stats: DetectionStats) => void;
+  /**
+   * Emitted periodically with pipeline statistics
+   */
+  'stats-update': (stats: UnifiedDetectionStats) => void;
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Helper Functions
+// ══════════════════════════════════════════════════════════════════════════════
+
 /**
- * Helper function to create an empty PlatformStats object
+ * Create an empty PlatformStats object
  */
 export function createEmptyPlatformStats(): PlatformStats {
   return {
@@ -205,9 +310,9 @@ export function createEmptyPlatformStats(): PlatformStats {
 }
 
 /**
- * Helper function to create an empty DetectionStats object
+ * Create an empty UnifiedDetectionStats object
  */
-export function createEmptyDetectionStats(): DetectionStats {
+export function createEmptyUnifiedStats(): UnifiedDetectionStats {
   return {
     pumpfun: createEmptyPlatformStats(),
     raydiumAmmv4: createEmptyPlatformStats(),
@@ -227,4 +332,40 @@ export function createEmptyDetectionStats(): DetectionStats {
       buySucceeded: 0,
     },
   };
+}
+
+/**
+ * Type guard to check if a DetectedToken is from pump.fun
+ */
+export function isPumpFunToken(token: DetectedToken): token is DetectedToken & {
+  bondingCurve: PublicKey;
+  associatedBondingCurve: PublicKey;
+  poolState: { type: 'pumpfun'; state: PumpFunState };
+} {
+  return token.source === 'pumpfun' && token.bondingCurve !== undefined;
+}
+
+/**
+ * Type guard to check if a DetectedToken is from a DEX pool
+ */
+export function isDexPoolToken(token: DetectedToken): token is DetectedToken & {
+  poolId: PublicKey;
+} {
+  return token.source !== 'pumpfun' && token.poolId !== undefined;
+}
+
+/**
+ * Get a human-readable source name
+ */
+export function getSourceDisplayName(source: TokenSource): string {
+  switch (source) {
+    case 'pumpfun':
+      return 'pump.fun';
+    case 'raydium-ammv4':
+      return 'Raydium AmmV4';
+    case 'raydium-cpmm':
+      return 'Raydium CPMM';
+    case 'meteora-dlmm':
+      return 'Meteora DLMM';
+  }
 }

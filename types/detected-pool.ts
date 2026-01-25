@@ -1,15 +1,42 @@
+/**
+ * Pool-specific types for DEX pool detection
+ *
+ * These types complement the unified DetectedToken interface
+ * with pool-specific structures used during detection/decoding.
+ */
+
 import { PublicKey } from '@solana/web3.js';
-import { LiquidityStateV4 } from '@raydium-io/raydium-sdk';
-import { CpmmPoolState } from '../helpers/cpmm';
-import { DlmmPoolState } from '../helpers/dlmm';
+
+// Re-export unified types for convenience
+export {
+  TokenSource,
+  VerificationSource,
+  PoolState,
+  DetectedToken,
+  PlatformStats,
+  UnifiedDetectionStats,
+  createEmptyPlatformStats,
+  createEmptyUnifiedStats,
+  isPumpFunToken,
+  isDexPoolToken,
+  getSourceDisplayName,
+} from './detected-token';
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Pool Type Enum
+// ══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Pool types supported by the detection system
+ * DEX pool types (excludes pump.fun which uses bonding curves)
  */
 export type PoolType = 'AMMV4' | 'CPMM' | 'DLMM';
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Token Age Validation
+// ══════════════════════════════════════════════════════════════════════════════
+
 /**
- * Result of token age validation
+ * Result of on-chain token age validation
  */
 export interface TokenAgeResult {
   /** Age of the token in seconds since first transaction */
@@ -22,59 +49,14 @@ export interface TokenAgeResult {
   isNew: boolean;
 }
 
-/**
- * Unified pool detection result
- *
- * This interface standardizes the output from all pool type detectors,
- * providing a consistent structure for downstream processing regardless
- * of whether the pool is AMMV4, CPMM, or DLMM.
- */
-export interface DetectedPool {
-  // ══════════════════════════════════════════════════════════════════════════
-  // Identity
-  // ══════════════════════════════════════════════════════════════════════════
-  /** The pool account address */
-  poolId: PublicKey;
-  /** The type of pool (AMMV4, CPMM, or DLMM) */
-  poolType: PoolType;
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // Token Information
-  // ══════════════════════════════════════════════════════════════════════════
-  /** The base token mint (the new token being launched) */
-  baseMint: PublicKey;
-  /** The quote token mint (typically WSOL) */
-  quoteMint: PublicKey;
-  /** Decimals for the base token */
-  baseDecimals: number;
-  /** Decimals for the quote token */
-  quoteDecimals: number;
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // Timing Information
-  // ══════════════════════════════════════════════════════════════════════════
-  /** When the pool was created/activated (unix timestamp in seconds) */
-  poolCreationTime: number;
-  /** When we detected this pool (unix timestamp in seconds) */
-  detectedAt: number;
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // Token Age Validation (Phase 1)
-  // ══════════════════════════════════════════════════════════════════════════
-  /** Token age validation result */
-  tokenAgeResult: TokenAgeResult;
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // Pool-Specific Raw Data
-  // ══════════════════════════════════════════════════════════════════════════
-  /** The raw decoded pool state (pool-type-specific) */
-  rawState: LiquidityStateV4 | CpmmPoolState | DlmmPoolState;
-}
+// ══════════════════════════════════════════════════════════════════════════════
+// Per-Pool-Type Statistics (Legacy - for backwards compatibility)
+// ══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Statistics for pool detection tracking
+ * Statistics for a specific pool type
  *
- * Used to monitor the detection pipeline and identify filtering patterns.
+ * @deprecated Use PlatformStats from detected-token.ts instead
  */
 export interface PoolTypeStats {
   /** Total WebSocket events received */
@@ -94,7 +76,9 @@ export interface PoolTypeStats {
 }
 
 /**
- * Aggregated detection statistics across all pool types
+ * Aggregated detection statistics across pool types
+ *
+ * @deprecated Use UnifiedDetectionStats from detected-token.ts instead
  */
 export interface DetectionStats {
   /** AMMV4 pool detection stats */
@@ -115,6 +99,8 @@ export interface DetectionStats {
 
 /**
  * Create empty stats for a pool type
+ *
+ * @deprecated Use createEmptyPlatformStats from detected-token.ts instead
  */
 export function createEmptyPoolTypeStats(): PoolTypeStats {
   return {
@@ -130,6 +116,8 @@ export function createEmptyPoolTypeStats(): PoolTypeStats {
 
 /**
  * Create empty detection stats
+ *
+ * @deprecated Use createEmptyUnifiedStats from detected-token.ts instead
  */
 export function createEmptyDetectionStats(): DetectionStats {
   return {
@@ -140,4 +128,36 @@ export function createEmptyDetectionStats(): DetectionStats {
     totalEmitted: 0,
     totalRejectedTokenAge: 0,
   };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Pool Detection Helpers
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Map TokenSource to PoolType (for DEX pools only)
+ */
+export function sourceToPoolType(source: 'raydium-ammv4' | 'raydium-cpmm' | 'meteora-dlmm'): PoolType {
+  switch (source) {
+    case 'raydium-ammv4':
+      return 'AMMV4';
+    case 'raydium-cpmm':
+      return 'CPMM';
+    case 'meteora-dlmm':
+      return 'DLMM';
+  }
+}
+
+/**
+ * Map PoolType to TokenSource
+ */
+export function poolTypeToSource(poolType: PoolType): 'raydium-ammv4' | 'raydium-cpmm' | 'meteora-dlmm' {
+  switch (poolType) {
+    case 'AMMV4':
+      return 'raydium-ammv4';
+    case 'CPMM':
+      return 'raydium-cpmm';
+    case 'DLMM':
+      return 'meteora-dlmm';
+  }
 }
