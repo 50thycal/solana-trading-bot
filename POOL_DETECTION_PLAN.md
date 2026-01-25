@@ -1,6 +1,6 @@
 # Pool Detection Standardization Plan
 
-> **Status:** Phase 1 - Not Started
+> **Status:** Phase 1A - CPMM Reference Implementation - COMPLETED
 > **Objective:** Detect genuinely NEW token launches across all pool types
 > **Pool Types:** AMMV4, CPMM, DLMM
 
@@ -622,3 +622,4 @@ These phases will be documented in separate plan updates once Phase 1 is validat
 | Date | Version | Changes |
 |------|---------|---------|
 | 2024-01-25 | 1.0 | Initial plan created |
+| 2026-01-25 | 1.1 | Phase 1A completed: CPMM token age validation implemented |
