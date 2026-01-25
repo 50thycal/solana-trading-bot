@@ -462,15 +462,13 @@ export class Listeners extends EventEmitter {
               } catch (e) {}
             }
 
-            logger.info({
-              poolId: updatedAccountInfo.accountId.toBase58().slice(0, 8),
-              dataLen: data.length,
-              wsolFoundAt: foundAt,
-              at90: tokenXMint.toBase58().slice(0, 12),
-              at122: tokenYMint.toBase58().slice(0, 12),
-              status: poolState.status,
-              activeId: poolState.activeId,
-            }, 'DLMM layout debug: checking token mint positions');
+            const at90 = tokenXMint.toBase58().slice(0, 12);
+            const at122 = tokenYMint.toBase58().slice(0, 12);
+            const poolId = updatedAccountInfo.accountId.toBase58().slice(0, 8);
+
+            logger.info(
+              `DLMM DEBUG: pool=${poolId}... | WSOL_AT: ${foundAt} | offset90=${at90}... | offset122=${at122}... | status=${poolState.status} | activeId=${poolState.activeId} | len=${data.length}`
+            );
           }
 
           // Check if either token is our quote token
