@@ -602,30 +602,57 @@ const runListener = async () => {
           return;
         }
 
-        // TODO: Execute buy on pump.fun bonding curve
-        // For now, we're just detecting and logging
-        // The buy logic will be enabled once pump.fun trading is fully tested
+        // Execute buy on pump.fun bonding curve
         poolDetectionStats.pumpfun.proceededToBuy++;
+
         logger.info(
           {
             mint: token.mint.toString(),
+            name: token.name || 'Unknown',
+            symbol: token.symbol || 'Unknown',
             virtualSolReserves: bondingCurveState.virtualSolReserves.toString(),
             virtualTokenReserves: bondingCurveState.virtualTokenReserves.toString(),
           },
-          '[pump.fun] Token detected - buy execution pending (pump.fun trading not yet enabled)'
+          '[pump.fun] Executing buy on bonding curve'
         );
 
-        // Placeholder for actual buy execution:
-        // const buyResult = await buyOnPumpFun({
-        //   connection,
-        //   wallet,
-        //   mint: token.mint,
-        //   bondingCurve: token.bondingCurve,
-        //   amountSol: Number(QUOTE_AMOUNT),
-        //   slippageBps: BUY_SLIPPAGE * 100,
-        //   computeUnitLimit: COMPUTE_UNIT_LIMIT,
-        //   computeUnitPrice: COMPUTE_UNIT_PRICE,
-        // });
+        if (DRY_RUN) {
+          logger.info(
+            { mint: token.mint.toString(), amountSol: QUOTE_AMOUNT.toString() },
+            '[pump.fun] DRY RUN - would have bought token'
+          );
+        } else {
+          const buyResult = await buyOnPumpFun({
+            connection,
+            wallet,
+            mint: token.mint,
+            bondingCurve: token.bondingCurve,
+            amountSol: Number(QUOTE_AMOUNT),
+            slippageBps: BUY_SLIPPAGE * 100,
+            computeUnitLimit: COMPUTE_UNIT_LIMIT,
+            computeUnitPrice: COMPUTE_UNIT_PRICE,
+          });
+
+          if (buyResult.success) {
+            logger.info(
+              {
+                mint: token.mint.toString(),
+                signature: buyResult.signature,
+                tokensReceived: buyResult.tokensReceived,
+                amountSol: QUOTE_AMOUNT.toString(),
+              },
+              '[pump.fun] Buy successful'
+            );
+          } else {
+            logger.error(
+              {
+                mint: token.mint.toString(),
+                error: buyResult.error,
+              },
+              '[pump.fun] Buy failed'
+            );
+          }
+        }
 
       } catch (error) {
         poolDetectionStats.pumpfun.errors++;
@@ -737,9 +764,73 @@ const runListener = async () => {
     );
 
     if (isNewPool && bot) {
-      poolDetectionStats.ammV4.proceededToBuy++;
-      poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
-      await bot.buy(updatedAccountInfo.accountId, poolState);
+      const baseMint = poolState.baseMint;
+      const baseMintStr = baseMint.toString();
+      const mintCache = getMintCache();
+
+      // Check if we detected this token via Helius mint listener (cache hit = definitely new)
+      if (mintCache.has(baseMint)) {
+        logger.info(
+          { mint: baseMintStr, poolType: 'AmmV4', source: 'mint-cache' },
+          '[AmmV4] Token in mint cache - proceeding immediately'
+        );
+        poolDetectionStats.ammV4.proceededToBuy++;
+        poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
+        await bot.buy(updatedAccountInfo.accountId, poolState);
+      } else if (DEXSCREENER_FALLBACK_ENABLED) {
+        // Cache miss - verify via DexScreener API
+        logger.debug(
+          { mint: baseMintStr, poolType: 'AmmV4' },
+          '[AmmV4] Token not in mint cache - verifying via DexScreener'
+        );
+
+        const verification = await verifyTokenAge(baseMintStr, MAX_TOKEN_AGE_SECONDS);
+
+        if (verification.isVerified) {
+          logger.info(
+            {
+              mint: baseMintStr,
+              poolType: 'AmmV4',
+              source: 'dexscreener',
+              ageSeconds: verification.ageSeconds,
+            },
+            '[AmmV4] DexScreener verified token is new - proceeding to buy'
+          );
+          poolDetectionStats.ammV4.proceededToBuy++;
+          poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
+          await bot.buy(updatedAccountInfo.accountId, poolState);
+        } else if (verification.source === 'not_indexed') {
+          // Token not indexed on DexScreener - could be very new, proceed with caution
+          logger.info(
+            { mint: baseMintStr, poolType: 'AmmV4', source: 'not_indexed' },
+            '[AmmV4] Token not indexed on DexScreener (may be very new) - proceeding to buy'
+          );
+          poolDetectionStats.ammV4.proceededToBuy++;
+          poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
+          await bot.buy(updatedAccountInfo.accountId, poolState);
+        } else {
+          // Token is too old or verification failed
+          poolDetectionStats.ammV4.tokenTooOld++;
+          logger.info(
+            {
+              mint: baseMintStr,
+              poolType: 'AmmV4',
+              reason: verification.reason,
+              ageSeconds: verification.ageSeconds,
+            },
+            '[AmmV4] REJECTED: Token failed DexScreener verification'
+          );
+        }
+      } else {
+        // DexScreener fallback disabled - proceed without verification
+        logger.debug(
+          { mint: baseMintStr, poolType: 'AmmV4' },
+          '[AmmV4] DexScreener fallback disabled - proceeding without verification'
+        );
+        poolDetectionStats.ammV4.proceededToBuy++;
+        poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
+        await bot.buy(updatedAccountInfo.accountId, poolState);
+      }
     }
   });
 
@@ -786,8 +877,63 @@ const runListener = async () => {
 
     // If pool passes basic checks, verify token age
     if (isNewPool && bot) {
-      // Token age validation (Phase 1)
-      if (ENABLE_TOKEN_AGE_CHECK) {
+      const mintCache = getMintCache();
+
+      // Check if we detected this token via Helius mint listener (cache hit = definitely new)
+      if (mintCache.has(baseMint)) {
+        logger.info(
+          { mint: baseMintStr, poolType: 'CPMM', source: 'mint-cache' },
+          '[CPMM] Token in mint cache - proceeding immediately'
+        );
+        poolDetectionStats.cpmm.proceededToBuy++;
+        poolCache.save(updatedAccountInfo.accountId.toString(), cpmmPoolState as any);
+        await bot.buyCpmm(updatedAccountInfo.accountId, cpmmPoolState);
+      } else if (DEXSCREENER_FALLBACK_ENABLED) {
+        // Cache miss - verify via DexScreener API
+        logger.debug(
+          { mint: baseMintStr, poolType: 'CPMM' },
+          '[CPMM] Token not in mint cache - verifying via DexScreener'
+        );
+
+        const verification = await verifyTokenAge(baseMintStr, MAX_TOKEN_AGE_SECONDS);
+
+        if (verification.isVerified) {
+          logger.info(
+            {
+              mint: baseMintStr,
+              poolType: 'CPMM',
+              source: 'dexscreener',
+              ageSeconds: verification.ageSeconds,
+            },
+            '[CPMM] DexScreener verified token is new - proceeding to buy'
+          );
+          poolDetectionStats.cpmm.proceededToBuy++;
+          poolCache.save(updatedAccountInfo.accountId.toString(), cpmmPoolState as any);
+          await bot.buyCpmm(updatedAccountInfo.accountId, cpmmPoolState);
+        } else if (verification.source === 'not_indexed') {
+          // Token not indexed on DexScreener - could be very new, proceed with caution
+          logger.info(
+            { mint: baseMintStr, poolType: 'CPMM', source: 'not_indexed' },
+            '[CPMM] Token not indexed on DexScreener (may be very new) - proceeding to buy'
+          );
+          poolDetectionStats.cpmm.proceededToBuy++;
+          poolCache.save(updatedAccountInfo.accountId.toString(), cpmmPoolState as any);
+          await bot.buyCpmm(updatedAccountInfo.accountId, cpmmPoolState);
+        } else {
+          // Token is too old or verification failed
+          poolDetectionStats.cpmm.tokenTooOld++;
+          logger.info(
+            {
+              mint: baseMintStr,
+              poolType: 'CPMM',
+              reason: verification.reason,
+              ageSeconds: verification.ageSeconds,
+            },
+            '[CPMM] REJECTED: Token failed DexScreener verification'
+          );
+        }
+      } else if (ENABLE_TOKEN_AGE_CHECK) {
+        // Fallback to on-chain token age check
         const tokenAgeResult = await getTokenAge(connection, baseMint, MAX_TOKEN_AGE_SECONDS);
 
         logger.info(
@@ -814,21 +960,25 @@ const runListener = async () => {
           );
           return;
         }
-      }
 
-      // All checks passed - proceed to buy
-      poolDetectionStats.cpmm.proceededToBuy++;
-      logger.info(
-        {
-          mint: baseMintStr,
-          poolId: updatedAccountInfo.accountId.toString(),
-          poolType: 'CPMM',
-        },
-        '[CPMM] EMITTING: New token pool detected - proceeding to buy'
-      );
-      // Save to cache using baseMint as key (same pattern as AmmV4)
-      poolCache.save(updatedAccountInfo.accountId.toString(), cpmmPoolState as any);
-      await bot.buyCpmm(updatedAccountInfo.accountId, cpmmPoolState);
+        // Token age check passed - proceed to buy
+        poolDetectionStats.cpmm.proceededToBuy++;
+        logger.info(
+          { mint: baseMintStr, poolType: 'CPMM', source: 'on-chain' },
+          '[CPMM] On-chain token age verified - proceeding to buy'
+        );
+        poolCache.save(updatedAccountInfo.accountId.toString(), cpmmPoolState as any);
+        await bot.buyCpmm(updatedAccountInfo.accountId, cpmmPoolState);
+      } else {
+        // No verification enabled - proceed without checks
+        logger.debug(
+          { mint: baseMintStr, poolType: 'CPMM' },
+          '[CPMM] No verification enabled - proceeding without checks'
+        );
+        poolDetectionStats.cpmm.proceededToBuy++;
+        poolCache.save(updatedAccountInfo.accountId.toString(), cpmmPoolState as any);
+        await bot.buyCpmm(updatedAccountInfo.accountId, cpmmPoolState);
+      }
     }
   });
 
@@ -882,13 +1032,86 @@ const runListener = async () => {
     );
 
     if (isNewPool && bot) {
-      poolDetectionStats.dlmm.proceededToBuy++;
-      // Save to cache using baseMint as key (same pattern as other pool types)
-      poolCache.save(updatedAccountInfo.accountId.toString(), dlmmPoolState as any);
-      try {
-        await bot.buyDlmm(updatedAccountInfo.accountId, dlmmPoolState);
-      } catch (error) {
-        logger.error({ error, mint: baseMintStr, poolType: 'DLMM' }, 'Error processing DLMM pool');
+      const mintCache = getMintCache();
+
+      // Check if we detected this token via Helius mint listener (cache hit = definitely new)
+      if (mintCache.has(baseMint)) {
+        logger.info(
+          { mint: baseMintStr, poolType: 'DLMM', source: 'mint-cache' },
+          '[DLMM] Token in mint cache - proceeding immediately'
+        );
+        poolDetectionStats.dlmm.proceededToBuy++;
+        poolCache.save(updatedAccountInfo.accountId.toString(), dlmmPoolState as any);
+        try {
+          await bot.buyDlmm(updatedAccountInfo.accountId, dlmmPoolState);
+        } catch (error) {
+          logger.error({ error, mint: baseMintStr, poolType: 'DLMM' }, 'Error processing DLMM pool');
+        }
+      } else if (DEXSCREENER_FALLBACK_ENABLED) {
+        // Cache miss - verify via DexScreener API
+        logger.debug(
+          { mint: baseMintStr, poolType: 'DLMM' },
+          '[DLMM] Token not in mint cache - verifying via DexScreener'
+        );
+
+        const verification = await verifyTokenAge(baseMintStr, MAX_TOKEN_AGE_SECONDS);
+
+        if (verification.isVerified) {
+          logger.info(
+            {
+              mint: baseMintStr,
+              poolType: 'DLMM',
+              source: 'dexscreener',
+              ageSeconds: verification.ageSeconds,
+            },
+            '[DLMM] DexScreener verified token is new - proceeding to buy'
+          );
+          poolDetectionStats.dlmm.proceededToBuy++;
+          poolCache.save(updatedAccountInfo.accountId.toString(), dlmmPoolState as any);
+          try {
+            await bot.buyDlmm(updatedAccountInfo.accountId, dlmmPoolState);
+          } catch (error) {
+            logger.error({ error, mint: baseMintStr, poolType: 'DLMM' }, 'Error processing DLMM pool');
+          }
+        } else if (verification.source === 'not_indexed') {
+          // Token not indexed on DexScreener - could be very new, proceed with caution
+          logger.info(
+            { mint: baseMintStr, poolType: 'DLMM', source: 'not_indexed' },
+            '[DLMM] Token not indexed on DexScreener (may be very new) - proceeding to buy'
+          );
+          poolDetectionStats.dlmm.proceededToBuy++;
+          poolCache.save(updatedAccountInfo.accountId.toString(), dlmmPoolState as any);
+          try {
+            await bot.buyDlmm(updatedAccountInfo.accountId, dlmmPoolState);
+          } catch (error) {
+            logger.error({ error, mint: baseMintStr, poolType: 'DLMM' }, 'Error processing DLMM pool');
+          }
+        } else {
+          // Token is too old or verification failed
+          poolDetectionStats.dlmm.tokenTooOld++;
+          logger.info(
+            {
+              mint: baseMintStr,
+              poolType: 'DLMM',
+              reason: verification.reason,
+              ageSeconds: verification.ageSeconds,
+            },
+            '[DLMM] REJECTED: Token failed DexScreener verification'
+          );
+        }
+      } else {
+        // DexScreener fallback disabled - proceed without verification
+        logger.debug(
+          { mint: baseMintStr, poolType: 'DLMM' },
+          '[DLMM] DexScreener fallback disabled - proceeding without verification'
+        );
+        poolDetectionStats.dlmm.proceededToBuy++;
+        poolCache.save(updatedAccountInfo.accountId.toString(), dlmmPoolState as any);
+        try {
+          await bot.buyDlmm(updatedAccountInfo.accountId, dlmmPoolState);
+        } catch (error) {
+          logger.error({ error, mint: baseMintStr, poolType: 'DLMM' }, 'Error processing DLMM pool');
+        }
       }
     }
   });
