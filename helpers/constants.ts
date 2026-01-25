@@ -135,6 +135,17 @@ export const ENABLE_TOKEN_AGE_CHECK = config.enableTokenAgeCheck;
 export const ENABLE_HELIUS_MINT_DETECTION = config.enableHeliusMintDetection;
 
 // ============================================================================
+// PUMP.FUN DETECTION (Token Monitoring Phase 1)
+// ============================================================================
+export const ENABLE_PUMPFUN_DETECTION = config.enablePumpfunDetection;
+
+// ============================================================================
+// DEXSCREENER FALLBACK (Token Monitoring Phase 2)
+// ============================================================================
+export const DEXSCREENER_FALLBACK_ENABLED = config.dexscreenerFallbackEnabled;
+export const DEXSCREENER_RATE_LIMIT = config.dexscreenerRateLimit;
+
+// ============================================================================
 // LOGGING
 // ============================================================================
 

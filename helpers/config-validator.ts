@@ -94,6 +94,13 @@ export interface ValidatedConfig {
 
   // Mint Detection (Pool Detection Phase 0)
   enableHeliusMintDetection: boolean;
+
+  // pump.fun Detection (Token Monitoring Phase 1)
+  enablePumpfunDetection: boolean;
+
+  // DexScreener Fallback (Token Monitoring Phase 2)
+  dexscreenerFallbackEnabled: boolean;
+  dexscreenerRateLimit: number;
 }
 
 interface ValidationError {
@@ -353,6 +360,16 @@ export function validateConfig(): ValidatedConfig {
   // === MINT DETECTION (Pool Detection Phase 0) ===
   const enableHeliusMintDetection = requireBoolean('ENABLE_HELIUS_MINT_DETECTION', true);
 
+  // === PUMP.FUN DETECTION (Token Monitoring Phase 1) ===
+  const enablePumpfunDetection = requireBoolean('ENABLE_PUMPFUN_DETECTION', true);
+
+  // === DEXSCREENER FALLBACK (Token Monitoring Phase 2) ===
+  const dexscreenerFallbackEnabled = requireBoolean('DEXSCREENER_FALLBACK_ENABLED', true);
+  const dexscreenerRateLimit = requireNumber('DEXSCREENER_RATE_LIMIT', 200);
+  if (dexscreenerRateLimit < 1 || dexscreenerRateLimit > 300) {
+    errors.push({ variable: 'DEXSCREENER_RATE_LIMIT', message: 'DEXSCREENER_RATE_LIMIT must be between 1 and 300' });
+  }
+
   // Validate private key format (base58)
   if (privateKey) {
     try {
@@ -451,6 +468,9 @@ export function validateConfig(): ValidatedConfig {
     maxTokenAgeSeconds,
     enableTokenAgeCheck,
     enableHeliusMintDetection,
+    enablePumpfunDetection,
+    dexscreenerFallbackEnabled,
+    dexscreenerRateLimit,
   };
 
   // Log dry run mode warning

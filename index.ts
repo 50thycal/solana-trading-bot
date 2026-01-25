@@ -1,5 +1,11 @@
 import { MarketCache, PoolCache, initMintCache, getMintCache } from './cache';
 import { Listeners, initMintListener, getMintListener, MintListener } from './listeners';
+import {
+  PumpFunListener,
+  PumpFunToken,
+  initPumpFunListener,
+  getPumpFunListener,
+} from './listeners/pumpfun-listener';
 import { Connection, KeyedAccountInfo, Keypair, PublicKey } from '@solana/web3.js';
 import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
 import { AccountLayout, getAssociatedTokenAddressSync, getAccount } from '@solana/spl-token';
@@ -65,7 +71,15 @@ import {
   MAX_TOKEN_AGE_SECONDS,
   ENABLE_TOKEN_AGE_CHECK,
   ENABLE_HELIUS_MINT_DETECTION,
+  ENABLE_PUMPFUN_DETECTION,
+  DEXSCREENER_FALLBACK_ENABLED,
 } from './helpers';
+import { verifyTokenAge } from './services/dexscreener';
+import {
+  deriveBondingCurve,
+  getBondingCurveState,
+  buyOnPumpFun,
+} from './helpers/pumpfun';
 import { initRpcManager } from './helpers/rpc-manager';
 import { startDashboardServer, DashboardServer } from './dashboard';
 import { version } from './package.json';
@@ -90,6 +104,7 @@ import {
 // Global references for graceful shutdown
 let listeners: Listeners | null = null;
 let mintListener: MintListener | null = null;
+let pumpFunListener: PumpFunListener | null = null;
 let dashboardServer: DashboardServer | null = null;
 let bot: Bot | null = null;
 let isShuttingDown = false;
@@ -209,6 +224,10 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Token age validation: ${ENABLE_TOKEN_AGE_CHECK ? 'enabled' : 'disabled'}`);
   logger.info(`Max token age: ${MAX_TOKEN_AGE_SECONDS}s`);
 
+  logger.info('- Token Monitoring (Phase 1) -');
+  logger.info(`pump.fun detection: ${ENABLE_PUMPFUN_DETECTION ? 'enabled' : 'disabled'}`);
+  logger.info(`DexScreener fallback: ${DEXSCREENER_FALLBACK_ENABLED ? 'enabled' : 'disabled'}`);
+
   logger.info('------- CONFIGURATION END -------');
 
   logger.info('Bot is running! Press CTRL + C to stop it.');
@@ -244,6 +263,12 @@ async function gracefulShutdown(signal: string): Promise<void> {
     if (mintListener) {
       logger.info('Stopping mint detection listener...');
       await mintListener.stop();
+    }
+
+    // Stop pump.fun listener
+    if (pumpFunListener) {
+      logger.info('Stopping pump.fun listener...');
+      await pumpFunListener.stop();
     }
 
     // Stop mint cache cleanup
@@ -535,6 +560,90 @@ const runListener = async () => {
     logger.info('Helius mint detection disabled - using fallback token age validation');
   }
 
+  // === Initialize pump.fun Detection (Token Monitoring Phase 1) ===
+  if (ENABLE_PUMPFUN_DETECTION) {
+    pumpFunListener = initPumpFunListener(connection);
+
+    pumpFunListener.on('token-created', async (token: PumpFunToken) => {
+      poolDetectionStats.pumpfun.detected++;
+      poolDetectionStats.pumpfun.isNew++;
+
+      logger.info(
+        {
+          mint: token.mint.toString(),
+          name: token.name || 'Unknown',
+          symbol: token.symbol || 'Unknown',
+          bondingCurve: token.bondingCurve.toString(),
+          creator: token.creator.toString(),
+        },
+        '[pump.fun] New token detected on bonding curve'
+      );
+
+      // Check if already in cache (duplicate detection)
+      const mintCache = getMintCache();
+      if (mintCache.has(token.mint)) {
+        poolDetectionStats.pumpfun.alreadyCached++;
+        logger.debug({ mint: token.mint.toString() }, '[pump.fun] Token already in cache, skipping');
+        return;
+      }
+
+      // Verify bonding curve is active and not graduated
+      try {
+        const bondingCurveState = await getBondingCurveState(connection, token.bondingCurve);
+        if (!bondingCurveState) {
+          logger.warn({ mint: token.mint.toString() }, '[pump.fun] Could not get bonding curve state');
+          poolDetectionStats.pumpfun.errors++;
+          return;
+        }
+
+        if (bondingCurveState.complete) {
+          poolDetectionStats.pumpfun.graduated++;
+          logger.info({ mint: token.mint.toString() }, '[pump.fun] Token already graduated from bonding curve');
+          return;
+        }
+
+        // TODO: Execute buy on pump.fun bonding curve
+        // For now, we're just detecting and logging
+        // The buy logic will be enabled once pump.fun trading is fully tested
+        poolDetectionStats.pumpfun.proceededToBuy++;
+        logger.info(
+          {
+            mint: token.mint.toString(),
+            virtualSolReserves: bondingCurveState.virtualSolReserves.toString(),
+            virtualTokenReserves: bondingCurveState.virtualTokenReserves.toString(),
+          },
+          '[pump.fun] Token detected - buy execution pending (pump.fun trading not yet enabled)'
+        );
+
+        // Placeholder for actual buy execution:
+        // const buyResult = await buyOnPumpFun({
+        //   connection,
+        //   wallet,
+        //   mint: token.mint,
+        //   bondingCurve: token.bondingCurve,
+        //   amountSol: Number(QUOTE_AMOUNT),
+        //   slippageBps: BUY_SLIPPAGE * 100,
+        //   computeUnitLimit: COMPUTE_UNIT_LIMIT,
+        //   computeUnitPrice: COMPUTE_UNIT_PRICE,
+        // });
+
+      } catch (error) {
+        poolDetectionStats.pumpfun.errors++;
+        logger.error({ error, mint: token.mint.toString() }, '[pump.fun] Error processing token');
+      }
+    });
+
+    pumpFunListener.on('error', (error) => {
+      logger.error({ error }, 'pump.fun listener error');
+      poolDetectionStats.pumpfun.errors++;
+    });
+
+    await pumpFunListener.start();
+    logger.info('pump.fun token detection listener started');
+  } else {
+    logger.info('pump.fun detection disabled');
+  }
+
   if (PRE_LOAD_EXISTING_MARKETS) {
     await marketCache.init({ quoteToken });
   }
@@ -546,6 +655,7 @@ const runListener = async () => {
     ammV4: { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 },
     cpmm: { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 },
     dlmm: { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 },
+    pumpfun: { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0, graduated: 0, errors: 0 },
   };
 
   // Initialize listeners with reconnection support
@@ -811,14 +921,17 @@ const runListener = async () => {
     const stateStore = getStateStore();
     const stats = stateStore?.getStats();
 
-    // Calculate totals across all pool types
-    const totalDetected = poolDetectionStats.ammV4.detected + poolDetectionStats.cpmm.detected + poolDetectionStats.dlmm.detected;
-    const totalNew = poolDetectionStats.ammV4.isNew + poolDetectionStats.cpmm.isNew + poolDetectionStats.dlmm.isNew;
-    const totalTokenTooOld = poolDetectionStats.ammV4.tokenTooOld + poolDetectionStats.cpmm.tokenTooOld + poolDetectionStats.dlmm.tokenTooOld;
-    const totalBought = poolDetectionStats.ammV4.proceededToBuy + poolDetectionStats.cpmm.proceededToBuy + poolDetectionStats.dlmm.proceededToBuy;
+    // Calculate totals across all pool types (including pump.fun)
+    const totalDetected = poolDetectionStats.ammV4.detected + poolDetectionStats.cpmm.detected + poolDetectionStats.dlmm.detected + poolDetectionStats.pumpfun.detected;
+    const totalNew = poolDetectionStats.ammV4.isNew + poolDetectionStats.cpmm.isNew + poolDetectionStats.dlmm.isNew + poolDetectionStats.pumpfun.isNew;
+    const totalTokenTooOld = poolDetectionStats.ammV4.tokenTooOld + poolDetectionStats.cpmm.tokenTooOld + poolDetectionStats.dlmm.tokenTooOld + poolDetectionStats.pumpfun.tokenTooOld;
+    const totalBought = poolDetectionStats.ammV4.proceededToBuy + poolDetectionStats.cpmm.proceededToBuy + poolDetectionStats.dlmm.proceededToBuy + poolDetectionStats.pumpfun.proceededToBuy;
 
     // Get mint cache stats
     const mintCacheStats = getMintCache().getStats();
+
+    // Get pump.fun listener stats if available
+    const pumpFunStats = pumpFunListener?.getStats();
 
     // Log detailed stats as structured data (won't be truncated)
     logger.info(
@@ -827,9 +940,10 @@ const runListener = async () => {
         ammV4: { ...poolDetectionStats.ammV4 },
         cpmm: { ...poolDetectionStats.cpmm },
         dlmm: { ...poolDetectionStats.dlmm },
+        pumpfun: { ...poolDetectionStats.pumpfun },
         totals: {
           detected: totalDetected,
-          alreadyCached: poolDetectionStats.ammV4.alreadyCached + poolDetectionStats.cpmm.alreadyCached + poolDetectionStats.dlmm.alreadyCached,
+          alreadyCached: poolDetectionStats.ammV4.alreadyCached + poolDetectionStats.cpmm.alreadyCached + poolDetectionStats.dlmm.alreadyCached + poolDetectionStats.pumpfun.alreadyCached,
           isNew: totalNew,
           tokenTooOld: totalTokenTooOld,
           proceededToBuy: totalBought,
@@ -840,17 +954,22 @@ const runListener = async () => {
           fallbackDetected: mintCacheStats.fallbackDetected,
           hitRate: (mintCacheStats.hitRate * 100).toFixed(1) + '%',
         },
+        pumpfunListener: pumpFunStats ? {
+          logsReceived: pumpFunStats.logsReceived,
+          tokensProcessed: pumpFunStats.tokensProcessed,
+        } : null,
         seenPools: stats?.seenPools || 0,
         openPositions: stats?.positions.open || 0,
         uptimeMinutes: Math.floor(uptimeMs / 60000),
       },
-      `Heartbeat (5min): Detected=${totalDetected} New=${totalNew} TokenOld=${totalTokenTooOld} Bought=${totalBought} | MintCache: ${mintCacheStats.size} (helius=${mintCacheStats.heliusDetected}, fallback=${mintCacheStats.fallbackDetected}) | AmmV4: ${poolDetectionStats.ammV4.detected}/${poolDetectionStats.ammV4.isNew}/${poolDetectionStats.ammV4.proceededToBuy} | CPMM: ${poolDetectionStats.cpmm.detected}/${poolDetectionStats.cpmm.isNew}/${poolDetectionStats.cpmm.tokenTooOld}/${poolDetectionStats.cpmm.proceededToBuy} | DLMM: ${poolDetectionStats.dlmm.detected}/${poolDetectionStats.dlmm.isNew}/${poolDetectionStats.dlmm.proceededToBuy}`
+      `Heartbeat (5min): Detected=${totalDetected} New=${totalNew} TokenOld=${totalTokenTooOld} Bought=${totalBought} | MintCache: ${mintCacheStats.size} (helius=${mintCacheStats.heliusDetected}, fallback=${mintCacheStats.fallbackDetected}) | AmmV4: ${poolDetectionStats.ammV4.detected}/${poolDetectionStats.ammV4.isNew}/${poolDetectionStats.ammV4.proceededToBuy} | CPMM: ${poolDetectionStats.cpmm.detected}/${poolDetectionStats.cpmm.isNew}/${poolDetectionStats.cpmm.tokenTooOld}/${poolDetectionStats.cpmm.proceededToBuy} | DLMM: ${poolDetectionStats.dlmm.detected}/${poolDetectionStats.dlmm.isNew}/${poolDetectionStats.dlmm.proceededToBuy} | pump.fun: ${poolDetectionStats.pumpfun.detected}/${poolDetectionStats.pumpfun.isNew}/${poolDetectionStats.pumpfun.proceededToBuy}`
     );
 
     // Reset counters for next period
     poolDetectionStats.ammV4 = { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 };
     poolDetectionStats.cpmm = { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 };
     poolDetectionStats.dlmm = { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 };
+    poolDetectionStats.pumpfun = { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0, graduated: 0, errors: 0 };
     lastHeartbeat = Date.now();
   }, heartbeatIntervalMs);
 };

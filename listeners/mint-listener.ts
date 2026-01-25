@@ -271,7 +271,7 @@ export class MintListener extends EventEmitter {
   /**
    * Get listener statistics
    */
-  getStats(): MintListenerStats & { cacheStats: ReturnType<typeof getMintCache>['getStats'] } {
+  getStats(): MintListenerStats & { cacheStats: ReturnType<ReturnType<typeof getMintCache>['getStats']> } {
     return {
       ...this.stats,
       cacheStats: getMintCache().getStats(),
