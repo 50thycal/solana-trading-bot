@@ -117,6 +117,22 @@ export const DlmmLbPairLayout = BufferLayout.struct<RawDlmmLayoutData>([
 ]);
 
 /**
+ * LbPair account discriminator (first 8 bytes)
+ * This is sha256("account:LbPair")[0..8] in Anchor
+ * Used to identify LbPair accounts vs other DLMM account types
+ */
+export const LBPAIR_DISCRIMINATOR = Buffer.from([33, 11, 49, 98, 181, 101, 177, 13]);
+
+/**
+ * Check if the account data has the LbPair discriminator
+ */
+export function isLbPairAccount(data: Buffer): boolean {
+  if (data.length < 8) return false;
+  const discriminator = data.subarray(0, 8);
+  return discriminator.equals(LBPAIR_DISCRIMINATOR);
+}
+
+/**
  * Decode DLMM pool state from buffer and convert to typed interface
  */
 export function decodeDlmmPoolState(data: Buffer): DlmmPoolState {
