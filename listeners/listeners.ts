@@ -462,17 +462,17 @@ export class Listeners extends EventEmitter {
               } catch (e) {}
             }
 
-            const at90 = tokenXMint.toBase58().slice(0, 12);
-            const at122 = tokenYMint.toBase58().slice(0, 12);
+            const tokenX = tokenXMint.toBase58().slice(0, 12);
+            const tokenY = tokenYMint.toBase58().slice(0, 12);
             const poolId = updatedAccountInfo.accountId.toBase58().slice(0, 8);
 
             logger.info(
-              `DLMM DEBUG: pool=${poolId}... | WSOL_AT: ${foundAt} | offset90=${at90}... | offset122=${at122}... | status=${poolState.status} | activeId=${poolState.activeId} | len=${data.length}`
+              `DLMM DEBUG: pool=${poolId}... | WSOL_AT: ${foundAt} | tokenX@120=${tokenX}... | tokenY@152=${tokenY}... | status=${poolState.status} | activeId=${poolState.activeId} | len=${data.length}`
             );
           }
 
           // Check if either token is our quote token
-          // tokenXMint is at byte offset 90, tokenYMint at offset 122 (after IDL v0.8.5 fix)
+          // tokenXMint is at byte offset 120, tokenYMint at offset 152 (empirically verified)
           const hasQuoteToken = tokenXMint.equals(quoteTokenMint) || tokenYMint.equals(quoteTokenMint);
 
           if (hasQuoteToken) {
