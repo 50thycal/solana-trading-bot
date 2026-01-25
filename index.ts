@@ -1,13 +1,13 @@
 import { MarketCache, PoolCache, initMintCache, getMintCache } from './cache';
-import { Listeners, initMintListener, getMintListener, MintListener } from './listeners';
+import { Listeners, initMintListener, getMintListener, MintListener, VerificationConfig } from './listeners';
 import {
   PumpFunListener,
-  PumpFunToken,
   initPumpFunListener,
   getPumpFunListener,
 } from './listeners/pumpfun-listener';
 import { Connection, KeyedAccountInfo, Keypair, PublicKey } from '@solana/web3.js';
-import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
+import { MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
+import { DetectedToken, getSourceDisplayName } from './types';
 import { AccountLayout, getAssociatedTokenAddressSync, getAccount } from '@solana/spl-token';
 import { Bot, BotConfig } from './bot';
 import { DefaultTransactionExecutor, TransactionExecutor, FallbackTransactionExecutor } from './transactions';
@@ -74,7 +74,7 @@ import {
   ENABLE_PUMPFUN_DETECTION,
   DEXSCREENER_FALLBACK_ENABLED,
 } from './helpers';
-import { verifyTokenAge } from './services/dexscreener';
+// verifyTokenAge is now called internally by listeners
 import {
   deriveBondingCurve,
   getBondingCurveState,
@@ -564,105 +564,9 @@ const runListener = async () => {
   if (ENABLE_PUMPFUN_DETECTION) {
     pumpFunListener = initPumpFunListener(connection);
 
-    pumpFunListener.on('token-created', async (token: PumpFunToken) => {
-      poolDetectionStats.pumpfun.detected++;
-      poolDetectionStats.pumpfun.isNew++;
-
-      logger.info(
-        {
-          mint: token.mint.toString(),
-          name: token.name || 'Unknown',
-          symbol: token.symbol || 'Unknown',
-          bondingCurve: token.bondingCurve.toString(),
-          creator: token.creator.toString(),
-        },
-        '[pump.fun] New token detected on bonding curve'
-      );
-
-      // Check if already in cache (duplicate detection)
-      const mintCache = getMintCache();
-      if (mintCache.has(token.mint)) {
-        poolDetectionStats.pumpfun.alreadyCached++;
-        logger.debug({ mint: token.mint.toString() }, '[pump.fun] Token already in cache, skipping');
-        return;
-      }
-
-      // Verify bonding curve is active and not graduated
-      try {
-        const bondingCurveState = await getBondingCurveState(connection, token.bondingCurve);
-        if (!bondingCurveState) {
-          logger.warn({ mint: token.mint.toString() }, '[pump.fun] Could not get bonding curve state');
-          poolDetectionStats.pumpfun.errors++;
-          return;
-        }
-
-        if (bondingCurveState.complete) {
-          poolDetectionStats.pumpfun.graduated++;
-          logger.info({ mint: token.mint.toString() }, '[pump.fun] Token already graduated from bonding curve');
-          return;
-        }
-
-        // Execute buy on pump.fun bonding curve
-        poolDetectionStats.pumpfun.proceededToBuy++;
-
-        logger.info(
-          {
-            mint: token.mint.toString(),
-            name: token.name || 'Unknown',
-            symbol: token.symbol || 'Unknown',
-            virtualSolReserves: bondingCurveState.virtualSolReserves.toString(),
-            virtualTokenReserves: bondingCurveState.virtualTokenReserves.toString(),
-          },
-          '[pump.fun] Executing buy on bonding curve'
-        );
-
-        if (DRY_RUN) {
-          logger.info(
-            { mint: token.mint.toString(), amountSol: QUOTE_AMOUNT.toString() },
-            '[pump.fun] DRY RUN - would have bought token'
-          );
-        } else {
-          const buyResult = await buyOnPumpFun({
-            connection,
-            wallet,
-            mint: token.mint,
-            bondingCurve: token.bondingCurve,
-            amountSol: Number(QUOTE_AMOUNT),
-            slippageBps: BUY_SLIPPAGE * 100,
-            computeUnitLimit: COMPUTE_UNIT_LIMIT,
-            computeUnitPrice: COMPUTE_UNIT_PRICE,
-          });
-
-          if (buyResult.success) {
-            logger.info(
-              {
-                mint: token.mint.toString(),
-                signature: buyResult.signature,
-                tokensReceived: buyResult.tokensReceived,
-                amountSol: QUOTE_AMOUNT.toString(),
-              },
-              '[pump.fun] Buy successful'
-            );
-          } else {
-            logger.error(
-              {
-                mint: token.mint.toString(),
-                error: buyResult.error,
-              },
-              '[pump.fun] Buy failed'
-            );
-          }
-        }
-
-      } catch (error) {
-        poolDetectionStats.pumpfun.errors++;
-        logger.error({ error, mint: token.mint.toString() }, '[pump.fun] Error processing token');
-      }
-    });
-
+    // pump.fun now emits 'new-token' event - handler set up below with unified handler
     pumpFunListener.on('error', (error) => {
       logger.error({ error }, 'pump.fun listener error');
-      poolDetectionStats.pumpfun.errors++;
     });
 
     await pumpFunListener.start();
@@ -677,15 +581,8 @@ const runListener = async () => {
 
   const runTimestamp = Math.floor(new Date().getTime() / 1000);
 
-  // Pool detection stats tracking for heartbeat
-  const poolDetectionStats = {
-    ammV4: { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 },
-    cpmm: { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 },
-    dlmm: { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 },
-    pumpfun: { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0, graduated: 0, errors: 0 },
-  };
-
   // Initialize listeners with reconnection support
+  // Stats are now tracked internally by listeners via getStats()
   listeners = new Listeners(connection);
 
   // Connect listener events to health server
@@ -703,7 +600,13 @@ const runListener = async () => {
     });
   }
 
-  // Start listeners
+  // Start listeners with verification config
+  const verificationConfig: VerificationConfig = {
+    maxTokenAgeSeconds: MAX_TOKEN_AGE_SECONDS,
+    dexscreenerFallbackEnabled: DEXSCREENER_FALLBACK_ENABLED,
+    runTimestamp,
+  };
+
   await listeners.start({
     walletPublicKey: wallet.publicKey,
     quoteToken,
@@ -711,6 +614,7 @@ const runListener = async () => {
     cacheNewMarkets: CACHE_NEW_MARKETS,
     enableCpmm: ENABLE_CPMM,
     enableDlmm: ENABLE_DLMM,
+    verification: verificationConfig,
   });
 
   // Update health server status
@@ -729,391 +633,73 @@ const runListener = async () => {
     }
   });
 
-  listeners.on('pool', async (updatedAccountInfo: KeyedAccountInfo) => {
-    const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(updatedAccountInfo.accountInfo.data);
-    const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
-    const exists = await poolCache.get(poolState.baseMint.toString());
-
-    // Track stats
-    poolDetectionStats.ammV4.detected++;
-    if (exists) {
-      poolDetectionStats.ammV4.alreadyCached++;
-    }
-
+  // ══════════════════════════════════════════════════════════════════════════════
+  // UNIFIED 'new-token' EVENT HANDLER
+  // All platforms (Raydium AmmV4, CPMM, Meteora DLMM) emit this single event
+  // Verification (mint cache + DexScreener) is handled inside the listeners
+  // ══════════════════════════════════════════════════════════════════════════════
+  listeners.on('new-token', async (token: DetectedToken) => {
     // Record activity
     if (dashboardServer) {
       dashboardServer.recordWebSocketActivity();
     }
 
-    // Determine if pool is new (not cached AND created after bot startup)
-    const isNewPool = !exists && poolOpenTime > runTimestamp;
-    if (isNewPool) {
-      poolDetectionStats.ammV4.isNew++;
-    }
+    const sourceName = getSourceDisplayName(token.source);
+    const baseMintStr = token.mint.toString();
 
-    logger.debug(
+    logger.info(
       {
-        mint: poolState.baseMint.toString(),
-        poolOpenTime,
-        runTimestamp,
-        isNew: isNewPool,
-        alreadyCached: !!exists,
-        poolType: 'AmmV4',
+        mint: baseMintStr,
+        source: token.source,
+        poolId: token.poolId?.toString(),
+        verificationSource: token.verificationSource,
+        ageSeconds: token.ageSeconds,
+        inMintCache: token.inMintCache,
       },
-      isNewPool ? 'New AmmV4 pool detected - processing' : 'AmmV4 pool event received - skipping (not new or already cached)'
+      `[${sourceName}] New token verified - executing buy`
     );
 
-    if (isNewPool && bot) {
-      const baseMint = poolState.baseMint;
-      const baseMintStr = baseMint.toString();
-      const mintCache = getMintCache();
+    if (!bot) {
+      logger.error({ mint: baseMintStr }, 'Bot not initialized');
+      return;
+    }
 
-      // Check if we detected this token via Helius mint listener (cache hit = definitely new)
-      if (mintCache.has(baseMint)) {
-        logger.info(
-          { mint: baseMintStr, poolType: 'AmmV4', source: 'mint-cache' },
-          '[AmmV4] Token in mint cache - proceeding immediately'
-        );
-        poolDetectionStats.ammV4.proceededToBuy++;
-        poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
-        await bot.buy(updatedAccountInfo.accountId, poolState);
-      } else if (DEXSCREENER_FALLBACK_ENABLED) {
-        // Cache miss - verify via DexScreener API
-        logger.debug(
-          { mint: baseMintStr, poolType: 'AmmV4' },
-          '[AmmV4] Token not in mint cache - verifying via DexScreener'
-        );
+    try {
+      // Execute buy based on pool type
+      switch (token.poolState.type) {
+        case 'ammv4':
+          poolCache.save(token.poolId!.toString(), token.poolState.state);
+          await bot.buy(token.poolId!, token.poolState.state);
+          break;
 
-        const verification = await verifyTokenAge(baseMintStr, MAX_TOKEN_AGE_SECONDS);
+        case 'cpmm':
+          poolCache.save(token.poolId!.toString(), token.poolState.state as any);
+          await bot.buyCpmm(token.poolId!, token.poolState.state);
+          break;
 
-        if (verification.isVerified) {
-          logger.info(
-            {
-              mint: baseMintStr,
-              poolType: 'AmmV4',
-              source: 'dexscreener',
-              ageSeconds: verification.ageSeconds,
-            },
-            '[AmmV4] DexScreener verified token is new - proceeding to buy'
-          );
-          poolDetectionStats.ammV4.proceededToBuy++;
-          poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
-          await bot.buy(updatedAccountInfo.accountId, poolState);
-        } else if (verification.source === 'not_indexed') {
-          // Token not indexed on DexScreener - could be very new, proceed with caution
-          logger.info(
-            { mint: baseMintStr, poolType: 'AmmV4', source: 'not_indexed' },
-            '[AmmV4] Token not indexed on DexScreener (may be very new) - proceeding to buy'
-          );
-          poolDetectionStats.ammV4.proceededToBuy++;
-          poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
-          await bot.buy(updatedAccountInfo.accountId, poolState);
-        } else {
-          // Token is too old or verification failed
-          poolDetectionStats.ammV4.tokenTooOld++;
-          logger.info(
-            {
-              mint: baseMintStr,
-              poolType: 'AmmV4',
-              reason: verification.reason,
-              ageSeconds: verification.ageSeconds,
-            },
-            '[AmmV4] REJECTED: Token failed DexScreener verification'
-          );
-        }
-      } else {
-        // DexScreener fallback disabled - proceed without verification
-        logger.debug(
-          { mint: baseMintStr, poolType: 'AmmV4' },
-          '[AmmV4] DexScreener fallback disabled - proceeding without verification'
-        );
-        poolDetectionStats.ammV4.proceededToBuy++;
-        poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
-        await bot.buy(updatedAccountInfo.accountId, poolState);
+        case 'dlmm':
+          poolCache.save(token.poolId!.toString(), token.poolState.state as any);
+          await bot.buyDlmm(token.poolId!, token.poolState.state);
+          break;
+
+        default:
+          logger.warn({ source: token.source }, 'Unknown pool type in DEX handler');
       }
+    } catch (error) {
+      logger.error({ error, mint: baseMintStr, source: token.source }, 'Error executing buy');
     }
   });
 
-  // Handle CPMM pool events
-  listeners.on('cpmm-pool', async (updatedAccountInfo: KeyedAccountInfo) => {
-    const cpmmPoolState = CpmmPoolInfoLayout.decode(updatedAccountInfo.accountInfo.data);
-    const poolOpenTime = parseInt(cpmmPoolState.openTime.toString());
-
-    // Track stats
-    poolDetectionStats.cpmm.detected++;
-
-    // Record activity
-    if (dashboardServer) {
-      dashboardServer.recordWebSocketActivity();
-    }
-
-    // Determine which mint is the base token (not the quote token)
-    const isQuoteMintA = cpmmPoolState.mintA.equals(quoteToken.mint);
-    const baseMint = isQuoteMintA ? cpmmPoolState.mintB : cpmmPoolState.mintA;
-    const baseMintStr = baseMint.toString();
-
-    // Check if pool is new
-    const exists = await poolCache.get(baseMintStr);
-    if (exists) {
-      poolDetectionStats.cpmm.alreadyCached++;
-    }
-
-    const isNewPool = !exists && poolOpenTime > runTimestamp;
-    if (isNewPool) {
-      poolDetectionStats.cpmm.isNew++;
-    }
-
+  // Token rejection handler (for stats/debugging)
+  listeners.on('token-rejected', (partialToken: Partial<DetectedToken>, reason: string) => {
     logger.debug(
       {
-        mint: baseMintStr,
-        poolOpenTime,
-        runTimestamp,
-        isNew: isNewPool,
-        alreadyCached: !!exists,
-        poolType: 'CPMM',
+        mint: partialToken.mint?.toString(),
+        source: partialToken.source,
+        reason,
       },
-      isNewPool ? 'New CPMM pool detected - checking token age' : 'CPMM pool event received - skipping (not new or already cached)'
+      'Token rejected during verification'
     );
-
-    // If pool passes basic checks, verify token age
-    if (isNewPool && bot) {
-      const mintCache = getMintCache();
-
-      // Check if we detected this token via Helius mint listener (cache hit = definitely new)
-      if (mintCache.has(baseMint)) {
-        logger.info(
-          { mint: baseMintStr, poolType: 'CPMM', source: 'mint-cache' },
-          '[CPMM] Token in mint cache - proceeding immediately'
-        );
-        poolDetectionStats.cpmm.proceededToBuy++;
-        poolCache.save(updatedAccountInfo.accountId.toString(), cpmmPoolState as any);
-        await bot.buyCpmm(updatedAccountInfo.accountId, cpmmPoolState);
-      } else if (DEXSCREENER_FALLBACK_ENABLED) {
-        // Cache miss - verify via DexScreener API
-        logger.debug(
-          { mint: baseMintStr, poolType: 'CPMM' },
-          '[CPMM] Token not in mint cache - verifying via DexScreener'
-        );
-
-        const verification = await verifyTokenAge(baseMintStr, MAX_TOKEN_AGE_SECONDS);
-
-        if (verification.isVerified) {
-          logger.info(
-            {
-              mint: baseMintStr,
-              poolType: 'CPMM',
-              source: 'dexscreener',
-              ageSeconds: verification.ageSeconds,
-            },
-            '[CPMM] DexScreener verified token is new - proceeding to buy'
-          );
-          poolDetectionStats.cpmm.proceededToBuy++;
-          poolCache.save(updatedAccountInfo.accountId.toString(), cpmmPoolState as any);
-          await bot.buyCpmm(updatedAccountInfo.accountId, cpmmPoolState);
-        } else if (verification.source === 'not_indexed') {
-          // Token not indexed on DexScreener - could be very new, proceed with caution
-          logger.info(
-            { mint: baseMintStr, poolType: 'CPMM', source: 'not_indexed' },
-            '[CPMM] Token not indexed on DexScreener (may be very new) - proceeding to buy'
-          );
-          poolDetectionStats.cpmm.proceededToBuy++;
-          poolCache.save(updatedAccountInfo.accountId.toString(), cpmmPoolState as any);
-          await bot.buyCpmm(updatedAccountInfo.accountId, cpmmPoolState);
-        } else {
-          // Token is too old or verification failed
-          poolDetectionStats.cpmm.tokenTooOld++;
-          logger.info(
-            {
-              mint: baseMintStr,
-              poolType: 'CPMM',
-              reason: verification.reason,
-              ageSeconds: verification.ageSeconds,
-            },
-            '[CPMM] REJECTED: Token failed DexScreener verification'
-          );
-        }
-      } else if (ENABLE_TOKEN_AGE_CHECK) {
-        // Fallback to on-chain token age check
-        const tokenAgeResult = await getTokenAge(connection, baseMint, MAX_TOKEN_AGE_SECONDS);
-
-        logger.info(
-          {
-            mint: baseMintStr,
-            ageSeconds: tokenAgeResult.ageSeconds,
-            maxAgeSeconds: MAX_TOKEN_AGE_SECONDS,
-            isNew: tokenAgeResult.isNew,
-            poolType: 'CPMM',
-          },
-          `[CPMM] Token age check: ${tokenAgeResult.ageSeconds}s (max: ${MAX_TOKEN_AGE_SECONDS}s) ${tokenAgeResult.isNew ? 'PASS' : 'FAIL'}`
-        );
-
-        if (!tokenAgeResult.isNew) {
-          poolDetectionStats.cpmm.tokenTooOld++;
-          logger.info(
-            {
-              mint: baseMintStr,
-              ageSeconds: tokenAgeResult.ageSeconds,
-              maxAgeSeconds: MAX_TOKEN_AGE_SECONDS,
-              poolType: 'CPMM',
-            },
-            `[CPMM] REJECTED: Token too old (${tokenAgeResult.ageSeconds}s > ${MAX_TOKEN_AGE_SECONDS}s)`
-          );
-          return;
-        }
-
-        // Token age check passed - proceed to buy
-        poolDetectionStats.cpmm.proceededToBuy++;
-        logger.info(
-          { mint: baseMintStr, poolType: 'CPMM', source: 'on-chain' },
-          '[CPMM] On-chain token age verified - proceeding to buy'
-        );
-        poolCache.save(updatedAccountInfo.accountId.toString(), cpmmPoolState as any);
-        await bot.buyCpmm(updatedAccountInfo.accountId, cpmmPoolState);
-      } else {
-        // No verification enabled - proceed without checks
-        logger.debug(
-          { mint: baseMintStr, poolType: 'CPMM' },
-          '[CPMM] No verification enabled - proceeding without checks'
-        );
-        poolDetectionStats.cpmm.proceededToBuy++;
-        poolCache.save(updatedAccountInfo.accountId.toString(), cpmmPoolState as any);
-        await bot.buyCpmm(updatedAccountInfo.accountId, cpmmPoolState);
-      }
-    }
-  });
-
-  // Handle Meteora DLMM pool events
-  listeners.on('dlmm-pool', async (updatedAccountInfo: KeyedAccountInfo) => {
-    const dlmmPoolState = decodeDlmmPoolState(updatedAccountInfo.accountInfo.data);
-
-    // Track stats
-    poolDetectionStats.dlmm.detected++;
-
-    // Record activity
-    if (dashboardServer) {
-      dashboardServer.recordWebSocketActivity();
-    }
-
-    // Determine which mint is the base token (not the quote token)
-    const isQuoteX = dlmmPoolState.tokenXMint.equals(quoteToken.mint);
-    const baseMint = isQuoteX ? dlmmPoolState.tokenYMint : dlmmPoolState.tokenXMint;
-    const baseMintStr = baseMint.toString();
-
-    // Check if pool is new - DLMM uses activationPoint
-    const exists = await poolCache.get(baseMintStr);
-    if (exists) {
-      poolDetectionStats.dlmm.alreadyCached++;
-    }
-
-    // Check if pool is currently tradeable (activated)
-    // activationPoint === 0 means immediately active
-    // activationPoint <= currentTimestamp means activation time has passed
-    const currentTimestamp = Math.floor(Date.now() / 1000);
-    const isActivated = isDlmmPoolActivated(dlmmPoolState.activationPoint, currentTimestamp);
-    const isNewPool = !exists && isActivated;
-    if (isNewPool) {
-      poolDetectionStats.dlmm.isNew++;
-    }
-
-    const activationPoint = parseInt(dlmmPoolState.activationPoint.toString());
-    logger.debug(
-      {
-        mint: baseMintStr,
-        activationPoint,
-        currentTimestamp,
-        isActivated,
-        isNew: isNewPool,
-        alreadyCached: !!exists,
-        poolType: 'DLMM',
-        binStep: dlmmPoolState.binStep,
-        activeId: dlmmPoolState.activeId,
-      },
-      isNewPool ? 'New DLMM pool detected - processing' : 'DLMM pool event received - skipping (not new, not activated, or already cached)'
-    );
-
-    if (isNewPool && bot) {
-      const mintCache = getMintCache();
-
-      // Check if we detected this token via Helius mint listener (cache hit = definitely new)
-      if (mintCache.has(baseMint)) {
-        logger.info(
-          { mint: baseMintStr, poolType: 'DLMM', source: 'mint-cache' },
-          '[DLMM] Token in mint cache - proceeding immediately'
-        );
-        poolDetectionStats.dlmm.proceededToBuy++;
-        poolCache.save(updatedAccountInfo.accountId.toString(), dlmmPoolState as any);
-        try {
-          await bot.buyDlmm(updatedAccountInfo.accountId, dlmmPoolState);
-        } catch (error) {
-          logger.error({ error, mint: baseMintStr, poolType: 'DLMM' }, 'Error processing DLMM pool');
-        }
-      } else if (DEXSCREENER_FALLBACK_ENABLED) {
-        // Cache miss - verify via DexScreener API
-        logger.debug(
-          { mint: baseMintStr, poolType: 'DLMM' },
-          '[DLMM] Token not in mint cache - verifying via DexScreener'
-        );
-
-        const verification = await verifyTokenAge(baseMintStr, MAX_TOKEN_AGE_SECONDS);
-
-        if (verification.isVerified) {
-          logger.info(
-            {
-              mint: baseMintStr,
-              poolType: 'DLMM',
-              source: 'dexscreener',
-              ageSeconds: verification.ageSeconds,
-            },
-            '[DLMM] DexScreener verified token is new - proceeding to buy'
-          );
-          poolDetectionStats.dlmm.proceededToBuy++;
-          poolCache.save(updatedAccountInfo.accountId.toString(), dlmmPoolState as any);
-          try {
-            await bot.buyDlmm(updatedAccountInfo.accountId, dlmmPoolState);
-          } catch (error) {
-            logger.error({ error, mint: baseMintStr, poolType: 'DLMM' }, 'Error processing DLMM pool');
-          }
-        } else if (verification.source === 'not_indexed') {
-          // Token not indexed on DexScreener - could be very new, proceed with caution
-          logger.info(
-            { mint: baseMintStr, poolType: 'DLMM', source: 'not_indexed' },
-            '[DLMM] Token not indexed on DexScreener (may be very new) - proceeding to buy'
-          );
-          poolDetectionStats.dlmm.proceededToBuy++;
-          poolCache.save(updatedAccountInfo.accountId.toString(), dlmmPoolState as any);
-          try {
-            await bot.buyDlmm(updatedAccountInfo.accountId, dlmmPoolState);
-          } catch (error) {
-            logger.error({ error, mint: baseMintStr, poolType: 'DLMM' }, 'Error processing DLMM pool');
-          }
-        } else {
-          // Token is too old or verification failed
-          poolDetectionStats.dlmm.tokenTooOld++;
-          logger.info(
-            {
-              mint: baseMintStr,
-              poolType: 'DLMM',
-              reason: verification.reason,
-              ageSeconds: verification.ageSeconds,
-            },
-            '[DLMM] REJECTED: Token failed DexScreener verification'
-          );
-        }
-      } else {
-        // DexScreener fallback disabled - proceed without verification
-        logger.debug(
-          { mint: baseMintStr, poolType: 'DLMM' },
-          '[DLMM] DexScreener fallback disabled - proceeding without verification'
-        );
-        poolDetectionStats.dlmm.proceededToBuy++;
-        poolCache.save(updatedAccountInfo.accountId.toString(), dlmmPoolState as any);
-        try {
-          await bot.buyDlmm(updatedAccountInfo.accountId, dlmmPoolState);
-        } catch (error) {
-          logger.error({ error, mint: baseMintStr, poolType: 'DLMM' }, 'Error processing DLMM pool');
-        }
-      }
-    }
   });
 
   listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {
@@ -1133,6 +719,103 @@ const runListener = async () => {
     }
   });
 
+  // ══════════════════════════════════════════════════════════════════════════════
+  // PUMP.FUN UNIFIED 'new-token' HANDLER
+  // pump.fun listener also emits 'new-token' with DetectedToken interface
+  // ══════════════════════════════════════════════════════════════════════════════
+  if (pumpFunListener) {
+    pumpFunListener.on('new-token', async (token: DetectedToken) => {
+      if (token.source !== 'pumpfun') {
+        logger.warn({ source: token.source }, 'Non-pumpfun token received from pumpfun listener');
+        return;
+      }
+
+      // Record activity
+      if (dashboardServer) {
+        dashboardServer.recordWebSocketActivity();
+      }
+
+      const baseMintStr = token.mint.toString();
+
+      logger.info(
+        {
+          mint: baseMintStr,
+          name: token.name || 'Unknown',
+          symbol: token.symbol || 'Unknown',
+          bondingCurve: token.bondingCurve?.toString(),
+          creator: token.creator?.toString(),
+        },
+        '[pump.fun] New token detected on bonding curve'
+      );
+
+      // Verify bonding curve is active and not graduated
+      try {
+        const bondingCurveState = await getBondingCurveState(connection, token.bondingCurve!);
+        if (!bondingCurveState) {
+          logger.warn({ mint: baseMintStr }, '[pump.fun] Could not get bonding curve state');
+          return;
+        }
+
+        if (bondingCurveState.complete) {
+          logger.info({ mint: baseMintStr }, '[pump.fun] Token already graduated from bonding curve');
+          return;
+        }
+
+        // Execute buy on pump.fun bonding curve
+        logger.info(
+          {
+            mint: baseMintStr,
+            name: token.name || 'Unknown',
+            symbol: token.symbol || 'Unknown',
+            virtualSolReserves: bondingCurveState.virtualSolReserves.toString(),
+            virtualTokenReserves: bondingCurveState.virtualTokenReserves.toString(),
+          },
+          '[pump.fun] Executing buy on bonding curve'
+        );
+
+        if (DRY_RUN) {
+          logger.info(
+            { mint: baseMintStr, amountSol: QUOTE_AMOUNT.toString() },
+            '[pump.fun] DRY RUN - would have bought token'
+          );
+        } else {
+          const buyResult = await buyOnPumpFun({
+            connection,
+            wallet,
+            mint: token.mint,
+            bondingCurve: token.bondingCurve!,
+            amountSol: Number(QUOTE_AMOUNT),
+            slippageBps: BUY_SLIPPAGE * 100,
+            computeUnitLimit: COMPUTE_UNIT_LIMIT,
+            computeUnitPrice: COMPUTE_UNIT_PRICE,
+          });
+
+          if (buyResult.success) {
+            logger.info(
+              {
+                mint: baseMintStr,
+                signature: buyResult.signature,
+                tokensReceived: buyResult.tokensReceived,
+                amountSol: QUOTE_AMOUNT.toString(),
+              },
+              '[pump.fun] Buy successful'
+            );
+          } else {
+            logger.error(
+              {
+                mint: baseMintStr,
+                error: buyResult.error,
+              },
+              '[pump.fun] Buy failed'
+            );
+          }
+        }
+      } catch (error) {
+        logger.error({ error, mint: baseMintStr }, '[pump.fun] Error processing token');
+      }
+    });
+  }
+
   printDetails(wallet, quoteToken, bot!);
 
   // Periodic heartbeat log to show bot is still alive with pool detection stats
@@ -1142,34 +825,39 @@ const runListener = async () => {
   setInterval(() => {
     const uptimeMs = Date.now() - lastHeartbeat;
     const stateStore = getStateStore();
-    const stats = stateStore?.getStats();
+    const dbStats = stateStore?.getStats();
 
-    // Calculate totals across all pool types (including pump.fun)
-    const totalDetected = poolDetectionStats.ammV4.detected + poolDetectionStats.cpmm.detected + poolDetectionStats.dlmm.detected + poolDetectionStats.pumpfun.detected;
-    const totalNew = poolDetectionStats.ammV4.isNew + poolDetectionStats.cpmm.isNew + poolDetectionStats.dlmm.isNew + poolDetectionStats.pumpfun.isNew;
-    const totalTokenTooOld = poolDetectionStats.ammV4.tokenTooOld + poolDetectionStats.cpmm.tokenTooOld + poolDetectionStats.dlmm.tokenTooOld + poolDetectionStats.pumpfun.tokenTooOld;
-    const totalBought = poolDetectionStats.ammV4.proceededToBuy + poolDetectionStats.cpmm.proceededToBuy + poolDetectionStats.dlmm.proceededToBuy + poolDetectionStats.pumpfun.proceededToBuy;
+    // Get unified stats from listeners
+    const listenerStats = listeners?.getStats();
+    const pumpFunPlatformStats = pumpFunListener?.getPlatformStats();
+
+    // Calculate totals across all pool types
+    const ammv4 = listenerStats?.ammv4 || { detected: 0, isNew: 0, tokenTooOld: 0, buyAttempted: 0, errors: 0 };
+    const cpmm = listenerStats?.cpmm || { detected: 0, isNew: 0, tokenTooOld: 0, buyAttempted: 0, errors: 0 };
+    const dlmm = listenerStats?.dlmm || { detected: 0, isNew: 0, tokenTooOld: 0, buyAttempted: 0, errors: 0 };
+    const pumpfun = pumpFunPlatformStats || { detected: 0, isNew: 0, tokenTooOld: 0, buyAttempted: 0, errors: 0 };
+
+    const totalDetected = ammv4.detected + cpmm.detected + dlmm.detected + pumpfun.detected;
+    const totalNew = ammv4.isNew + cpmm.isNew + dlmm.isNew + pumpfun.isNew;
+    const totalTokenTooOld = ammv4.tokenTooOld + cpmm.tokenTooOld + dlmm.tokenTooOld + pumpfun.tokenTooOld;
+    const totalBought = ammv4.buyAttempted + cpmm.buyAttempted + dlmm.buyAttempted + pumpfun.buyAttempted;
 
     // Get mint cache stats
     const mintCacheStats = getMintCache().getStats();
 
-    // Get pump.fun listener stats if available
-    const pumpFunStats = pumpFunListener?.getStats();
-
-    // Log detailed stats as structured data (won't be truncated)
+    // Log detailed stats as structured data
     logger.info(
       {
         period: '5min',
-        ammV4: { ...poolDetectionStats.ammV4 },
-        cpmm: { ...poolDetectionStats.cpmm },
-        dlmm: { ...poolDetectionStats.dlmm },
-        pumpfun: { ...poolDetectionStats.pumpfun },
+        ammv4,
+        cpmm,
+        dlmm,
+        pumpfun,
         totals: {
           detected: totalDetected,
-          alreadyCached: poolDetectionStats.ammV4.alreadyCached + poolDetectionStats.cpmm.alreadyCached + poolDetectionStats.dlmm.alreadyCached + poolDetectionStats.pumpfun.alreadyCached,
           isNew: totalNew,
           tokenTooOld: totalTokenTooOld,
-          proceededToBuy: totalBought,
+          buyAttempted: totalBought,
         },
         mintCache: {
           size: mintCacheStats.size,
@@ -1177,22 +865,16 @@ const runListener = async () => {
           fallbackDetected: mintCacheStats.fallbackDetected,
           hitRate: (mintCacheStats.hitRate * 100).toFixed(1) + '%',
         },
-        pumpfunListener: pumpFunStats ? {
-          logsReceived: pumpFunStats.logsReceived,
-          tokensProcessed: pumpFunStats.tokensProcessed,
-        } : null,
-        seenPools: stats?.seenPools || 0,
-        openPositions: stats?.positions.open || 0,
+        seenPools: dbStats?.seenPools || 0,
+        openPositions: dbStats?.positions.open || 0,
         uptimeMinutes: Math.floor(uptimeMs / 60000),
       },
-      `Heartbeat (5min): Detected=${totalDetected} New=${totalNew} TokenOld=${totalTokenTooOld} Bought=${totalBought} | MintCache: ${mintCacheStats.size} (helius=${mintCacheStats.heliusDetected}, fallback=${mintCacheStats.fallbackDetected}) | AmmV4: ${poolDetectionStats.ammV4.detected}/${poolDetectionStats.ammV4.isNew}/${poolDetectionStats.ammV4.proceededToBuy} | CPMM: ${poolDetectionStats.cpmm.detected}/${poolDetectionStats.cpmm.isNew}/${poolDetectionStats.cpmm.tokenTooOld}/${poolDetectionStats.cpmm.proceededToBuy} | DLMM: ${poolDetectionStats.dlmm.detected}/${poolDetectionStats.dlmm.isNew}/${poolDetectionStats.dlmm.proceededToBuy} | pump.fun: ${poolDetectionStats.pumpfun.detected}/${poolDetectionStats.pumpfun.isNew}/${poolDetectionStats.pumpfun.proceededToBuy}`
+      `Heartbeat (5min): Detected=${totalDetected} New=${totalNew} TokenOld=${totalTokenTooOld} Bought=${totalBought} | MintCache: ${mintCacheStats.size} | AmmV4: ${ammv4.detected}/${ammv4.isNew}/${ammv4.buyAttempted} | CPMM: ${cpmm.detected}/${cpmm.isNew}/${cpmm.buyAttempted} | DLMM: ${dlmm.detected}/${dlmm.isNew}/${dlmm.buyAttempted} | pump.fun: ${pumpfun.detected}/${pumpfun.isNew}/${pumpfun.buyAttempted}`
     );
 
     // Reset counters for next period
-    poolDetectionStats.ammV4 = { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 };
-    poolDetectionStats.cpmm = { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 };
-    poolDetectionStats.dlmm = { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0 };
-    poolDetectionStats.pumpfun = { detected: 0, alreadyCached: 0, isNew: 0, tokenTooOld: 0, proceededToBuy: 0, graduated: 0, errors: 0 };
+    listeners?.resetStats();
+    pumpFunListener?.resetStats();
     lastHeartbeat = Date.now();
   }, heartbeatIntervalMs);
 };
