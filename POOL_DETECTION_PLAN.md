@@ -1,8 +1,9 @@
 # Pool Detection Standardization Plan
 
-> **Status:** Phase 1 - Not Started
+> **Status:** Phase 0 - Not Started
 > **Objective:** Detect genuinely NEW token launches across all pool types
 > **Pool Types:** AMMV4, CPMM, DLMM
+> **Last Updated:** 2025-01-25 (v2.0 - Mint-First Architecture)
 
 ---
 
@@ -13,10 +14,12 @@ This document outlines the plan to standardize WebSocket-based pool detection ac
 **Key Problem Being Solved:**
 The current system detects "new pools" but doesn't verify if the underlying token is actually new. An existing token (e.g., a meme coin from weeks ago) could create a new liquidity pool and trigger the bot, leading to trades on tokens that are not fresh launches.
 
-**Solution:**
-1. Add token age validation (verify mint was created recently)
-2. Standardize detection patterns across all pool types
-3. Create unified event emission for consistent downstream processing
+**Solution (v2.0 - Mint-First Architecture):**
+1. **Primary:** Detect newly minted tokens via Helius (mint events) → cache them
+2. **Secondary:** When pool detected, only promote if mint is in "recently minted" cache
+3. **Fallback:** Use Helius `getTransactionsForAddress` with `sortOrder: "asc"` for edge cases
+4. **Scoring:** Use launch confidence score instead of binary yes/no
+5. **Pre-filter:** Require minimum liquidity before promoting to full filter pipeline
 
 ---
 
@@ -25,14 +28,16 @@ The current system detects "new pools" but doesn't verify if the underlying toke
 1. [Current State Analysis](#1-current-state-analysis)
 2. [Target Architecture](#2-target-architecture)
 3. [Implementation Phases](#3-implementation-phases)
+   - [Phase 0: Helius Mint Detection (Primary Truth)](#phase-0-helius-mint-detection-primary-truth)
    - [Phase 1A: CPMM Reference Implementation](#phase-1a-cpmm-reference-implementation)
    - [Phase 1B: Apply Pattern to AMMV4](#phase-1b-apply-pattern-to-ammv4)
    - [Phase 1C: Apply Pattern to DLMM](#phase-1c-apply-pattern-to-dlmm)
    - [Phase 1D: Unified Event System](#phase-1d-unified-event-system)
-4. [Passing Criteria](#4-passing-criteria)
-5. [File Change Map](#5-file-change-map)
-6. [Configuration Reference](#6-configuration-reference)
-7. [Testing & Validation](#7-testing--validation)
+4. [Launch Confidence Scoring](#4-launch-confidence-scoring)
+5. [Passing Criteria](#5-passing-criteria)
+6. [File Change Map](#6-file-change-map)
+7. [Configuration Reference](#7-configuration-reference)
+8. [Testing & Validation](#8-testing--validation)
 
 ---
 
@@ -60,122 +65,354 @@ const isNewPool = !exists && poolOpenTime > runTimestamp;
 const isNewPool = !exists && isActivated;
 ```
 
-### Critical Gap: No Token Age Validation
+### Critical Gaps Identified
 
-**What's Missing:**
-- No check if the token mint was recently created
-- No verification this is the first pool for the token
-- Bot can be triggered by new pools for old tokens
-
-**Evidence:** Search for `getMint`, `mint.*age`, `token.*creation` returns no results related to age checking.
+| Gap | Problem | Impact |
+|-----|---------|--------|
+| **No token mint detection** | Only detects pools, not when token was created | Old tokens with new pools trigger bot |
+| **Signature order bug** | `getSignaturesForAddress` returns newest first, not oldest | Would get wrong "creation time" |
+| **Binary detection** | Simple yes/no instead of confidence scoring | Edge cases slip through |
+| **No liquidity pre-filter** | Any pool triggers, even with 0.001 SOL | Noise from junk pools |
 
 ---
 
 ## 2. Target Architecture
 
-### Unified Detection Flow
+### Mint-First Detection Architecture
 
 ```
-WebSocket Event
-       │
-       ▼
-┌─────────────────────────────────────────────────────────┐
-│              POOL TYPE DECODER                          │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
-│  │  AMMV4   │  │   CPMM   │  │   DLMM   │              │
-│  │ Decoder  │  │ Decoder  │  │ Decoder  │              │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘              │
-└───────┼─────────────┼─────────────┼─────────────────────┘
-        │             │             │
-        └─────────────┼─────────────┘
-                      ▼
-┌─────────────────────────────────────────────────────────┐
-│           UNIFIED VALIDATION PIPELINE                   │
-│                                                         │
-│  1. Quote Token Check     - Is WSOL in the pair?       │
-│  2. Pool Status Check     - Is pool enabled/active?    │
-│  3. Pool Timing Check     - Pool created after start?  │
-│  4. TOKEN AGE CHECK (NEW) - Mint created recently?     │
-│                                                         │
-└─────────────────────────┬───────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│              UNIFIED EVENT EMISSION                     │
-│                                                         │
-│  emit('new-token-pool', {                              │
-│    poolType: 'AMMV4' | 'CPMM' | 'DLMM',               │
-│    poolId,                                             │
-│    baseMint,                                           │
-│    quoteMint,                                          │
-│    tokenAge,        // seconds since mint creation     │
-│    isTokenNew,      // true if < MAX_TOKEN_AGE        │
-│    ...poolSpecificData                                 │
-│  })                                                    │
-│                                                         │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                 HELIUS MINT DETECTION (PRIMARY)                  │
+│                                                                 │
+│  WebSocket/Webhook monitoring Token Program for:                │
+│  • InitializeMint / InitializeMint2 instructions               │
+│  • pump.fun program mint events                                 │
+│                                                                 │
+│  On new mint detected:                                          │
+│  → Add to RECENTLY_MINTED_CACHE with timestamp                 │
+│  → TTL: MAX_TOKEN_AGE_SECONDS (default 300s)                   │
+│                                                                 │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    POOL DETECTION (SECONDARY)                    │
+│                                                                 │
+│  Existing WebSocket subscriptions for:                          │
+│  • AMMV4 pools                                                  │
+│  • CPMM pools                                                   │
+│  • DLMM pools                                                   │
+│                                                                 │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  LAUNCH CONFIDENCE SCORING                       │
+│                                                                 │
+│  +2  Mint in RECENTLY_MINTED_CACHE (Helius detected)           │
+│  +1  Pool created within time window                            │
+│  +1  Token metadata appears quickly (optional)                  │
+│  -2  Mint has activity far before window (fallback check)       │
+│                                                                 │
+│  REQUIRE: score >= 2 to proceed                                 │
+│                                                                 │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              MEANINGFUL POOL PRE-FILTER                          │
+│                                                                 │
+│  Before full filter pipeline, require:                          │
+│  • Quote is WSOL (or configured quote token)                   │
+│  • Pool is enabled/active                                       │
+│  • Liquidity >= MIN_POOL_LIQUIDITY_SOL (default: 1 SOL)        │
+│                                                                 │
+│  This is DETECTION filtering, not full safety filters          │
+│                                                                 │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              UNIFIED EVENT EMISSION                              │
+│                                                                 │
+│  emit('new-token-pool', {                                       │
+│    poolType: 'AMMV4' | 'CPMM' | 'DLMM',                        │
+│    poolId,                                                      │
+│    baseMint,                                                    │
+│    quoteMint,                                                   │
+│    launchScore,         // Confidence score                    │
+│    mintDetectedVia,     // 'helius' | 'fallback'               │
+│    tokenAge,            // Seconds since mint                  │
+│    initialLiquidity,    // SOL in pool                         │
+│    ...poolSpecificData                                          │
+│  })                                                             │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### Unified Pool Detection Interface
+### Key Architectural Decisions
 
-**New File:** `types/detected-pool.ts`
+**Why Mint-First?**
+- The mint event IS the token creation - this is ground truth
+- Pool detection alone can't distinguish new token vs new pool for old token
+- Helius explicitly supports mint event monitoring ([source](https://www.helius.dev/blog/how-to-fetch-newly-minted-tokens-with-helius))
+- Reduces expensive RPC calls for token age validation
 
-```typescript
-export type PoolType = 'AMMV4' | 'CPMM' | 'DLMM';
+**Why Confidence Scoring?**
+- Binary yes/no has edge cases (migrations, re-listings, pool spam)
+- Scoring allows tuning sensitivity
+- Can add/remove scoring factors without rewriting logic
 
-export interface DetectedPool {
-  // Identity
-  poolId: PublicKey;
-  poolType: PoolType;
-
-  // Token Information
-  baseMint: PublicKey;           // The new token
-  quoteMint: PublicKey;          // WSOL
-  baseDecimals: number;
-  quoteDecimals: number;
-
-  // Timing Information
-  poolCreationTime: number;      // When pool was created (unix timestamp)
-  detectedAt: number;            // When we detected it (unix timestamp)
-
-  // Token Validation (NEW)
-  tokenAge: number;              // Seconds since token mint was created
-  isTokenNew: boolean;           // tokenAge <= MAX_TOKEN_AGE_SECONDS
-  tokenFirstTxSignature: string; // First transaction for the mint
-
-  // Pool-Specific Raw Data (for trading)
-  rawState: LiquidityStateV4 | CpmmPoolState | DlmmPoolState;
-}
-
-export interface TokenAgeResult {
-  ageSeconds: number;
-  firstTxTime: number;
-  firstTxSignature: string;
-  isNew: boolean;
-}
-```
+**Why Minimum Liquidity Pre-Filter?**
+- Prevents noise from junk pools with tiny liquidity
+- Still "detection" not "safety filter"
+- Cheap check before expensive filter pipeline
 
 ---
 
 ## 3. Implementation Phases
 
-### Phase 1A: CPMM Reference Implementation
+### Phase 0: Helius Mint Detection (Primary Truth)
 
-**Goal:** Implement the standardized detection pattern on CPMM first, as a reference for other pool types.
+**Goal:** Establish mint detection as the canonical source for "new token" events.
 
-**Why CPMM First:**
-- Middle-ground complexity (not as simple as AMMV4, not as complex as DLMM)
-- Currently uses handler-based filtering (closer to target pattern)
-- Fully implemented trading (can test end-to-end)
+**Why This Phase First:**
+- Provides ground truth for token creation time
+- Eliminates the signature order bug problem
+- Reduces RPC budget for fallback checks
+- Foundation for confidence scoring
 
 #### Tasks
 
-**1A.1: Create Token Age Validator**
+**0.1: Create Mint Detection Cache**
 
-**New File:** `helpers/token-validator.ts`
+**New File:** `cache/mint.cache.ts`
+
+```typescript
+import { PublicKey } from '@solana/web3.js';
+import { logger } from '../helpers/logger';
+
+interface MintCacheEntry {
+  mint: PublicKey;
+  detectedAt: number;        // Unix timestamp when we saw the mint
+  source: 'helius' | 'fallback';
+  signature?: string;        // First tx signature if available
+}
+
+class MintCache {
+  private cache: Map<string, MintCacheEntry> = new Map();
+  private ttlMs: number;
+
+  constructor(ttlSeconds: number = 300) {
+    this.ttlMs = ttlSeconds * 1000;
+    // Cleanup expired entries every 60 seconds
+    setInterval(() => this.cleanup(), 60000);
+  }
+
+  add(mint: PublicKey, source: 'helius' | 'fallback', signature?: string): void {
+    const key = mint.toString();
+    if (!this.cache.has(key)) {
+      this.cache.set(key, {
+        mint,
+        detectedAt: Date.now(),
+        source,
+        signature
+      });
+      logger.debug({ mint: key, source }, 'Added mint to recently minted cache');
+    }
+  }
+
+  get(mint: PublicKey): MintCacheEntry | undefined {
+    const key = mint.toString();
+    const entry = this.cache.get(key);
+    if (entry && this.isValid(entry)) {
+      return entry;
+    }
+    return undefined;
+  }
+
+  has(mint: PublicKey): boolean {
+    return this.get(mint) !== undefined;
+  }
+
+  getAge(mint: PublicKey): number | undefined {
+    const entry = this.get(mint);
+    if (entry) {
+      return Math.floor((Date.now() - entry.detectedAt) / 1000);
+    }
+    return undefined;
+  }
+
+  private isValid(entry: MintCacheEntry): boolean {
+    return Date.now() - entry.detectedAt < this.ttlMs;
+  }
+
+  private cleanup(): void {
+    const now = Date.now();
+    let removed = 0;
+    for (const [key, entry] of this.cache.entries()) {
+      if (now - entry.detectedAt >= this.ttlMs) {
+        this.cache.delete(key);
+        removed++;
+      }
+    }
+    if (removed > 0) {
+      logger.debug({ removed, remaining: this.cache.size }, 'Mint cache cleanup');
+    }
+  }
+
+  getStats(): { size: number; oldestAge: number } {
+    let oldestAge = 0;
+    const now = Date.now();
+    for (const entry of this.cache.values()) {
+      const age = Math.floor((now - entry.detectedAt) / 1000);
+      if (age > oldestAge) oldestAge = age;
+    }
+    return { size: this.cache.size, oldestAge };
+  }
+}
+
+export const mintCache = new MintCache();
+```
+
+**0.2: Create Helius Mint Listener**
+
+**New File:** `listeners/mint-listener.ts`
+
+Two approaches (implement one, document both):
+
+**Approach A: Geyser Enhanced WebSocket (Recommended)**
+
+Monitor Token Program for InitializeMint instructions:
 
 ```typescript
 import { Connection, PublicKey } from '@solana/web3.js';
+import { mintCache } from '../cache/mint.cache';
+import { logger } from '../helpers/logger';
+
+// Token Program ID
+const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+// Token 2022 Program ID
+const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
+
+export class MintListener {
+  private connection: Connection;
+  private subscriptionIds: number[] = [];
+
+  constructor(connection: Connection) {
+    this.connection = connection;
+  }
+
+  async start(): Promise<void> {
+    logger.info('Starting Helius mint detection listener');
+
+    // Subscribe to Token Program logs
+    const tokenSubId = this.connection.onLogs(
+      TOKEN_PROGRAM_ID,
+      (logs) => this.handleLogs(logs, 'token-program'),
+      'confirmed'
+    );
+    this.subscriptionIds.push(tokenSubId);
+
+    // Subscribe to Token 2022 Program logs
+    const token2022SubId = this.connection.onLogs(
+      TOKEN_2022_PROGRAM_ID,
+      (logs) => this.handleLogs(logs, 'token-2022'),
+      'confirmed'
+    );
+    this.subscriptionIds.push(token2022SubId);
+
+    logger.info({ subscriptions: this.subscriptionIds.length }, 'Mint detection subscriptions active');
+  }
+
+  private handleLogs(logs: any, source: string): void {
+    // Look for InitializeMint or InitializeMint2 instructions
+    const logMessages = logs.logs || [];
+
+    for (const log of logMessages) {
+      if (log.includes('Instruction: InitializeMint') ||
+          log.includes('Instruction: InitializeMint2')) {
+
+        // Extract mint address from the transaction
+        // The mint is typically in the account keys
+        const signature = logs.signature;
+
+        // We need to fetch the transaction to get the mint address
+        this.processMintTransaction(signature, source);
+        break;
+      }
+    }
+  }
+
+  private async processMintTransaction(signature: string, source: string): Promise<void> {
+    try {
+      const tx = await this.connection.getParsedTransaction(signature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0
+      });
+
+      if (!tx?.meta || tx.meta.err) return;
+
+      // Find the mint account from the transaction
+      // Look for the account that was initialized as a mint
+      const instructions = tx.transaction.message.instructions;
+
+      for (const ix of instructions) {
+        if ('parsed' in ix && ix.parsed?.type === 'initializeMint') {
+          const mintAddress = new PublicKey(ix.parsed.info.mint);
+          mintCache.add(mintAddress, 'helius', signature);
+
+          logger.info({
+            mint: mintAddress.toString(),
+            signature,
+            source
+          }, 'New token mint detected via Helius');
+        }
+      }
+    } catch (error) {
+      logger.error({ signature, error }, 'Failed to process mint transaction');
+    }
+  }
+
+  async stop(): Promise<void> {
+    for (const subId of this.subscriptionIds) {
+      await this.connection.removeOnLogsListener(subId);
+    }
+    this.subscriptionIds = [];
+    logger.info('Mint detection listener stopped');
+  }
+}
+```
+
+**Approach B: Helius Webhook (Alternative)**
+
+Configure a webhook in Helius dashboard to POST to your endpoint when mint events occur.
+
+```typescript
+// Express endpoint for Helius webhook
+app.post('/webhook/mint', (req, res) => {
+  const { type, events } = req.body;
+
+  for (const event of events) {
+    if (event.type === 'TOKEN_MINT') {
+      const mintAddress = new PublicKey(event.tokenMint);
+      mintCache.add(mintAddress, 'helius', event.signature);
+    }
+  }
+
+  res.status(200).send('OK');
+});
+```
+
+**0.3: Create Fallback Token Age Validator**
+
+**New File:** `helpers/token-validator.ts`
+
+Uses Helius `getTransactionsForAddress` with `sortOrder: "asc"` for correct oldest-first ordering.
+
+```typescript
+import { Connection, PublicKey } from '@solana/web3.js';
+import { mintCache } from '../cache/mint.cache';
 import { logger } from './logger';
 
 export interface TokenAgeResult {
@@ -183,8 +420,17 @@ export interface TokenAgeResult {
   firstTxTime: number;
   firstTxSignature: string;
   isNew: boolean;
+  source: 'cache' | 'helius-history' | 'error';
 }
 
+/**
+ * Get token age with proper ordering.
+ *
+ * IMPORTANT: Standard getSignaturesForAddress returns NEWEST first (descending).
+ * We use Helius getTransactionsForAddress with sortOrder: "asc" for OLDEST first.
+ *
+ * Reference: https://www.helius.dev/docs/rpc/gettransactionsforaddress
+ */
 export async function getTokenAge(
   connection: Connection,
   mintAddress: PublicKey,
@@ -192,100 +438,432 @@ export async function getTokenAge(
 ): Promise<TokenAgeResult> {
   const currentTime = Math.floor(Date.now() / 1000);
 
-  try {
-    // Get the first transaction for this mint address
-    // Using 'before' parameter = null and limit = 1 gets oldest signatures
-    // We need to use a different approach: get recent and check
-    const signatures = await connection.getSignaturesForAddress(
-      mintAddress,
-      { limit: 1 },  // Get first/oldest transaction
-      'confirmed'
-    );
+  // First check cache (fastest path)
+  const cachedAge = mintCache.getAge(mintAddress);
+  if (cachedAge !== undefined) {
+    const cached = mintCache.get(mintAddress)!;
+    return {
+      ageSeconds: cachedAge,
+      firstTxTime: Math.floor(cached.detectedAt / 1000),
+      firstTxSignature: cached.signature || '',
+      isNew: cachedAge <= maxAgeSeconds,
+      source: 'cache'
+    };
+  }
 
-    if (signatures.length === 0) {
-      // Brand new mint with no transaction history yet
-      // This is actually the ideal case - truly new
-      logger.debug({ mint: mintAddress.toString() }, 'Token has no transaction history - brand new');
+  // Fallback: Use Helius getTransactionsForAddress with sortOrder: "asc"
+  try {
+    // This is a Helius-specific RPC method
+    // @ts-ignore - Custom Helius method
+    const response = await connection._rpcRequest('getTransactionsForAddress', [
+      mintAddress.toString(),
+      {
+        limit: 1,
+        sortOrder: 'asc',  // CRITICAL: Oldest first
+        transactionDetails: 'signatures'
+      }
+    ]);
+
+    if (response.result && response.result.length > 0) {
+      const firstTx = response.result[0];
+      const firstTxTime = firstTx.blockTime ?? currentTime;
+      const ageSeconds = currentTime - firstTxTime;
+
+      // Add to cache for future lookups
+      mintCache.add(mintAddress, 'fallback', firstTx.signature);
+
       return {
-        ageSeconds: 0,
-        firstTxTime: currentTime,
-        firstTxSignature: '',
-        isNew: true
+        ageSeconds,
+        firstTxTime,
+        firstTxSignature: firstTx.signature,
+        isNew: ageSeconds <= maxAgeSeconds,
+        source: 'helius-history'
       };
     }
 
-    const firstTx = signatures[signatures.length - 1]; // Oldest is last in array
-    const firstTxTime = firstTx.blockTime ?? currentTime;
-    const ageSeconds = currentTime - firstTxTime;
-
+    // No history found - likely brand new
+    logger.debug({ mint: mintAddress.toString() }, 'Token has no transaction history');
     return {
-      ageSeconds,
-      firstTxTime,
-      firstTxSignature: firstTx.signature,
-      isNew: ageSeconds <= maxAgeSeconds
+      ageSeconds: 0,
+      firstTxTime: currentTime,
+      firstTxSignature: '',
+      isNew: true,
+      source: 'helius-history'
     };
+
   } catch (error) {
-    logger.error({ mint: mintAddress.toString(), error }, 'Failed to get token age');
-    // On error, assume NOT new (fail safe)
+    logger.error({ mint: mintAddress.toString(), error }, 'Failed to get token age via Helius');
+
+    // FAIL SAFE: On error, assume NOT new
     return {
       ageSeconds: Infinity,
       firstTxTime: 0,
       firstTxSignature: '',
-      isNew: false
+      isNew: false,
+      source: 'error'
+    };
+  }
+}
+
+/**
+ * Standard Solana RPC fallback (less reliable for "oldest first")
+ *
+ * WARNING: getSignaturesForAddress returns signatures in REVERSE chronological
+ * order (newest first). This makes finding the "first" transaction expensive
+ * as you'd need to paginate through ALL signatures.
+ *
+ * Only use this if Helius getTransactionsForAddress is unavailable.
+ */
+export async function getTokenAgeStandardRpc(
+  connection: Connection,
+  mintAddress: PublicKey,
+  maxAgeSeconds: number
+): Promise<TokenAgeResult> {
+  const currentTime = Math.floor(Date.now() / 1000);
+
+  try {
+    // Get recent signatures (newest first - this is a limitation)
+    const signatures = await connection.getSignaturesForAddress(
+      mintAddress,
+      { limit: 1000 },  // Get many to increase chance of finding oldest
+      'confirmed'
+    );
+
+    if (signatures.length === 0) {
+      return {
+        ageSeconds: 0,
+        firstTxTime: currentTime,
+        firstTxSignature: '',
+        isNew: true,
+        source: 'helius-history'
+      };
+    }
+
+    // Last in array is oldest (within our limit)
+    // WARNING: This may not be the TRUE oldest if token has >1000 txs
+    const oldestInBatch = signatures[signatures.length - 1];
+    const oldestTime = oldestInBatch.blockTime ?? currentTime;
+    const ageSeconds = currentTime - oldestTime;
+
+    // If oldest in batch is already too old, token is definitely old
+    if (ageSeconds > maxAgeSeconds) {
+      return {
+        ageSeconds,
+        firstTxTime: oldestTime,
+        firstTxSignature: oldestInBatch.signature,
+        isNew: false,
+        source: 'helius-history'
+      };
+    }
+
+    // If we got fewer than limit, we have all signatures
+    if (signatures.length < 1000) {
+      mintCache.add(mintAddress, 'fallback', oldestInBatch.signature);
+      return {
+        ageSeconds,
+        firstTxTime: oldestTime,
+        firstTxSignature: oldestInBatch.signature,
+        isNew: true,
+        source: 'helius-history'
+      };
+    }
+
+    // Got exactly 1000 - there may be more, oldest is unknown
+    // Be conservative: treat as old
+    logger.warn({
+      mint: mintAddress.toString(),
+      signaturesFound: signatures.length
+    }, 'Token has many signatures, cannot determine true age - treating as old');
+
+    return {
+      ageSeconds: Infinity,
+      firstTxTime: 0,
+      firstTxSignature: '',
+      isNew: false,
+      source: 'helius-history'
+    };
+
+  } catch (error) {
+    logger.error({ mint: mintAddress.toString(), error }, 'Failed to get token age');
+    return {
+      ageSeconds: Infinity,
+      firstTxTime: 0,
+      firstTxSignature: '',
+      isNew: false,
+      source: 'error'
     };
   }
 }
 ```
 
-**1A.2: Add Configuration Constants**
+#### Passing Criteria for Phase 0
 
-**File:** `helpers/constants.ts`
+| Criterion | Validation Method |
+|-----------|-------------------|
+| Mint cache created | Cache stores mints with TTL |
+| Helius mint listener active | Logs show "New token mint detected" on real mints |
+| Cache populated | Stats show cache size > 0 during active period |
+| Fallback uses correct order | Uses `sortOrder: "asc"` not default descending |
+| TTL cleanup works | Old entries removed after MAX_TOKEN_AGE_SECONDS |
+
+---
+
+### Phase 1A: CPMM Reference Implementation
+
+**Goal:** Implement the standardized detection pattern on CPMM first, integrating with Phase 0 mint cache.
+
+#### Tasks
+
+**1A.1: Create Launch Confidence Scorer**
+
+**New File:** `helpers/launch-scorer.ts`
 
 ```typescript
-// Token Age Validation
-export const MAX_TOKEN_AGE_SECONDS = Number(retrieveEnvVariable('MAX_TOKEN_AGE_SECONDS', logger) || 300);
-export const ENABLE_TOKEN_AGE_CHECK = retrieveEnvVariable('ENABLE_TOKEN_AGE_CHECK', logger) !== 'false';
+import { PublicKey } from '@solana/web3.js';
+import { mintCache } from '../cache/mint.cache';
+import { getTokenAge, TokenAgeResult } from './token-validator';
+import { Connection } from '@solana/web3.js';
+import { logger } from './logger';
+
+export interface LaunchScore {
+  score: number;
+  breakdown: {
+    mintInCache: number;        // +2 if in recently minted cache
+    poolTiming: number;         // +1 if pool created within window
+    metadataPresent: number;    // +1 if metadata exists (optional)
+    oldActivityPenalty: number; // -2 if activity before window (fallback)
+  };
+  tokenAge: TokenAgeResult;
+  isLaunch: boolean;           // score >= threshold
+}
+
+const SCORE_MINT_IN_CACHE = 2;
+const SCORE_POOL_TIMING = 1;
+const SCORE_METADATA = 1;
+const PENALTY_OLD_ACTIVITY = -2;
+const LAUNCH_THRESHOLD = 2;
+
+export async function calculateLaunchScore(
+  connection: Connection,
+  baseMint: PublicKey,
+  poolCreationTime: number,
+  runTimestamp: number,
+  maxTokenAgeSeconds: number
+): Promise<LaunchScore> {
+  const breakdown = {
+    mintInCache: 0,
+    poolTiming: 0,
+    metadataPresent: 0,
+    oldActivityPenalty: 0
+  };
+
+  // Check 1: Is mint in our recently-minted cache? (best signal)
+  if (mintCache.has(baseMint)) {
+    breakdown.mintInCache = SCORE_MINT_IN_CACHE;
+    logger.debug({ mint: baseMint.toString() }, 'Mint found in cache (+2)');
+  }
+
+  // Check 2: Was pool created after bot started?
+  if (poolCreationTime > runTimestamp) {
+    breakdown.poolTiming = SCORE_POOL_TIMING;
+    logger.debug({
+      mint: baseMint.toString(),
+      poolTime: poolCreationTime,
+      botStart: runTimestamp
+    }, 'Pool created after bot start (+1)');
+  }
+
+  // Get token age (from cache or fallback)
+  const tokenAge = await getTokenAge(connection, baseMint, maxTokenAgeSeconds);
+
+  // Check 3: Penalty if token has old activity (fallback detected old token)
+  if (tokenAge.source === 'helius-history' && !tokenAge.isNew) {
+    breakdown.oldActivityPenalty = PENALTY_OLD_ACTIVITY;
+    logger.debug({
+      mint: baseMint.toString(),
+      age: tokenAge.ageSeconds
+    }, 'Token has old activity, applying penalty (-2)');
+  }
+
+  // Calculate total score
+  const score = breakdown.mintInCache +
+                breakdown.poolTiming +
+                breakdown.metadataPresent +
+                breakdown.oldActivityPenalty;
+
+  const isLaunch = score >= LAUNCH_THRESHOLD;
+
+  logger.info({
+    mint: baseMint.toString(),
+    score,
+    threshold: LAUNCH_THRESHOLD,
+    isLaunch,
+    breakdown,
+    tokenAge: tokenAge.ageSeconds,
+    tokenAgeSource: tokenAge.source
+  }, isLaunch ? 'LAUNCH DETECTED' : 'Not a new launch');
+
+  return {
+    score,
+    breakdown,
+    tokenAge,
+    isLaunch
+  };
+}
+```
+
+**1A.2: Create Meaningful Pool Pre-Filter**
+
+**New File:** `helpers/pool-prefilter.ts`
+
+```typescript
+import { Connection, PublicKey } from '@solana/web3.js';
+import { logger } from './logger';
+
+export interface PreFilterResult {
+  passed: boolean;
+  reason?: string;
+  liquidity?: number;
+}
+
+/**
+ * Pre-filter to reject junk pools before expensive filter pipeline.
+ * This is DETECTION filtering, not safety filtering.
+ */
+export async function preFilterPool(
+  connection: Connection,
+  quoteVault: PublicKey,
+  expectedQuoteMint: PublicKey,
+  actualQuoteMint: PublicKey,
+  minLiquiditySol: number
+): Promise<PreFilterResult> {
+
+  // Check 1: Quote token is expected (WSOL)
+  if (!actualQuoteMint.equals(expectedQuoteMint)) {
+    return {
+      passed: false,
+      reason: `Wrong quote token: expected ${expectedQuoteMint.toString()}, got ${actualQuoteMint.toString()}`
+    };
+  }
+
+  // Check 2: Minimum liquidity
+  try {
+    const vaultBalance = await connection.getTokenAccountBalance(quoteVault);
+    const liquiditySol = (vaultBalance.value.uiAmount || 0);
+
+    if (liquiditySol < minLiquiditySol) {
+      return {
+        passed: false,
+        reason: `Insufficient liquidity: ${liquiditySol.toFixed(4)} SOL < ${minLiquiditySol} SOL`,
+        liquidity: liquiditySol
+      };
+    }
+
+    return {
+      passed: true,
+      liquidity: liquiditySol
+    };
+
+  } catch (error) {
+    logger.warn({ quoteVault: quoteVault.toString(), error }, 'Failed to check vault balance');
+    // On error, let it through to full filters (fail open for pre-filter)
+    return {
+      passed: true,
+      reason: 'Vault balance check failed, proceeding anyway'
+    };
+  }
+}
 ```
 
 **1A.3: Update CPMM Handler in Listeners**
 
 **File:** `listeners/listeners.ts`
 
-Modify the CPMM subscription handler to:
-1. Call `getTokenAge()` after basic validation
-2. Only emit if token is genuinely new
-3. Include token age data in emitted event
+Integrate launch scoring and pre-filtering:
 
-**1A.4: Update CPMM Event Handler in index.ts**
+```typescript
+// In CPMM handler, after basic validation:
 
-**File:** `index.ts`
+// Pre-filter: Check minimum liquidity
+const preFilter = await preFilterPool(
+  this.connection,
+  cpmmState.vaultB,  // Quote vault (WSOL side)
+  this.quoteToken,
+  cpmmState.mintB,
+  MIN_POOL_LIQUIDITY_SOL
+);
 
-Update the `'cpmm-pool'` event handler to use the new `DetectedPool` interface.
+if (!preFilter.passed) {
+  stats.cpmm.preFilterRejected++;
+  logger.debug({
+    pool: accountId.toString(),
+    reason: preFilter.reason
+  }, '[CPMM] Pre-filter rejected');
+  return;
+}
 
-**1A.5: Add Diagnostic Logging**
+// Calculate launch confidence score
+const launchScore = await calculateLaunchScore(
+  this.connection,
+  baseMint,
+  poolOpenTime,
+  this.runTimestamp,
+  MAX_TOKEN_AGE_SECONDS
+);
 
-Add structured logging at each validation step:
+if (!launchScore.isLaunch) {
+  stats.cpmm.launchScoreRejected++;
+  logger.info({
+    pool: accountId.toString(),
+    mint: baseMint.toString(),
+    score: launchScore.score,
+    breakdown: launchScore.breakdown
+  }, '[CPMM] Not a new token launch');
+  return;
+}
+
+// Emit with full context
+this.emit('new-token-pool', {
+  poolType: 'CPMM',
+  poolId: accountId,
+  baseMint,
+  quoteMint,
+  launchScore: launchScore.score,
+  tokenAge: launchScore.tokenAge.ageSeconds,
+  mintDetectedVia: launchScore.tokenAge.source,
+  initialLiquidity: preFilter.liquidity,
+  rawState: cpmmState
+});
+```
+
+**1A.4: Add Diagnostic Logging**
+
+Enhanced logging format:
+
 ```
 [CPMM] WebSocket event received (account: Abc123...)
 [CPMM] ├─ Decode: Success
 [CPMM] ├─ Quote token (WSOL): PASS
 [CPMM] ├─ Pool status (swap enabled): PASS
-[CPMM] ├─ Pool timing (after bot start): PASS
-[CPMM] ├─ Token age: 45 seconds (max: 300) PASS
-[CPMM] └─ EMITTING: New token pool detected
+[CPMM] ├─ Pre-filter liquidity: 5.2 SOL (min: 1.0) PASS
+[CPMM] ├─ Launch score calculation:
+[CPMM] │   ├─ Mint in cache: +2 (detected via Helius 23s ago)
+[CPMM] │   ├─ Pool timing: +1 (created after bot start)
+[CPMM] │   ├─ Old activity penalty: 0
+[CPMM] │   └─ TOTAL: 3 (threshold: 2) PASS
+[CPMM] └─ EMITTING: New token launch detected
 ```
 
 #### Passing Criteria for Phase 1A
 
 | Criterion | Validation Method |
 |-----------|-------------------|
-| Token age check executes | Log shows "Token age: X seconds" for each detected pool |
-| Old tokens rejected | Pools with tokens > 5 minutes old are not emitted |
-| New tokens accepted | Pools with tokens < 5 minutes old are emitted |
-| No false positives | Creating a new pool for an existing token does NOT trigger buy |
-| RPC calls work | Token age RPC calls complete without timeout |
-| Error handling works | Invalid/failed RPC calls default to "not new" (fail safe) |
-| Logging is clear | Each validation step logged with PASS/FAIL |
+| Launch scoring executes | Log shows score breakdown for each pool |
+| Mint cache integration | Pools with cached mints get +2 score |
+| Pre-filter active | Low liquidity pools rejected before scoring |
+| Score threshold enforced | Only score >= 2 emits event |
+| Fallback works | Pools not in cache still checked via history |
+| No false positives | Old tokens with new pools rejected |
 
 ---
 
@@ -297,28 +875,22 @@ Add structured logging at each validation step:
 
 **1B.1: Refactor AMMV4 Handler**
 
-Move from subscription-level memcmp filtering to handler-based filtering:
-- Keep dataSize filter (efficient pre-filter)
-- Move quote token check to handler
-- Move status check to handler
-- Add token age check
+- Keep dataSize filter (efficient)
+- Move other checks to handler
+- Add launch scoring
+- Add pre-filtering
 
 **1B.2: Update Event Emission**
 
-Change from `emit('pool', ...)` to use unified pattern.
-
-**1B.3: Update Bot Handler**
-
-Modify `bot.buy()` to accept `DetectedPool` interface.
+Use unified `'new-token-pool'` event with same structure as CPMM.
 
 #### Passing Criteria for Phase 1B
 
 | Criterion | Validation Method |
 |-----------|-------------------|
-| Same validation pipeline as CPMM | Logs show identical validation steps |
-| Token age check active | Old tokens rejected, new tokens accepted |
-| Existing functionality preserved | Bot still buys on valid new token launches |
-| No regression | All existing tests/validations still pass |
+| Same validation pipeline as CPMM | Logs show identical steps |
+| Launch scoring active | Score breakdown logged |
+| No regression | Existing functionality preserved |
 
 ---
 
@@ -330,27 +902,21 @@ Modify `bot.buy()` to accept `DetectedPool` interface.
 
 **1C.1: Standardize DLMM Handler**
 
-DLMM already uses handler-based filtering. Add:
-- Token age validation
-- Unified event emission
+- Add launch scoring
+- Add pre-filtering
+- Preserve DLMM-specific checks (discriminator, activation)
 
 **1C.2: Update Event Emission**
 
-Change from `emit('dlmm-pool', ...)` to unified pattern.
-
-**1C.3: Document DLMM-Specific Considerations**
-
-- Activation point vs pool open time
-- Variable account sizes
-- Discriminator-based filtering requirement
+Use unified event format.
 
 #### Passing Criteria for Phase 1C
 
 | Criterion | Validation Method |
 |-----------|-------------------|
-| Token age check active | Logs show token age validation |
-| DLMM-specific validation preserved | Discriminator, activation point checks still work |
-| Unified event format | DLMM pools emit with same structure as AMMV4/CPMM |
+| Launch scoring active | Score breakdown logged |
+| DLMM-specific checks preserved | Discriminator, activation still work |
+| Unified event format | Same structure as AMMV4/CPMM |
 
 ---
 
@@ -362,17 +928,16 @@ Change from `emit('dlmm-pool', ...)` to unified pattern.
 
 **1D.1: Create Unified Event Handler**
 
-**File:** `index.ts`
-
 ```typescript
-// Replace three separate handlers with one
 listener.on('new-token-pool', async (pool: DetectedPool) => {
   logger.info({
     poolType: pool.poolType,
     poolId: pool.poolId.toString(),
     baseMint: pool.baseMint.toString(),
-    tokenAge: pool.tokenAge
-  }, 'New token pool detected');
+    launchScore: pool.launchScore,
+    tokenAge: pool.tokenAge,
+    liquidity: pool.initialLiquidity
+  }, 'New token launch detected - proceeding to filters');
 
   switch (pool.poolType) {
     case 'AMMV4':
@@ -388,28 +953,18 @@ listener.on('new-token-pool', async (pool: DetectedPool) => {
 });
 ```
 
-**1D.2: Remove Legacy Event Handlers**
+**1D.2: Remove Legacy Events**
 
-Remove:
-- `listener.on('pool', ...)`
-- `listener.on('cpmm-pool', ...)`
-- `listener.on('dlmm-pool', ...)`
+Remove `'pool'`, `'cpmm-pool'`, `'dlmm-pool'` handlers.
 
-**1D.3: Update Detection Statistics**
-
-Consolidate stats tracking across all pool types:
+**1D.3: Unified Statistics**
 
 ```typescript
 interface DetectionStats {
-  // Per pool type
   ammv4: PoolTypeStats;
   cpmm: PoolTypeStats;
   dlmm: PoolTypeStats;
-
-  // Totals
-  totalEvents: number;
-  totalEmitted: number;
-  totalRejectedTokenAge: number;
+  mintCache: { size: number; heliusDetected: number; fallbackDetected: number };
 }
 
 interface PoolTypeStats {
@@ -417,8 +972,8 @@ interface PoolTypeStats {
   invalidStructure: number;
   wrongQuoteToken: number;
   poolNotEnabled: number;
-  poolNotNew: number;
-  tokenTooOld: number;
+  preFilterRejected: number;
+  launchScoreRejected: number;
   emitted: number;
 }
 ```
@@ -427,193 +982,214 @@ interface PoolTypeStats {
 
 | Criterion | Validation Method |
 |-----------|-------------------|
-| Single event type works | All pool types trigger 'new-token-pool' |
-| Legacy events removed | No 'pool', 'cpmm-pool', 'dlmm-pool' events |
-| Correct routing | AMMV4 calls buy(), CPMM calls buyCpmm(), DLMM calls buyDlmm() |
-| Stats unified | Single stats output shows all pool types |
+| Single event type | All pools use 'new-token-pool' |
+| Legacy removed | No old event handlers |
+| Stats unified | Single output shows all types + mint cache |
 
 ---
 
-## 4. Passing Criteria
+## 4. Launch Confidence Scoring
 
-### Overall Phase 1 Success Criteria
+### Scoring Rules
+
+| Factor | Points | Condition |
+|--------|--------|-----------|
+| Mint in cache | **+2** | Token mint detected via Helius within TTL |
+| Pool timing | **+1** | Pool created after bot start time |
+| Metadata present | **+1** | Token has metadata (optional, future) |
+| Old activity penalty | **-2** | Fallback check found activity before window |
+
+### Score Interpretation
+
+| Score | Interpretation | Action |
+|-------|---------------|--------|
+| 3+ | High confidence new launch | Proceed to filters |
+| 2 | Likely new launch | Proceed to filters |
+| 1 | Uncertain | Reject (below threshold) |
+| 0 or negative | Not a new launch | Reject |
+
+### Configuration
+
+```bash
+# Scoring thresholds
+LAUNCH_SCORE_THRESHOLD=2          # Minimum score to proceed
+LAUNCH_SCORE_MINT_CACHE=2         # Points for mint in cache
+LAUNCH_SCORE_POOL_TIMING=1        # Points for pool after bot start
+LAUNCH_PENALTY_OLD_ACTIVITY=-2    # Penalty for old token activity
+```
+
+---
+
+## 5. Passing Criteria
+
+### Overall Success Criteria
 
 | # | Criterion | How to Verify |
 |---|-----------|---------------|
-| 1 | **New tokens detected** | Launch a new token, create pool, bot detects within seconds |
-| 2 | **Old tokens rejected** | Create pool for token > 5 min old, bot does NOT trigger |
-| 3 | **All pool types work** | Test detection on AMMV4, CPMM, and DLMM pools |
-| 4 | **Unified event format** | All pools emit `DetectedPool` structure |
-| 5 | **Token age logged** | Every detection shows token age in logs |
-| 6 | **Fail-safe behavior** | RPC errors default to "token not new" |
-| 7 | **No regressions** | Existing filter system still works |
-| 8 | **Stats tracking** | Periodic stats show rejection reasons |
+| 1 | **Helius mint detection works** | Mint cache populated during operation |
+| 2 | **New launches detected** | Score >= 2 for genuinely new tokens |
+| 3 | **Old tokens rejected** | Score < 2 for tokens with old activity |
+| 4 | **Low liquidity filtered** | Junk pools rejected before scoring |
+| 5 | **All pool types unified** | Same event structure for all |
+| 6 | **Signature order correct** | Uses `sortOrder: "asc"` in fallback |
+| 7 | **Fail-safe behavior** | Errors default to rejection |
+| 8 | **Stats comprehensive** | Shows cache + per-type rejection reasons |
 
-### Verification Test Plan
+### Concrete Test Suites
 
-**Test 1: New Token Launch Detection**
-1. Deploy a new token on mainnet (or use devnet for testing)
-2. Create liquidity pool immediately after
-3. Verify bot detects and logs token age < 60 seconds
-4. Verify event is emitted
+#### Test Suite A: Known Launch Replay
 
-**Test 2: Old Token Rejection**
-1. Find an existing token (> 1 hour old)
-2. Create new liquidity pool for it
-3. Verify bot detects pool but rejects due to token age
-4. Verify NO event is emitted
-5. Verify log shows "Token age: X seconds (max: 300) FAIL"
+Capture 10 real recent token launches with:
+- Mint transaction signature
+- First pool transaction signature
+- Timestamps for both
 
-**Test 3: Cross-Pool-Type Consistency**
-1. For each pool type (AMMV4, CPMM, DLMM):
-   - Verify same validation pipeline executes
-   - Verify same log format
-   - Verify same event structure emitted
+Replay detection logic against these signatures. **Must emit within window for all 10.**
 
-**Test 4: Error Handling**
-1. Temporarily break RPC endpoint
-2. Verify token age check fails gracefully
-3. Verify default behavior is "not new" (fail safe)
-4. Verify bot continues running
+| Token | Mint Sig | Pool Sig | Expected |
+|-------|----------|----------|----------|
+| Token1 | abc123... | def456... | EMIT (score 3) |
+| Token2 | ghi789... | jkl012... | EMIT (score 2) |
+| ... | ... | ... | ... |
+
+#### Test Suite B: False Positive Prevention
+
+Capture 10 older tokens that created new pools recently:
+- Token at least 1 hour old
+- New pool created today
+
+**Must NOT emit for any of these.**
+
+| Token | Token Age | New Pool | Expected |
+|-------|-----------|----------|----------|
+| OldToken1 | 2 hours | Yes | REJECT (score -1) |
+| OldToken2 | 1 day | Yes | REJECT (score -1) |
+| ... | ... | ... | ... |
 
 ---
 
-## 5. File Change Map
+## 6. File Change Map
 
 ### New Files
 
 | File | Phase | Purpose |
 |------|-------|---------|
-| `helpers/token-validator.ts` | 1A | Token age validation logic |
-| `types/detected-pool.ts` | 1A | Unified pool detection interface |
+| `cache/mint.cache.ts` | 0 | Recently minted token cache |
+| `listeners/mint-listener.ts` | 0 | Helius mint event detection |
+| `helpers/token-validator.ts` | 0 | Token age validation with correct ordering |
+| `helpers/launch-scorer.ts` | 1A | Confidence scoring logic |
+| `helpers/pool-prefilter.ts` | 1A | Minimum liquidity pre-filter |
+| `types/detected-pool.ts` | 1A | Unified detection interface |
 
 ### Modified Files
 
 | File | Phase | Changes |
 |------|-------|---------|
-| `helpers/constants.ts` | 1A | Add `MAX_TOKEN_AGE_SECONDS`, `ENABLE_TOKEN_AGE_CHECK` |
-| `listeners/listeners.ts` | 1A-1C | Add token age validation to all handlers, unified event emission |
-| `index.ts` | 1D | Replace 3 event handlers with 1 unified handler |
-| `bot.ts` | 1B | Update `buy()` signature to accept `DetectedPool` (optional, can use adapter) |
-
-### Files NOT Changed (Phase 1)
-
-| File | Reason |
-|------|--------|
-| `filters/*.ts` | Filter system unchanged in Phase 1 |
-| `transactions/*.ts` | Execution unchanged in Phase 1 |
-| `persistence/*.ts` | Persistence unchanged in Phase 1 |
-| `risk/*.ts` | Risk management unchanged in Phase 1 |
+| `helpers/constants.ts` | 0 | Add all new configuration constants |
+| `listeners/listeners.ts` | 1A-1C | Integrate scoring, pre-filter, unified events |
+| `index.ts` | 0, 1D | Start mint listener, unified event handler |
+| `bot.ts` | 1B | Accept DetectedPool interface |
 
 ---
 
-## 6. Configuration Reference
+## 7. Configuration Reference
 
 ### New Environment Variables
 
 ```bash
 # ═══════════════════════════════════════════════════════════════
-# TOKEN AGE VALIDATION (Phase 1)
+# MINT DETECTION (Phase 0)
 # ═══════════════════════════════════════════════════════════════
 
 # Maximum age in seconds for a token to be considered "new"
-# Tokens older than this will be rejected
+# Also used as TTL for mint cache
 # Default: 300 (5 minutes)
 MAX_TOKEN_AGE_SECONDS=300
 
-# Enable/disable token age checking
-# Set to 'false' to disable (not recommended)
+# Enable Helius mint detection (primary truth)
+# Default: true
+ENABLE_HELIUS_MINT_DETECTION=true
+
+# ═══════════════════════════════════════════════════════════════
+# LAUNCH SCORING (Phase 1)
+# ═══════════════════════════════════════════════════════════════
+
+# Minimum score required to consider a pool a "new launch"
+# Default: 2
+LAUNCH_SCORE_THRESHOLD=2
+
+# Minimum liquidity (in SOL) for pool to pass pre-filter
+# Default: 1.0
+MIN_POOL_LIQUIDITY_SOL=1.0
+
+# Enable/disable token age checking entirely
 # Default: true
 ENABLE_TOKEN_AGE_CHECK=true
 ```
 
-### Configuration Recommendations
-
-| Scenario | MAX_TOKEN_AGE_SECONDS | Rationale |
-|----------|----------------------|-----------|
-| Conservative | 120 (2 min) | Only catch the freshest launches |
-| Standard | 300 (5 min) | Good balance of coverage and safety |
-| Aggressive | 600 (10 min) | Catch more launches, higher risk |
-
 ---
 
-## 7. Testing & Validation
+## 8. Testing & Validation
 
 ### Manual Testing Checklist
 
+#### Phase 0
+- [ ] Mint cache compiles and runs
+- [ ] Mint listener subscribes successfully
+- [ ] New mints appear in cache
+- [ ] Cache TTL cleanup works
+- [ ] Fallback uses `sortOrder: "asc"`
+
 #### Phase 1A (CPMM)
-- [ ] Token age validator compiles without errors
-- [ ] Constants added to `helpers/constants.ts`
-- [ ] CPMM handler calls token age validator
-- [ ] Log output shows token age for CPMM pools
-- [ ] New token (< 5 min) triggers event emission
-- [ ] Old token (> 5 min) does NOT trigger event emission
-- [ ] RPC error results in fail-safe (no emission)
+- [ ] Launch scorer calculates correctly
+- [ ] Pre-filter rejects low liquidity
+- [ ] Score >= 2 emits event
+- [ ] Score < 2 does not emit
+- [ ] Mint cache hits give +2
 
-#### Phase 1B (AMMV4)
-- [ ] AMMV4 handler refactored to handler-based filtering
-- [ ] Token age validation added
-- [ ] Log output matches CPMM format
-- [ ] Buy functionality still works
-
-#### Phase 1C (DLMM)
-- [ ] DLMM handler includes token age validation
-- [ ] Log output matches CPMM/AMMV4 format
-- [ ] DLMM-specific checks still work (discriminator, activation)
-
-#### Phase 1D (Unified Events)
-- [ ] All pool types emit `'new-token-pool'` event
+#### Phase 1B-1D
+- [ ] AMMV4 same behavior as CPMM
+- [ ] DLMM same behavior as CPMM
+- [ ] Unified event works
 - [ ] Legacy events removed
-- [ ] Unified event handler routes to correct buy function
-- [ ] Stats show all pool types
 
 ### Log Output Examples
 
-**Successful Detection (New Token):**
+**Successful New Launch Detection:**
 ```
-[2024-01-15 10:30:45] INFO  [CPMM] WebSocket event received
-[2024-01-15 10:30:45] DEBUG [CPMM] ├─ Account: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
-[2024-01-15 10:30:45] DEBUG [CPMM] ├─ Decode: Success (CpmmPoolInfoLayout)
-[2024-01-15 10:30:45] DEBUG [CPMM] ├─ Quote token check: PASS (mintB = WSOL)
-[2024-01-15 10:30:45] DEBUG [CPMM] ├─ Pool status check: PASS (swap enabled)
-[2024-01-15 10:30:45] DEBUG [CPMM] ├─ Pool timing check: PASS (opened after bot start)
-[2024-01-15 10:30:45] DEBUG [CPMM] ├─ Token age check: 47s (max: 300s) PASS
-[2024-01-15 10:30:45] INFO  [CPMM] └─ EMITTING: New token pool detected
-[2024-01-15 10:30:45] INFO  New token pool: type=CPMM mint=ABC123... age=47s
-```
+[MINT] New token mint detected via Helius
+       mint=7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+       signature=5Uj...
 
-**Rejected Detection (Old Token):**
-```
-[2024-01-15 10:35:12] INFO  [AMMV4] WebSocket event received
-[2024-01-15 10:35:12] DEBUG [AMMV4] ├─ Account: 9yZXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgBsV
-[2024-01-15 10:35:12] DEBUG [AMMV4] ├─ Decode: Success (LIQUIDITY_STATE_LAYOUT_V4)
-[2024-01-15 10:35:12] DEBUG [AMMV4] ├─ Quote token check: PASS
-[2024-01-15 10:35:12] DEBUG [AMMV4] ├─ Pool status check: PASS
-[2024-01-15 10:35:12] DEBUG [AMMV4] ├─ Pool timing check: PASS
-[2024-01-15 10:35:12] DEBUG [AMMV4] ├─ Token age check: 3847s (max: 300s) FAIL
-[2024-01-15 10:35:12] INFO  [AMMV4] └─ REJECTED: Token too old (3847s > 300s)
+[CPMM] WebSocket event received
+[CPMM] ├─ Account: 9yZXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgBsV
+[CPMM] ├─ Decode: Success
+[CPMM] ├─ Quote token: PASS
+[CPMM] ├─ Pool status: PASS
+[CPMM] ├─ Pre-filter: PASS (5.2 SOL >= 1.0 SOL)
+[CPMM] ├─ Launch Score:
+[CPMM] │   ├─ Mint in cache: +2 (detected 23s ago)
+[CPMM] │   ├─ Pool timing: +1
+[CPMM] │   ├─ Old activity: 0
+[CPMM] │   └─ TOTAL: 3 >= 2 PASS
+[CPMM] └─ EMITTING: New token launch
 ```
 
-**Periodic Stats Output:**
+**Rejected (Old Token):**
 ```
-[2024-01-15 11:00:00] INFO  === Pool Detection Stats (last 60 minutes) ===
-[2024-01-15 11:00:00] INFO  AMMV4:  events=1247 | emitted=3 | rejected: structure=0 quote=892 status=12 timing=298 tokenAge=42
-[2024-01-15 11:00:00] INFO  CPMM:   events=456  | emitted=2 | rejected: structure=0 quote=312 status=8  timing=127 tokenAge=7
-[2024-01-15 11:00:00] INFO  DLMM:   events=2341 | emitted=1 | rejected: structure=1892 quote=287 status=45 timing=98 tokenAge=18
-[2024-01-15 11:00:00] INFO  TOTAL:  events=4044 | emitted=6 | tokenAge rejections=67
+[AMMV4] WebSocket event received
+[AMMV4] ├─ Account: Abc123...
+[AMMV4] ├─ Decode: Success
+[AMMV4] ├─ Quote token: PASS
+[AMMV4] ├─ Pool status: PASS
+[AMMV4] ├─ Pre-filter: PASS (12.5 SOL)
+[AMMV4] ├─ Launch Score:
+[AMMV4] │   ├─ Mint in cache: 0 (not found)
+[AMMV4] │   ├─ Pool timing: +1
+[AMMV4] │   ├─ Old activity: -2 (token age: 3847s)
+[AMMV4] │   └─ TOTAL: -1 < 2 FAIL
+[AMMV4] └─ REJECTED: Not a new token launch
 ```
-
----
-
-## Next Steps
-
-After Phase 1 is complete, the following phases will address:
-
-- **Phase 2:** Filter System Standardization (adapt filters for unified pool format)
-- **Phase 3:** Trading Execution Standardization (unified buy/sell interface)
-- **Phase 4:** Position Monitoring Standardization (unified TP/SL monitoring)
-
-These phases will be documented in separate plan updates once Phase 1 is validated.
 
 ---
 
@@ -621,4 +1197,15 @@ These phases will be documented in separate plan updates once Phase 1 is validat
 
 | Date | Version | Changes |
 |------|---------|---------|
-| 2024-01-25 | 1.0 | Initial plan created |
+| 2025-01-25 | 1.0 | Initial plan created |
+| 2025-01-25 | 2.0 | Major revision: mint-first architecture, confidence scoring, pre-filtering, fixed signature order bug |
+
+---
+
+## References
+
+- [Helius: How to Fetch Newly Minted Tokens](https://www.helius.dev/blog/how-to-fetch-newly-minted-tokens-with-helius)
+- [Helius: getTransactionsForAddress](https://www.helius.dev/docs/rpc/gettransactionsforaddress) - Supports `sortOrder: "asc"` for oldest-first
+- [Solana: getSignaturesForAddress](https://solana.com/docs/rpc/http/getsignaturesforaddress) - Returns newest first (descending)
+- [Helius: Geyser Enhanced WebSockets](https://www.helius.dev/blog/how-to-monitor-solana-transactions-using-geyser-enhanced-websockets)
+- [Helius: Webhooks Documentation](https://www.helius.dev/docs/webhooks)
