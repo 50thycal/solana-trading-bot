@@ -443,6 +443,36 @@ export class Listeners extends EventEmitter {
           const tokenYMint = poolState.tokenYMint;
           const quoteTokenMint = config.quoteToken.mint;
 
+          // Debug: Log first few LbPair accounts to verify layout offsets
+          if (emitted === 0 && noQuoteToken < 3) {
+            const data = updatedAccountInfo.accountInfo.data;
+            const wsolMint = quoteTokenMint.toBase58();
+
+            // Search for WSOL at various offsets to find the correct position
+            let foundAt = 'not found';
+            for (let offset = 8; offset <= 500; offset += 1) {
+              try {
+                if (offset + 32 <= data.length) {
+                  const pk = new PublicKey(data.subarray(offset, offset + 32)).toBase58();
+                  if (pk === wsolMint) {
+                    foundAt = `offset ${offset}`;
+                    break;
+                  }
+                }
+              } catch (e) {}
+            }
+
+            logger.info({
+              poolId: updatedAccountInfo.accountId.toBase58().slice(0, 8),
+              dataLen: data.length,
+              wsolFoundAt: foundAt,
+              at90: tokenXMint.toBase58().slice(0, 12),
+              at122: tokenYMint.toBase58().slice(0, 12),
+              status: poolState.status,
+              activeId: poolState.activeId,
+            }, 'DLMM layout debug: checking token mint positions');
+          }
+
           // Check if either token is our quote token
           // tokenXMint is at byte offset 90, tokenYMint at offset 122 (after IDL v0.8.5 fix)
           const hasQuoteToken = tokenXMint.equals(quoteTokenMint) || tokenYMint.equals(quoteTokenMint);
