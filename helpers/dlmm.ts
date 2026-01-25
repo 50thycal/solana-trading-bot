@@ -56,29 +56,22 @@ interface RawDlmmLayoutData {
 
 /**
  * DLMM LbPair account layout
- * Based on Meteora's DLMM program structure
+ * Based on Meteora's DLMM program structure (corrected field order)
  *
- * The LbPair account contains all the information about a DLMM pool including:
- * - Token mints (X and Y)
- * - Token vaults (reserves)
- * - Bin configuration (step, active bin)
- * - Fee parameters
- * - Status flags
+ * IMPORTANT: Field order based on Meteora DLMM SDK - tokenXMint and tokenYMint
+ * come right after discriminator, not after parameters/reserves.
  */
 export const DlmmLbPairLayout = BufferLayout.struct<RawDlmmLayoutData>([
   // Account discriminator (8 bytes) - Anchor accounts start with this
   BufferLayout.blob(8, 'discriminator'),
 
-  // Parameters
-  BufferLayout.blob(32, 'parameters'), // StaticParameters PDA
-
-  // Vault public keys
-  BufferLayout.blob(32, 'reserveX'),   // Token X vault
-  BufferLayout.blob(32, 'reserveY'),   // Token Y vault
-
-  // Token mints
+  // Token mints - IMMEDIATELY after discriminator (confirmed from Go SDK)
   BufferLayout.blob(32, 'tokenXMint'),
   BufferLayout.blob(32, 'tokenYMint'),
+
+  // Vault public keys (token accounts, not mints)
+  BufferLayout.blob(32, 'reserveX'),   // Token X vault
+  BufferLayout.blob(32, 'reserveY'),   // Token Y vault
 
   // LP mint
   BufferLayout.blob(32, 'lbMint'),
@@ -114,6 +107,9 @@ export const DlmmLbPairLayout = BufferLayout.struct<RawDlmmLayoutData>([
 
   // Creator public key
   BufferLayout.blob(32, 'creator'),
+
+  // Parameters (moved to end - was incorrectly at position 2)
+  BufferLayout.blob(32, 'parameters'),
 ]);
 
 /**
