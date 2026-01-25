@@ -130,6 +130,11 @@ export const MAX_TOKEN_AGE_SECONDS = config.maxTokenAgeSeconds;
 export const ENABLE_TOKEN_AGE_CHECK = config.enableTokenAgeCheck;
 
 // ============================================================================
+// MINT DETECTION (Pool Detection Phase 0)
+// ============================================================================
+export const ENABLE_HELIUS_MINT_DETECTION = config.enableHeliusMintDetection;
+
+// ============================================================================
 // LOGGING
 // ============================================================================
 

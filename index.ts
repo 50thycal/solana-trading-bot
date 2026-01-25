@@ -1,5 +1,5 @@
-import { MarketCache, PoolCache } from './cache';
-import { Listeners } from './listeners';
+import { MarketCache, PoolCache, initMintCache, getMintCache } from './cache';
+import { Listeners, initMintListener, getMintListener, MintListener } from './listeners';
 import { Connection, KeyedAccountInfo, Keypair, PublicKey } from '@solana/web3.js';
 import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
 import { AccountLayout, getAssociatedTokenAddressSync, getAccount } from '@solana/spl-token';
@@ -64,6 +64,7 @@ import {
   getTokenAge,
   MAX_TOKEN_AGE_SECONDS,
   ENABLE_TOKEN_AGE_CHECK,
+  ENABLE_HELIUS_MINT_DETECTION,
 } from './helpers';
 import { initRpcManager } from './helpers/rpc-manager';
 import { startDashboardServer, DashboardServer } from './dashboard';
@@ -88,6 +89,7 @@ import {
 
 // Global references for graceful shutdown
 let listeners: Listeners | null = null;
+let mintListener: MintListener | null = null;
 let dashboardServer: DashboardServer | null = null;
 let bot: Bot | null = null;
 let isShuttingDown = false;
@@ -202,6 +204,11 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Transaction simulation: ${SIMULATE_TRANSACTION}`);
   logger.info(`Fallback executor: ${USE_FALLBACK_EXECUTOR && TRANSACTION_EXECUTOR === 'jito' ? 'enabled' : 'disabled'}`);
 
+  logger.info('- Mint Detection (Phase 0) -');
+  logger.info(`Helius mint detection: ${ENABLE_HELIUS_MINT_DETECTION ? 'enabled' : 'disabled'}`);
+  logger.info(`Token age validation: ${ENABLE_TOKEN_AGE_CHECK ? 'enabled' : 'disabled'}`);
+  logger.info(`Max token age: ${MAX_TOKEN_AGE_SECONDS}s`);
+
   logger.info('------- CONFIGURATION END -------');
 
   logger.info('Bot is running! Press CTRL + C to stop it.');
@@ -231,6 +238,18 @@ async function gracefulShutdown(signal: string): Promise<void> {
     if (listeners) {
       logger.info('Stopping WebSocket listeners...');
       await listeners.stop();
+    }
+
+    // Stop mint listener
+    if (mintListener) {
+      logger.info('Stopping mint detection listener...');
+      await mintListener.stop();
+    }
+
+    // Stop mint cache cleanup
+    const mintCacheInstance = getMintCache();
+    if (mintCacheInstance) {
+      mintCacheInstance.stop();
     }
 
     // Save P&L data
@@ -489,6 +508,32 @@ const runListener = async () => {
   // Start position monitor
   positionMonitor.start();
   logger.info('Risk control systems initialized');
+
+  // === Initialize Mint Detection (Phase 0) ===
+  // Initialize mint cache with TTL from config
+  initMintCache(MAX_TOKEN_AGE_SECONDS);
+  logger.info({ ttlSeconds: MAX_TOKEN_AGE_SECONDS }, 'Mint cache initialized');
+
+  // Start mint listener if enabled
+  if (ENABLE_HELIUS_MINT_DETECTION) {
+    mintListener = initMintListener(connection);
+
+    mintListener.on('mint-detected', (mint, signature, source) => {
+      logger.debug(
+        { mint: mint.toString(), signature, source },
+        'Mint detected event received'
+      );
+    });
+
+    mintListener.on('error', (error) => {
+      logger.error({ error }, 'Mint listener error');
+    });
+
+    await mintListener.start();
+    logger.info('Helius mint detection listener started');
+  } else {
+    logger.info('Helius mint detection disabled - using fallback token age validation');
+  }
 
   if (PRE_LOAD_EXISTING_MARKETS) {
     await marketCache.init({ quoteToken });
@@ -772,6 +817,9 @@ const runListener = async () => {
     const totalTokenTooOld = poolDetectionStats.ammV4.tokenTooOld + poolDetectionStats.cpmm.tokenTooOld + poolDetectionStats.dlmm.tokenTooOld;
     const totalBought = poolDetectionStats.ammV4.proceededToBuy + poolDetectionStats.cpmm.proceededToBuy + poolDetectionStats.dlmm.proceededToBuy;
 
+    // Get mint cache stats
+    const mintCacheStats = getMintCache().getStats();
+
     // Log detailed stats as structured data (won't be truncated)
     logger.info(
       {
@@ -786,11 +834,17 @@ const runListener = async () => {
           tokenTooOld: totalTokenTooOld,
           proceededToBuy: totalBought,
         },
+        mintCache: {
+          size: mintCacheStats.size,
+          heliusDetected: mintCacheStats.heliusDetected,
+          fallbackDetected: mintCacheStats.fallbackDetected,
+          hitRate: (mintCacheStats.hitRate * 100).toFixed(1) + '%',
+        },
         seenPools: stats?.seenPools || 0,
         openPositions: stats?.positions.open || 0,
         uptimeMinutes: Math.floor(uptimeMs / 60000),
       },
-      `Heartbeat (5min): Detected=${totalDetected} New=${totalNew} TokenOld=${totalTokenTooOld} Bought=${totalBought} | AmmV4: ${poolDetectionStats.ammV4.detected}/${poolDetectionStats.ammV4.isNew}/${poolDetectionStats.ammV4.proceededToBuy} | CPMM: ${poolDetectionStats.cpmm.detected}/${poolDetectionStats.cpmm.isNew}/${poolDetectionStats.cpmm.tokenTooOld}/${poolDetectionStats.cpmm.proceededToBuy} | DLMM: ${poolDetectionStats.dlmm.detected}/${poolDetectionStats.dlmm.isNew}/${poolDetectionStats.dlmm.proceededToBuy} | Total seen: ${stats?.seenPools || 0} | Open: ${stats?.positions.open || 0}`
+      `Heartbeat (5min): Detected=${totalDetected} New=${totalNew} TokenOld=${totalTokenTooOld} Bought=${totalBought} | MintCache: ${mintCacheStats.size} (helius=${mintCacheStats.heliusDetected}, fallback=${mintCacheStats.fallbackDetected}) | AmmV4: ${poolDetectionStats.ammV4.detected}/${poolDetectionStats.ammV4.isNew}/${poolDetectionStats.ammV4.proceededToBuy} | CPMM: ${poolDetectionStats.cpmm.detected}/${poolDetectionStats.cpmm.isNew}/${poolDetectionStats.cpmm.tokenTooOld}/${poolDetectionStats.cpmm.proceededToBuy} | DLMM: ${poolDetectionStats.dlmm.detected}/${poolDetectionStats.dlmm.isNew}/${poolDetectionStats.dlmm.proceededToBuy}`
     );
 
     // Reset counters for next period
