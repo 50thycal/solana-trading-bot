@@ -1,20 +1,27 @@
 import { LIQUIDITY_STATE_LAYOUT_V4, MAINNET_PROGRAM_ID, MARKET_STATE_LAYOUT_V3, Token } from '@raydium-io/raydium-sdk';
 import bs58 from 'bs58';
-import { Connection, PublicKey } from '@solana/web3.js';
+import { Connection, KeyedAccountInfo, PublicKey } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { EventEmitter } from 'events';
 import {
   logger,
   CPMM_PROGRAM_ID,
   CpmmPoolInfoLayout,
-  CPMM_POOL_STATUS,
   DLMM_PROGRAM_ID,
-  DlmmLbPairLayout,
   decodeDlmmPoolState,
   isDlmmPoolEnabled,
   isLbPairAccount,
   DLMM_MIN_ACCOUNT_SIZE,
 } from '../helpers';
+import { getMintCache } from '../cache/mint.cache';
+import { verifyTokenAge } from '../services/dexscreener';
+import {
+  DetectedToken,
+  TokenSource,
+  VerificationSource,
+  PlatformStats,
+  createEmptyPlatformStats,
+} from '../types';
 
 /**
  * Reconnection configuration
@@ -32,6 +39,18 @@ const DEFAULT_RECONNECTION_CONFIG: ReconnectionConfig = {
 };
 
 /**
+ * Token verification configuration
+ */
+export interface VerificationConfig {
+  /** Maximum token age in seconds to be considered "new" */
+  maxTokenAgeSeconds: number;
+  /** Whether to use DexScreener API as fallback for cache misses */
+  dexscreenerFallbackEnabled: boolean;
+  /** Bot startup timestamp - pools must be created after this */
+  runTimestamp: number;
+}
+
+/**
  * Listener configuration
  */
 export interface ListenerConfig {
@@ -41,31 +60,60 @@ export interface ListenerConfig {
   cacheNewMarkets: boolean;
   enableCpmm: boolean;
   enableDlmm: boolean;
+  /** Token verification settings (optional - defaults applied if not provided) */
+  verification?: VerificationConfig;
+}
+
+/**
+ * Default verification config
+ */
+const DEFAULT_VERIFICATION_CONFIG: VerificationConfig = {
+  maxTokenAgeSeconds: 300, // 5 minutes
+  dexscreenerFallbackEnabled: true,
+  runTimestamp: Math.floor(Date.now() / 1000),
+};
+
+/**
+ * Listener statistics
+ */
+export interface ListenerStats {
+  ammv4: PlatformStats;
+  cpmm: PlatformStats;
+  dlmm: PlatformStats;
 }
 
 /**
  * Listeners class - Manages WebSocket subscriptions with automatic reconnection
  *
  * Events emitted:
- * - 'market': New OpenBook market detected
- * - 'pool': New Raydium AmmV4 pool detected
- * - 'cpmm-pool': New Raydium CPMM pool detected
- * - 'dlmm-pool': New Meteora DLMM pool detected
- * - 'wallet': Wallet account changed
+ * - 'new-token': Unified event for all verified new tokens (DetectedToken)
+ * - 'token-rejected': Token failed verification (mint, reason)
+ * - 'market': New OpenBook market detected (raw KeyedAccountInfo)
+ * - 'wallet': Wallet account changed (raw KeyedAccountInfo)
  * - 'connected': WebSocket connected/reconnected
  * - 'disconnected': WebSocket disconnected
  * - 'reconnecting': Attempting reconnection
  * - 'error': Error occurred
  */
+/** Internal config with required verification */
+type InternalListenerConfig = ListenerConfig & { verification: VerificationConfig };
+
 export class Listeners extends EventEmitter {
   private subscriptions: number[] = [];
-  private config: ListenerConfig | null = null;
+  private config: InternalListenerConfig | null = null;
   private reconnectionConfig: ReconnectionConfig;
   private isConnected: boolean = false;
   private reconnectAttempts: number = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private isReconnecting: boolean = false;
   private isStopped: boolean = false;
+
+  // Statistics per platform
+  private stats: ListenerStats = {
+    ammv4: createEmptyPlatformStats(),
+    cpmm: createEmptyPlatformStats(),
+    dlmm: createEmptyPlatformStats(),
+  };
 
   constructor(
     private connection: Connection,
@@ -86,9 +134,176 @@ export class Listeners extends EventEmitter {
    * Start all subscriptions
    */
   public async start(config: ListenerConfig): Promise<void> {
-    this.config = config;
+    // Apply default verification config if not provided
+    this.config = {
+      ...config,
+      verification: config.verification ?? {
+        ...DEFAULT_VERIFICATION_CONFIG,
+        runTimestamp: Math.floor(Date.now() / 1000), // Fresh timestamp on start
+      },
+    };
     this.isStopped = false;
     await this.setupSubscriptions();
+  }
+
+  /**
+   * Get current statistics
+   */
+  public getStats(): ListenerStats {
+    return {
+      ammv4: { ...this.stats.ammv4 },
+      cpmm: { ...this.stats.cpmm },
+      dlmm: { ...this.stats.dlmm },
+    };
+  }
+
+  /**
+   * Reset statistics
+   */
+  public resetStats(): void {
+    this.stats = {
+      ammv4: createEmptyPlatformStats(),
+      cpmm: createEmptyPlatformStats(),
+      dlmm: createEmptyPlatformStats(),
+    };
+  }
+
+  /**
+   * Verify a token and emit 'new-token' event if it passes
+   */
+  private async verifyAndEmitToken(
+    source: TokenSource,
+    baseMint: PublicKey,
+    poolId: PublicKey,
+    quoteMint: PublicKey,
+    poolOpenTime: number,
+    poolState: any,
+    stats: PlatformStats
+  ): Promise<void> {
+    if (!this.config) return;
+
+    const { verification, quoteToken } = this.config;
+    const baseMintStr = baseMint.toString();
+    const mintCache = getMintCache();
+    const currentTime = Math.floor(Date.now() / 1000);
+
+    // Check if pool is new (created after bot startup)
+    if (poolOpenTime <= verification.runTimestamp) {
+      stats.isNew--; // Wasn't actually new
+      return;
+    }
+
+    // Determine verification source and status
+    let verificationSource: VerificationSource = 'none';
+    let verified = false;
+    let ageSeconds: number | undefined;
+    let rejectionReason: string | undefined;
+
+    // Check if we detected this token via Helius mint listener (cache hit = definitely new)
+    if (mintCache.has(baseMint)) {
+      verificationSource = 'mint-cache';
+      verified = true;
+      stats.isNew++;
+
+      logger.info(
+        { mint: baseMintStr, source, verificationSource },
+        `[${source}] Token in mint cache - verified`
+      );
+    } else if (verification.dexscreenerFallbackEnabled) {
+      // Cache miss - verify via DexScreener API
+      logger.debug(
+        { mint: baseMintStr, source },
+        `[${source}] Token not in mint cache - verifying via DexScreener`
+      );
+
+      const result = await verifyTokenAge(baseMintStr, verification.maxTokenAgeSeconds);
+
+      if (result.isVerified) {
+        verificationSource = 'dexscreener';
+        verified = true;
+        ageSeconds = result.ageSeconds ?? undefined;
+        stats.isNew++;
+
+        logger.info(
+          { mint: baseMintStr, source, verificationSource, ageSeconds },
+          `[${source}] DexScreener verified token is new`
+        );
+      } else if (result.source === 'not_indexed') {
+        // Token not indexed on DexScreener - could be very new, proceed with caution
+        verificationSource = 'not-indexed';
+        verified = true;
+        stats.isNew++;
+
+        logger.info(
+          { mint: baseMintStr, source, verificationSource },
+          `[${source}] Token not indexed on DexScreener (may be very new) - proceeding`
+        );
+      } else {
+        // Token is too old or verification failed
+        verificationSource = 'dexscreener';
+        verified = false;
+        ageSeconds = result.ageSeconds ?? undefined;
+        rejectionReason = result.reason;
+        stats.tokenTooOld++;
+
+        logger.info(
+          { mint: baseMintStr, source, reason: result.reason, ageSeconds },
+          `[${source}] REJECTED: Token failed DexScreener verification`
+        );
+
+        // Emit rejection event for stats/debugging
+        this.emit('token-rejected', { mint: baseMint, source }, rejectionReason);
+        return;
+      }
+    } else {
+      // No verification available - proceed without checks
+      verificationSource = 'none';
+      verified = true;
+      stats.isNew++;
+
+      logger.debug(
+        { mint: baseMintStr, source },
+        `[${source}] No verification enabled - proceeding without checks`
+      );
+    }
+
+    // Build the DetectedToken object
+    const poolStateTyped = this.buildPoolState(source, poolState);
+
+    const detectedToken: DetectedToken = {
+      source,
+      mint: baseMint,
+      poolId,
+      quoteMint,
+      detectedAt: currentTime,
+      poolOpenTime,
+      ageSeconds,
+      inMintCache: mintCache.has(baseMint),
+      verificationSource,
+      verified,
+      rejectionReason,
+      poolState: poolStateTyped,
+    };
+
+    // Update stats and emit
+    stats.buyAttempted++;
+    this.emit('new-token', detectedToken);
+  }
+
+  /**
+   * Build typed pool state for DetectedToken
+   */
+  private buildPoolState(source: TokenSource, rawState: any) {
+    switch (source) {
+      case 'raydium-ammv4':
+        return { type: 'ammv4' as const, state: rawState };
+      case 'raydium-cpmm':
+        return { type: 'cpmm' as const, state: rawState };
+      case 'meteora-dlmm':
+        return { type: 'dlmm' as const, state: rawState };
+      default:
+        throw new Error(`Unknown source: ${source}`);
+    }
   }
 
   /**
@@ -230,13 +445,42 @@ export class Listeners extends EventEmitter {
   }
 
   /**
-   * Subscribe to Raydium pools
+   * Subscribe to Raydium AmmV4 pools
    */
-  private async subscribeToRaydiumPools(config: { quoteToken: Token }): Promise<number> {
+  private async subscribeToRaydiumPools(config: InternalListenerConfig): Promise<number> {
+    const stats = this.stats.ammv4;
+
     return this.connection.onProgramAccountChange(
       MAINNET_PROGRAM_ID.AmmV4,
-      async (updatedAccountInfo) => {
-        this.emit('pool', updatedAccountInfo);
+      async (updatedAccountInfo: KeyedAccountInfo) => {
+        stats.detected++;
+
+        try {
+          const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(updatedAccountInfo.accountInfo.data);
+          const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
+          const baseMint = poolState.baseMint;
+
+          // Check if pool is new enough
+          if (poolOpenTime <= config.verification.runTimestamp) {
+            return;
+          }
+
+          stats.isNew++;
+
+          // Verify and emit unified event
+          await this.verifyAndEmitToken(
+            'raydium-ammv4',
+            baseMint,
+            updatedAccountInfo.accountId,
+            config.quoteToken.mint,
+            poolOpenTime,
+            poolState,
+            stats
+          );
+        } catch (error) {
+          stats.errors++;
+          logger.trace({ error }, 'Failed to decode AmmV4 pool data');
+        }
       },
       this.connection.commitment,
       [
@@ -265,47 +509,22 @@ export class Listeners extends EventEmitter {
 
   /**
    * Subscribe to Raydium CPMM pools
-   * CPMM pools use a different program and layout than AmmV4
-   *
-   * Note: We only process pools that already have swap enabled (status bit 2).
-   * The WebSocket subscription will notify us when a pool's status changes,
-   * so there's no need for manual retries. If a pool is created with status 0
-   * and later gets swap enabled, we'll receive a new event at that time.
    */
-  private async subscribeToCpmmPools(config: { quoteToken: Token }): Promise<number> {
-    // CPMM uses mintA/mintB instead of baseMint/quoteMint
-    // The quote token (WSOL) can be in either mintA or mintB position
-    // We filter only by dataSize and do quote token filtering in the event handler
-    // This is more reliable than guessing memcmp offsets
-
-    // Diagnostic counters for debugging
-    let totalEvents = 0;
-    let decodeErrors = 0;
-    let noQuoteToken = 0;
-    let swapNotEnabled = 0;
-    let emitted = 0;
+  private async subscribeToCpmmPools(config: InternalListenerConfig): Promise<number> {
+    const stats = this.stats.cpmm;
 
     // Log stats every 60 seconds for diagnostics
-    setInterval(() => {
-      if (totalEvents > 0 || emitted > 0) {
+    const statsInterval = setInterval(() => {
+      if (stats.detected > 0) {
         logger.info(
-          {
-            totalEvents,
-            decodeErrors,
-            noQuoteToken,
-            swapNotEnabled,
-            emitted,
-          },
-          `CPMM listener stats (60s): raw=${totalEvents} | noQuote=${noQuoteToken} | swapDisabled=${swapNotEnabled} | decodeErr=${decodeErrors} | emitted=${emitted}`
+          { ...stats },
+          `CPMM listener stats (60s)`
         );
       }
-      // Reset counters
-      totalEvents = 0;
-      decodeErrors = 0;
-      noQuoteToken = 0;
-      swapNotEnabled = 0;
-      emitted = 0;
     }, 60000);
+
+    // Store interval for cleanup
+    (this as any)._cpmmStatsInterval = statsInterval;
 
     logger.info(
       {
@@ -318,10 +537,9 @@ export class Listeners extends EventEmitter {
 
     return this.connection.onProgramAccountChange(
       CPMM_PROGRAM_ID,
-      async (updatedAccountInfo) => {
-        totalEvents++;
+      async (updatedAccountInfo: KeyedAccountInfo) => {
+        stats.detected++;
 
-        // Decode and filter in handler - quote token can be mintA OR mintB
         try {
           const poolState = CpmmPoolInfoLayout.decode(updatedAccountInfo.accountInfo.data);
           const mintA = poolState.mintA;
@@ -329,27 +547,44 @@ export class Listeners extends EventEmitter {
           const quoteTokenMint = config.quoteToken.mint;
 
           // Check if either mint is our quote token
-          const hasQuoteToken = mintA.equals(quoteTokenMint) || mintB.equals(quoteTokenMint);
+          const isQuoteMintA = mintA.equals(quoteTokenMint);
+          const isQuoteMintB = mintB.equals(quoteTokenMint);
+          const hasQuoteToken = isQuoteMintA || isQuoteMintB;
 
-          if (hasQuoteToken) {
-            // Check if swap is enabled (status bit 2)
-            const status = poolState.status;
-            const swapEnabled = (status & 4) !== 0;
-
-            if (swapEnabled) {
-              emitted++;
-              // Swap is enabled - emit the pool for processing
-              this.emit('cpmm-pool', updatedAccountInfo);
-            } else {
-              swapNotEnabled++;
-            }
-            // Note: If swap is not enabled, we simply skip this event.
-            // The WebSocket will notify us again if/when the status changes.
-          } else {
-            noQuoteToken++;
+          if (!hasQuoteToken) {
+            return;
           }
+
+          // Check if swap is enabled (status bit 2)
+          const status = poolState.status;
+          const swapEnabled = (status & 4) !== 0;
+
+          if (!swapEnabled) {
+            return;
+          }
+
+          const poolOpenTime = parseInt(poolState.openTime.toString());
+          const baseMint = isQuoteMintA ? mintB : mintA;
+
+          // Check if pool is new enough
+          if (poolOpenTime <= config.verification.runTimestamp) {
+            return;
+          }
+
+          stats.isNew++;
+
+          // Verify and emit unified event
+          await this.verifyAndEmitToken(
+            'raydium-cpmm',
+            baseMint,
+            updatedAccountInfo.accountId,
+            quoteTokenMint,
+            poolOpenTime,
+            poolState,
+            stats
+          );
         } catch (error) {
-          decodeErrors++;
+          stats.errors++;
           logger.trace({ error }, 'Failed to decode CPMM pool data');
         }
       },
@@ -362,79 +597,44 @@ export class Listeners extends EventEmitter {
 
   /**
    * Subscribe to Meteora DLMM pools
-   * DLMM (Dynamic Liquidity Market Maker) is Meteora's bin-based AMM
-   *
-   * Note: We only process pools that are enabled (status = 1).
-   * The WebSocket subscription will notify us when a pool's status changes.
-   *
-   * IMPORTANT: DLMM LbPair accounts are much larger than our partial layout
-   * (~10KB+) due to bin arrays. We don't filter by dataSize and instead
-   * rely on the discriminator check in the decoder.
    */
-  private async subscribeToDlmmPools(config: { quoteToken: Token }): Promise<number> {
-    // DLMM uses tokenXMint/tokenYMint - the quote token can be in either position
-    // We don't filter by dataSize because LbPair accounts are much larger than our layout
-    // (they contain bin arrays). We filter by quote token + status in the handler.
-
-    // Diagnostic counters for debugging
-    let totalEvents = 0;
-    let tooSmall = 0;
-    let notLbPair = 0;
-    let decodeErrors = 0;
-    let noQuoteToken = 0;
-    let notEnabled = 0;
-    let emitted = 0;
+  private async subscribeToDlmmPools(config: InternalListenerConfig): Promise<number> {
+    const stats = this.stats.dlmm;
 
     // Log stats every 60 seconds for diagnostics
-    setInterval(() => {
-      if (totalEvents > 0 || emitted > 0) {
+    const statsInterval = setInterval(() => {
+      if (stats.detected > 0) {
         logger.info(
-          {
-            totalEvents,
-            tooSmall,
-            notLbPair,
-            decodeErrors,
-            noQuoteToken,
-            notEnabled,
-            emitted,
-          },
-          `DLMM listener stats (60s): raw=${totalEvents} | tooSmall=${tooSmall} | notLbPair=${notLbPair} | noQuote=${noQuoteToken} | notEnabled=${notEnabled} | decodeErr=${decodeErrors} | emitted=${emitted}`
+          { ...stats },
+          `DLMM listener stats (60s)`
         );
       }
-      // Reset counters
-      totalEvents = 0;
-      tooSmall = 0;
-      notLbPair = 0;
-      decodeErrors = 0;
-      noQuoteToken = 0;
-      notEnabled = 0;
-      emitted = 0;
     }, 60000);
+
+    // Store interval for cleanup
+    (this as any)._dlmmStatsInterval = statsInterval;
 
     logger.info(
       {
         programId: DLMM_PROGRAM_ID.toBase58(),
         quoteToken: config.quoteToken.mint.toBase58(),
       },
-      'Setting up Meteora DLMM pool subscription (no dataSize filter - LbPair accounts vary in size)'
+      'Setting up Meteora DLMM pool subscription'
     );
 
     return this.connection.onProgramAccountChange(
       DLMM_PROGRAM_ID,
-      async (updatedAccountInfo) => {
-        totalEvents++;
+      async (updatedAccountInfo: KeyedAccountInfo) => {
+        stats.detected++;
 
         // Only process accounts large enough to be LbPair accounts
-        // Need at least DLMM_MIN_ACCOUNT_SIZE bytes for essential field decoding
         if (updatedAccountInfo.accountInfo.data.length < DLMM_MIN_ACCOUNT_SIZE) {
-          tooSmall++;
-          return; // Skip small accounts (not LbPair)
+          return;
         }
 
-        // Check discriminator to ensure this is an LbPair account (not BinArray, Position, etc.)
+        // Check discriminator to ensure this is an LbPair account
         if (!isLbPairAccount(updatedAccountInfo.accountInfo.data)) {
-          notLbPair++;
-          return; // Skip non-LbPair accounts
+          return;
         }
 
         try {
@@ -443,62 +643,53 @@ export class Listeners extends EventEmitter {
           const tokenYMint = poolState.tokenYMint;
           const quoteTokenMint = config.quoteToken.mint;
 
-          // Debug: Log first few LbPair accounts to verify layout offsets
-          if (emitted === 0 && noQuoteToken < 3) {
-            const data = updatedAccountInfo.accountInfo.data;
-            const wsolMint = quoteTokenMint.toBase58();
-
-            // Search for WSOL at various offsets to find the correct position
-            let foundAt = 'not found';
-            for (let offset = 8; offset <= 500; offset += 1) {
-              try {
-                if (offset + 32 <= data.length) {
-                  const pk = new PublicKey(data.subarray(offset, offset + 32)).toBase58();
-                  if (pk === wsolMint) {
-                    foundAt = `offset ${offset}`;
-                    break;
-                  }
-                }
-              } catch (e) {}
-            }
-
-            const tokenX = tokenXMint.toBase58().slice(0, 12);
-            const tokenY = tokenYMint.toBase58().slice(0, 12);
-            const poolId = updatedAccountInfo.accountId.toBase58().slice(0, 8);
-
-            logger.info(
-              `DLMM DEBUG: pool=${poolId}... | WSOL_AT: ${foundAt} | tokenX@120=${tokenX}... | tokenY@152=${tokenY}... | status=${poolState.status} | activeId=${poolState.activeId} | len=${data.length}`
-            );
-          }
-
           // Check if either token is our quote token
-          // tokenXMint is at byte offset 120, tokenYMint at offset 152 (empirically verified)
-          const hasQuoteToken = tokenXMint.equals(quoteTokenMint) || tokenYMint.equals(quoteTokenMint);
+          const isQuoteX = tokenXMint.equals(quoteTokenMint);
+          const isQuoteY = tokenYMint.equals(quoteTokenMint);
+          const hasQuoteToken = isQuoteX || isQuoteY;
 
-          if (hasQuoteToken) {
-            // Check if pool is enabled for trading
-            const isEnabled = isDlmmPoolEnabled(poolState.status);
-
-            if (isEnabled) {
-              emitted++;
-              // Pool is enabled - emit for processing
-              this.emit('dlmm-pool', updatedAccountInfo);
-            } else {
-              notEnabled++;
-            }
-            // Note: If pool is not enabled, we skip this event.
-            // The WebSocket will notify us again if/when the status changes.
-          } else {
-            noQuoteToken++;
+          if (!hasQuoteToken) {
+            return;
           }
+
+          // Check if pool is enabled for trading
+          const isEnabled = isDlmmPoolEnabled(poolState.status);
+
+          if (!isEnabled) {
+            return;
+          }
+
+          const baseMint = isQuoteX ? tokenYMint : tokenXMint;
+          const activationPoint = parseInt(poolState.activationPoint.toString());
+
+          // For DLMM, use activationPoint as pool open time
+          // activationPoint === 0 means immediately active
+          const currentTimestamp = Math.floor(Date.now() / 1000);
+          const poolOpenTime = activationPoint === 0 ? currentTimestamp : activationPoint;
+
+          // Check if pool is new enough
+          if (activationPoint !== 0 && activationPoint <= config.verification.runTimestamp) {
+            return;
+          }
+
+          stats.isNew++;
+
+          // Verify and emit unified event
+          await this.verifyAndEmitToken(
+            'meteora-dlmm',
+            baseMint,
+            updatedAccountInfo.accountId,
+            quoteTokenMint,
+            poolOpenTime,
+            poolState,
+            stats
+          );
         } catch (error) {
-          decodeErrors++;
+          stats.errors++;
           logger.trace({ error, dataLength: updatedAccountInfo.accountInfo.data.length }, 'Failed to decode DLMM pool data');
         }
       },
       this.connection.commitment,
-      // No dataSize filter - LbPair accounts are much larger than our partial layout
-      // All filtering happens in the handler above
     );
   }
 
@@ -530,6 +721,14 @@ export class Listeners extends EventEmitter {
    * Clear all subscriptions
    */
   private async clearSubscriptions(): Promise<void> {
+    // Clear stats intervals
+    if ((this as any)._cpmmStatsInterval) {
+      clearInterval((this as any)._cpmmStatsInterval);
+    }
+    if ((this as any)._dlmmStatsInterval) {
+      clearInterval((this as any)._dlmmStatsInterval);
+    }
+
     for (const subscription of this.subscriptions) {
       try {
         await this.connection.removeAccountChangeListener(subscription);
