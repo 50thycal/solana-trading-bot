@@ -274,21 +274,27 @@ export interface DlmmPoolKeys {
 
 /**
  * DLMM pool status values
+ * The status field appears to be a bitmask in practice, not a simple enum.
+ * Observed values: 0 (disabled), 16, 32, 48, 168, etc.
  * Status = 0: Pool is disabled
- * Status = 1: Pool is enabled for trading
- * Status = 2: Pool is in bootstrap phase (pre-activation)
+ * Status > 0: Pool has some level of activation
  */
 export const DLMM_POOL_STATUS = {
   DISABLED: 0,
+  // Legacy values - actual status appears to be a bitmask
   ENABLED: 1,
   BOOTSTRAP: 2,
 };
 
 /**
  * Check if DLMM pool is enabled for trading
+ * In practice, status appears to be a bitmask where 0 = disabled
+ * and non-zero values indicate various enabled states.
  */
 export function isDlmmPoolEnabled(status: number): boolean {
-  return status === DLMM_POOL_STATUS.ENABLED;
+  // Status 0 is definitively disabled
+  // Any non-zero status indicates some level of activation
+  return status !== DLMM_POOL_STATUS.DISABLED;
 }
 
 /**
