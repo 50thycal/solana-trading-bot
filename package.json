@@ -5,6 +5,8 @@
   "version": "2.0.1",
   "scripts": {
     "start": "ts-node index.ts",
+    "start:prod": "node dist/bootstrap.js",
+    "build": "tsc",
     "tsc": "tsc --noEmit",
     "test-trade": "ts-node scripts/test-trade.ts"
   },

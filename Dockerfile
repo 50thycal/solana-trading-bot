@@ -15,8 +15,8 @@ RUN npm ci
 # Copy source files
 COPY . .
 
-# Build TypeScript (if build script exists)
-RUN npm run build 2>/dev/null || true
+# Build TypeScript to JavaScript for faster startup
+RUN npm run build
 
 # Runtime stage
 FROM node:20-alpine
@@ -33,23 +33,18 @@ WORKDIR /app
 # Copy dependencies from builder (includes compiled native modules)
 COPY --from=builder /app/node_modules ./node_modules
 
-# Copy source files (including bootstrap.ts entry point)
-COPY --from=builder /app/*.ts ./
-COPY --from=builder /app/*.json ./
-COPY --from=builder /app/cache ./cache
-COPY --from=builder /app/filters ./filters
-COPY --from=builder /app/helpers ./helpers
-COPY --from=builder /app/listeners ./listeners
-COPY --from=builder /app/transactions ./transactions
-COPY --from=builder /app/risk ./risk
-COPY --from=builder /app/persistence ./persistence
-COPY --from=builder /app/dashboard ./dashboard
-COPY --from=builder /app/scripts ./scripts
-COPY --from=builder /app/services ./services
-COPY --from=builder /app/types ./types
+# Copy compiled JavaScript from dist folder
+COPY --from=builder /app/dist ./dist
 
-# Copy health server
-COPY --from=builder /app/health.ts ./
+# Copy package.json for version info (already in dist from tsc)
+# COPY --from=builder /app/package.json ./
+
+# Copy dashboard public files to the correct location relative to compiled code
+# The compiled dashboard/server.js looks for public files in __dirname/public
+COPY --from=builder /app/dashboard/public ./dist/dashboard/public
+
+# Create snipe-list.txt in dist folder (snipe-list.cache.js looks for ../snipe-list.txt from dist/cache/)
+RUN touch ./dist/snipe-list.txt
 
 # Copy and setup entrypoint script for Railway volume permission handling
 COPY docker-entrypoint.sh /usr/local/bin/
@@ -57,9 +52,6 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Create data directory with correct permissions for SQLite database
 RUN mkdir -p ./data && chown -R botuser:botuser ./data
-
-# Create snipe-list.txt if it doesn't exist
-RUN touch ./snipe-list.txt && chown botuser:botuser ./snipe-list.txt
 
 # Set ownership of app directory
 RUN chown -R botuser:botuser /app
@@ -83,6 +75,6 @@ ENV DASHBOARD_PORT=8080
 # Entrypoint handles permission fixing and user switching
 ENTRYPOINT ["docker-entrypoint.sh"]
 
-# Run the bot using ts-node with transpile-only for faster startup
-# Using bootstrap.ts to ensure health server starts before config validation
-CMD ["npx", "ts-node", "--transpile-only", "bootstrap.ts"]
+# Run the pre-compiled JavaScript for instant startup
+# Using bootstrap.js to ensure health server starts before config validation
+CMD ["node", "dist/bootstrap.js"]
