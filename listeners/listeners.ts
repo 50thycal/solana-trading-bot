@@ -476,7 +476,8 @@ export class Listeners extends EventEmitter {
           }
 
           // Check if pool is new enough
-          if (poolOpenTime <= config.verification.runTimestamp) {
+          // poolOpenTime === 0 means immediately active (no scheduled opening)
+          if (poolOpenTime !== 0 && poolOpenTime <= config.verification.runTimestamp) {
             return;
           }
 
@@ -590,7 +591,8 @@ export class Listeners extends EventEmitter {
           }
 
           // Check if pool is new enough
-          if (poolOpenTime <= config.verification.runTimestamp) {
+          // poolOpenTime === 0 means immediately active (no scheduled opening)
+          if (poolOpenTime !== 0 && poolOpenTime <= config.verification.runTimestamp) {
             return;
           }
 
