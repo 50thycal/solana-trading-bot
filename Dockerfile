@@ -33,7 +33,7 @@ WORKDIR /app
 # Copy dependencies from builder (includes compiled native modules)
 COPY --from=builder /app/node_modules ./node_modules
 
-# Copy source files
+# Copy source files (including bootstrap.ts entry point)
 COPY --from=builder /app/*.ts ./
 COPY --from=builder /app/*.json ./
 COPY --from=builder /app/cache ./cache
@@ -84,4 +84,5 @@ ENV DASHBOARD_PORT=8080
 ENTRYPOINT ["docker-entrypoint.sh"]
 
 # Run the bot using ts-node with transpile-only for faster startup
-CMD ["npx", "ts-node", "--transpile-only", "index.ts"]
+# Using bootstrap.ts to ensure health server starts before config validation
+CMD ["npx", "ts-node", "--transpile-only", "bootstrap.ts"]

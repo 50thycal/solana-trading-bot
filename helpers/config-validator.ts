@@ -401,7 +401,9 @@ export function validateConfig(): ValidatedConfig {
     logger.error('');
     logger.error('Please check your .env file and fix the above issues.');
     logger.error('Refer to .env.example for a complete configuration template.');
-    process.exit(1);
+    // Throw error instead of process.exit() to allow bootstrap health server to report the issue
+    const errorMessages = errors.map(e => `${e.variable}: ${e.message}`).join('; ');
+    throw new Error(`Configuration validation failed: ${errorMessages}`);
   }
 
   const config: ValidatedConfig = {
