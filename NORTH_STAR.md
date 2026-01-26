@@ -8,7 +8,7 @@ The goal is **clarity over cleverness**: a deterministic, observable, and audita
 
 ---
 
-## High-Level Objective
+## High-Level Objective 
 
 Build an **automated Solana trading bot** that:
 
