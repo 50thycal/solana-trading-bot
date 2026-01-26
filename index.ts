@@ -673,12 +673,12 @@ const runListener = async () => {
           break;
 
         case 'cpmm':
-          poolCache.save(token.poolId!.toString(), token.poolState.state as any);
+          // Note: CPMM uses mintA/mintB, not compatible with poolCache (designed for AmmV4)
           await bot.buyCpmm(token.poolId!, token.poolState.state);
           break;
 
         case 'dlmm':
-          poolCache.save(token.poolId!.toString(), token.poolState.state as any);
+          // Note: DLMM uses tokenXMint/tokenYMint, not compatible with poolCache (designed for AmmV4)
           await bot.buyDlmm(token.poolId!, token.poolState.state);
           break;
 
