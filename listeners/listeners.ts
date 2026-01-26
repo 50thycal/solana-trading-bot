@@ -115,6 +115,10 @@ export class Listeners extends EventEmitter {
     dlmm: createEmptyPlatformStats(),
   };
 
+  // Deduplication: track pools we've already processed to avoid repeat events
+  // onProgramAccountChange fires on ANY update to an account, not just creation
+  private processedPools: Set<string> = new Set();
+
   constructor(
     private connection: Connection,
     reconnectionConfig?: Partial<ReconnectionConfig>
@@ -462,14 +466,22 @@ export class Listeners extends EventEmitter {
 
         try {
           const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(updatedAccountInfo.accountInfo.data);
+          const poolId = updatedAccountInfo.accountId.toString();
           const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
           const baseMint = poolState.baseMint;
+
+          // Deduplication check - only process each pool once
+          if (this.processedPools.has(poolId)) {
+            return;
+          }
 
           // Check if pool is new enough
           if (poolOpenTime <= config.verification.runTimestamp) {
             return;
           }
 
+          // Mark pool as processed
+          this.processedPools.add(poolId);
           stats.isNew++;
 
           // Verify and emit unified event
@@ -568,14 +580,22 @@ export class Listeners extends EventEmitter {
             return;
           }
 
+          const poolId = updatedAccountInfo.accountId.toString();
           const poolOpenTime = parseInt(poolState.openTime.toString());
           const baseMint = isQuoteMintA ? mintB : mintA;
+
+          // Deduplication check - only process each pool once
+          if (this.processedPools.has(poolId)) {
+            return;
+          }
 
           // Check if pool is new enough
           if (poolOpenTime <= config.verification.runTimestamp) {
             return;
           }
 
+          // Mark pool as processed
+          this.processedPools.add(poolId);
           stats.isNew++;
 
           // Verify and emit unified event
@@ -665,7 +685,15 @@ export class Listeners extends EventEmitter {
           }
 
           const baseMint = isQuoteX ? tokenYMint : tokenXMint;
+          const poolId = updatedAccountInfo.accountId.toString();
           const activationPoint = parseInt(poolState.activationPoint.toString());
+
+          // CRITICAL: Deduplication check
+          // onProgramAccountChange fires on ANY update to an account (trades, liquidity, etc.)
+          // We only want to process each pool ONCE
+          if (this.processedPools.has(poolId)) {
+            return;
+          }
 
           // For DLMM, use activationPoint as pool open time
           // activationPoint === 0 means immediately active
@@ -677,6 +705,8 @@ export class Listeners extends EventEmitter {
             return;
           }
 
+          // Mark pool as processed BEFORE any async operations
+          this.processedPools.add(poolId);
           stats.isNew++;
 
           // Verify and emit unified event
