@@ -193,6 +193,11 @@ export class Listeners extends EventEmitter {
       return;
     }
 
+    // Brief delay to allow Helius mint detection to catch up
+    // Pool detection can be faster than mint detection, causing race conditions
+    const MINT_CACHE_DELAY_MS = 150;
+    await new Promise(resolve => setTimeout(resolve, MINT_CACHE_DELAY_MS));
+
     // Determine verification source and status
     let verificationSource: VerificationSource = 'none';
     let verified = false;
