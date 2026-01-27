@@ -74,6 +74,11 @@ import {
   ENABLE_PUMPFUN_DETECTION,
   DEXSCREENER_FALLBACK_ENABLED,
   PUMP_FUN_ONLY_MODE,
+  PUMPFUN_MIN_SOL_IN_CURVE,
+  PUMPFUN_MAX_SOL_IN_CURVE,
+  PUMPFUN_ENABLE_MIN_SOL_FILTER,
+  PUMPFUN_ENABLE_MAX_SOL_FILTER,
+  PUMPFUN_MIN_SCORE_REQUIRED,
 } from './helpers';
 // verifyTokenAge is now called internally by listeners
 import {
@@ -104,6 +109,11 @@ import {
   getStateStore,
   closeStateStore,
 } from './persistence';
+import {
+  initPumpFunFilters,
+  getPumpFunFilters,
+  PumpFunFilterContext,
+} from './filters';
 
 // Global references for graceful shutdown
 let listeners: Listeners | null = null;
@@ -440,6 +450,27 @@ const runListener = async () => {
     );
   } else {
     logger.warn('State store NOT available - running without persistence');
+  }
+
+  // === Initialize pump.fun Filters ===
+  if (ENABLE_PUMPFUN_DETECTION) {
+    initPumpFunFilters({
+      minSolInCurve: PUMPFUN_MIN_SOL_IN_CURVE,
+      maxSolInCurve: PUMPFUN_MAX_SOL_IN_CURVE,
+      enableMinSolFilter: PUMPFUN_ENABLE_MIN_SOL_FILTER,
+      enableMaxSolFilter: PUMPFUN_ENABLE_MAX_SOL_FILTER,
+      minScoreRequired: PUMPFUN_MIN_SCORE_REQUIRED,
+    });
+    logger.info(
+      {
+        minSolInCurve: PUMPFUN_MIN_SOL_IN_CURVE,
+        maxSolInCurve: PUMPFUN_MAX_SOL_IN_CURVE,
+        enableMinSolFilter: PUMPFUN_ENABLE_MIN_SOL_FILTER,
+        enableMaxSolFilter: PUMPFUN_ENABLE_MAX_SOL_FILTER,
+        minScoreRequired: PUMPFUN_MIN_SCORE_REQUIRED,
+      },
+      'pump.fun filters initialized'
+    );
   }
 
   // === Initialize Risk Systems (Phase 2) ===
@@ -959,6 +990,75 @@ const runListener = async () => {
             });
           }
           return;
+        }
+
+        // ════════════════════════════════════════════════════════════════════════
+        // SAFETY CHECK 4: pump.fun Filters
+        // ════════════════════════════════════════════════════════════════════════
+        const pumpFunFilters = getPumpFunFilters();
+        if (pumpFunFilters) {
+          const filterContext: PumpFunFilterContext = {
+            mint: token.mint,
+            bondingCurve: token.bondingCurve!,
+            bondingCurveState,
+            creator: token.creator,
+            name: token.name,
+            symbol: token.symbol,
+            detectedAt: Date.now(),
+          };
+
+          const filterResults = await pumpFunFilters.execute(filterContext);
+
+          if (!filterResults.allPassed) {
+            logger.info(
+              {
+                mint: baseMintStr,
+                summary: filterResults.summary,
+                filters: filterResults.filters.map((f) => ({
+                  name: f.filterName,
+                  passed: f.passed,
+                  reason: f.reason,
+                })),
+              },
+              '[pump.fun] Token rejected by filters'
+            );
+
+            if (stateStore) {
+              stateStore.recordSeenPool({
+                poolId: bondingCurveStr,
+                tokenMint: baseMintStr,
+                actionTaken: 'filtered',
+                filterReason: filterResults.summary,
+              });
+              stateStore.recordPoolDetection({
+                poolId: bondingCurveStr,
+                tokenMint: baseMintStr,
+                action: 'filtered',
+                poolType: 'pumpfun',
+                filterResults: filterResults.filters.map((f) => ({
+                  filterName: f.filterName,
+                  passed: f.passed,
+                  reason: f.reason,
+                  actualValue: String(f.actualValue || ''),
+                  expectedValue: String(f.thresholdValue || ''),
+                })),
+                riskCheckPassed: false,
+                riskCheckReason: filterResults.summary,
+                summary: `[pump.fun] Filtered: ${filterResults.summary}`,
+              });
+            }
+            return;
+          }
+
+          // Log successful filter pass with score
+          logger.info(
+            {
+              mint: baseMintStr,
+              score: filterResults.normalizedScore,
+              summary: filterResults.summary,
+            },
+            '[pump.fun] Token passed all filters'
+          );
         }
 
         // ════════════════════════════════════════════════════════════════════════

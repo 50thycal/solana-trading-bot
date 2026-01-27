@@ -152,6 +152,16 @@ export const DEXSCREENER_RATE_LIMIT = config.dexscreenerRateLimit;
 export const PUMP_FUN_ONLY_MODE = config.pumpFunOnlyMode;
 
 // ============================================================================
+// PUMP.FUN FILTERS
+// Filter configuration specific to pump.fun bonding curve tokens
+// ============================================================================
+export const PUMPFUN_MIN_SOL_IN_CURVE = config.pumpfunMinSolInCurve;
+export const PUMPFUN_MAX_SOL_IN_CURVE = config.pumpfunMaxSolInCurve;
+export const PUMPFUN_ENABLE_MIN_SOL_FILTER = config.pumpfunEnableMinSolFilter;
+export const PUMPFUN_ENABLE_MAX_SOL_FILTER = config.pumpfunEnableMaxSolFilter;
+export const PUMPFUN_MIN_SCORE_REQUIRED = config.pumpfunMinScoreRequired;
+
+// ============================================================================
 // LOGGING
 // ============================================================================
 

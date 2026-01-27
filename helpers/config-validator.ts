@@ -104,6 +104,13 @@ export interface ValidatedConfig {
 
   // Focused Mode (Scope Reduction)
   pumpFunOnlyMode: boolean;
+
+  // pump.fun Filters
+  pumpfunMinSolInCurve: number;
+  pumpfunMaxSolInCurve: number;
+  pumpfunEnableMinSolFilter: boolean;
+  pumpfunEnableMaxSolFilter: boolean;
+  pumpfunMinScoreRequired: number;
 }
 
 interface ValidationError {
@@ -378,6 +385,25 @@ export function validateConfig(): ValidatedConfig {
   // This simplifies the bot to a single pipeline for focused iteration.
   const pumpFunOnlyMode = requireBoolean('PUMP_FUN_ONLY_MODE', true);
 
+  // === PUMP.FUN FILTERS ===
+  const pumpfunMinSolInCurve = requireNumber('PUMPFUN_MIN_SOL_IN_CURVE', 5);
+  if (pumpfunMinSolInCurve < 0) {
+    errors.push({ variable: 'PUMPFUN_MIN_SOL_IN_CURVE', message: 'PUMPFUN_MIN_SOL_IN_CURVE cannot be negative' });
+  }
+
+  const pumpfunMaxSolInCurve = requireNumber('PUMPFUN_MAX_SOL_IN_CURVE', 300);
+  if (pumpfunMaxSolInCurve <= pumpfunMinSolInCurve) {
+    errors.push({ variable: 'PUMPFUN_MAX_SOL_IN_CURVE', message: 'PUMPFUN_MAX_SOL_IN_CURVE must be greater than PUMPFUN_MIN_SOL_IN_CURVE' });
+  }
+
+  const pumpfunEnableMinSolFilter = requireBoolean('PUMPFUN_ENABLE_MIN_SOL_FILTER', true);
+  const pumpfunEnableMaxSolFilter = requireBoolean('PUMPFUN_ENABLE_MAX_SOL_FILTER', true);
+
+  const pumpfunMinScoreRequired = requireNumber('PUMPFUN_MIN_SCORE_REQUIRED', 0);
+  if (pumpfunMinScoreRequired < 0 || pumpfunMinScoreRequired > 100) {
+    errors.push({ variable: 'PUMPFUN_MIN_SCORE_REQUIRED', message: 'PUMPFUN_MIN_SCORE_REQUIRED must be between 0 and 100' });
+  }
+
   // Validate private key format (base58)
   if (privateKey) {
     try {
@@ -482,6 +508,11 @@ export function validateConfig(): ValidatedConfig {
     dexscreenerFallbackEnabled,
     dexscreenerRateLimit,
     pumpFunOnlyMode,
+    pumpfunMinSolInCurve,
+    pumpfunMaxSolInCurve,
+    pumpfunEnableMinSolFilter,
+    pumpfunEnableMaxSolFilter,
+    pumpfunMinScoreRequired,
   };
 
   // Log dry run mode warning
