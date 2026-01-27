@@ -192,7 +192,8 @@ export class Listeners extends EventEmitter {
     const currentTime = Math.floor(Date.now() / 1000);
 
     // Check if pool is new (created after bot startup)
-    if (poolOpenTime <= verification.runTimestamp) {
+    // poolOpenTime === 0 means immediately active (no scheduled opening), so allow those through
+    if (poolOpenTime !== 0 && poolOpenTime <= verification.runTimestamp) {
       stats.isNew--; // Wasn't actually new
       return;
     }
