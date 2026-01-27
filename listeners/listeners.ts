@@ -213,7 +213,7 @@ export class Listeners extends EventEmitter {
     if (mintCache.has(baseMint)) {
       verificationSource = 'mint-cache';
       verified = true;
-      stats.isNew++;
+      // Note: isNew already incremented by subscription handler
 
       logger.info(
         { mint: baseMintStr, source, verificationSource },
@@ -232,7 +232,7 @@ export class Listeners extends EventEmitter {
         verificationSource = 'dexscreener';
         verified = true;
         ageSeconds = result.ageSeconds ?? undefined;
-        stats.isNew++;
+        // Note: isNew already incremented by subscription handler
 
         logger.info(
           { mint: baseMintStr, source, verificationSource, ageSeconds },
@@ -242,7 +242,7 @@ export class Listeners extends EventEmitter {
         // Token not indexed on DexScreener - could be very new, proceed with caution
         verificationSource = 'not-indexed';
         verified = true;
-        stats.isNew++;
+        // Note: isNew already incremented by subscription handler
 
         logger.info(
           { mint: baseMintStr, source, verificationSource },
@@ -269,7 +269,7 @@ export class Listeners extends EventEmitter {
       // No verification available - proceed without checks
       verificationSource = 'none';
       verified = true;
-      stats.isNew++;
+      // Note: isNew already incremented by subscription handler
 
       logger.debug(
         { mint: baseMintStr, source },
