@@ -180,12 +180,14 @@ export class PumpFunListener extends EventEmitter {
 
     // Look for "Create" instruction in the logs
     // pump.fun logs "Instruction: Create" when a new token is created
+    // IMPORTANT: Must match EXACTLY - not "CreateTokenAccount" or "CreateIdempotent"
     const logMessages = logs.logs || [];
     let hasCreate = false;
     let createLogLine = '';
 
     for (const log of logMessages) {
-      if (log.includes('Program log: Instruction: Create')) {
+      // Exact match for token creation - NOT CreateTokenAccount, CreateIdempotent, etc.
+      if (log === 'Program log: Instruction: Create') {
         hasCreate = true;
         createLogLine = log;
         break;
