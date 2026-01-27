@@ -27,12 +27,12 @@ export type BlacklistType = 'token' | 'creator';
 /**
  * Action taken on a seen pool
  */
-export type PoolAction = 'bought' | 'filtered' | 'blacklisted' | 'skipped' | 'error';
+export type PoolAction = 'bought' | 'filtered' | 'blacklisted' | 'skipped' | 'error' | 'buy_attempted' | 'buy_failed';
 
 /**
- * Pool type - AmmV4 (Raydium legacy), CPMM (Raydium new), DLMM (Meteora)
+ * Pool type - AmmV4 (Raydium legacy), CPMM (Raydium new), DLMM (Meteora), pumpfun (bonding curve)
  */
-export type PoolType = 'AmmV4' | 'CPMM' | 'DLMM';
+export type PoolType = 'AmmV4' | 'CPMM' | 'DLMM' | 'pumpfun';
 
 /**
  * Persisted position record

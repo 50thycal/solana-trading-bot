@@ -146,6 +146,12 @@ export const DEXSCREENER_FALLBACK_ENABLED = config.dexscreenerFallbackEnabled;
 export const DEXSCREENER_RATE_LIMIT = config.dexscreenerRateLimit;
 
 // ============================================================================
+// FOCUSED MODE (Scope Reduction)
+// When true, ONLY pump.fun detection runs. All other detection systems are disabled.
+// ============================================================================
+export const PUMP_FUN_ONLY_MODE = config.pumpFunOnlyMode;
+
+// ============================================================================
 // LOGGING
 // ============================================================================
 
