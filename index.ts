@@ -73,6 +73,7 @@ import {
   ENABLE_HELIUS_MINT_DETECTION,
   ENABLE_PUMPFUN_DETECTION,
   DEXSCREENER_FALLBACK_ENABLED,
+  PUMP_FUN_ONLY_MODE,
 } from './helpers';
 // verifyTokenAge is now called internally by listeners
 import {
@@ -94,6 +95,9 @@ import {
   initPositionMonitor,
   getPositionMonitor,
   TriggerEvent,
+  initPumpFunPositionMonitor,
+  getPumpFunPositionMonitor,
+  PumpFunTriggerEvent,
 } from './risk';
 import {
   initStateStore,
@@ -156,6 +160,14 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
 
   logger.info(`Wallet: ${wallet.publicKey.toString()}`);
 
+  logger.info('- Mode -');
+  if (PUMP_FUN_ONLY_MODE) {
+    logger.info('*** PUMP.FUN ONLY MODE - Single pipeline focus ***');
+    logger.info('Raydium/Meteora detection: DISABLED');
+  } else {
+    logger.info('Multi-DEX mode: ENABLED');
+  }
+
   logger.info('- Bot -');
 
   logger.info(
@@ -169,10 +181,12 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   }
 
   logger.info(`Single token at the time: ${botConfig.oneTokenAtATime}`);
-  logger.info(`Pre load existing markets: ${PRE_LOAD_EXISTING_MARKETS}`);
-  logger.info(`Cache new markets: ${CACHE_NEW_MARKETS}`);
-  logger.info(`CPMM pools enabled: ${ENABLE_CPMM}`);
-  logger.info(`DLMM pools enabled: ${ENABLE_DLMM}`);
+  if (!PUMP_FUN_ONLY_MODE) {
+    logger.info(`Pre load existing markets: ${PRE_LOAD_EXISTING_MARKETS}`);
+    logger.info(`Cache new markets: ${CACHE_NEW_MARKETS}`);
+    logger.info(`CPMM pools enabled: ${ENABLE_CPMM}`);
+    logger.info(`DLMM pools enabled: ${ENABLE_DLMM}`);
+  }
   logger.info(`Log level: ${LOG_LEVEL}`);
   logger.info(`Health check port: ${HEALTH_PORT}`);
 
@@ -246,11 +260,17 @@ async function gracefulShutdown(signal: string): Promise<void> {
   logger.info({ signal }, 'Received shutdown signal, cleaning up...');
 
   try {
-    // Stop position monitor first
+    // Stop position monitors first
     const positionMonitor = getPositionMonitor();
     if (positionMonitor) {
-      logger.info('Stopping position monitor...');
+      logger.info('Stopping Raydium position monitor...');
       positionMonitor.stop();
+    }
+
+    const pumpFunMonitor = getPumpFunPositionMonitor();
+    if (pumpFunMonitor) {
+      logger.info('Stopping pump.fun position monitor...');
+      pumpFunMonitor.stop();
     }
 
     // Stop listeners
@@ -440,7 +460,7 @@ const runListener = async () => {
   const pnlTracker = getPnlTracker();
   await pnlTracker.init();
 
-  // Initialize position monitor (independent monitoring loop)
+  // Initialize position monitor (independent monitoring loop) - for Raydium pools
   const positionMonitor = initPositionMonitor(connection, quoteToken, {
     checkIntervalMs: PRICE_CHECK_INTERVAL,
     takeProfit: TAKE_PROFIT,
@@ -463,6 +483,41 @@ const runListener = async () => {
     // The sell will be triggered by wallet balance change detection
     // Position monitor just logs the trigger, the wallet listener handles the actual sell
     // This is because the sell needs the actual token balance from the wallet
+  });
+
+  // Initialize pump.fun position monitor (for bonding curve positions)
+  const pumpFunMonitor = initPumpFunPositionMonitor(connection, wallet, {
+    checkIntervalMs: PRICE_CHECK_INTERVAL,
+    takeProfit: TAKE_PROFIT,
+    stopLoss: STOP_LOSS,
+    maxHoldDurationMs: MAX_HOLD_DURATION_MS,
+  });
+
+  // Set up pump.fun position monitor handlers
+  pumpFunMonitor.on('trigger', async (event: PumpFunTriggerEvent) => {
+    logger.info(
+      {
+        type: event.type,
+        tokenMint: event.position.tokenMint,
+        pnlPercent: `${event.pnlPercent >= 0 ? '+' : ''}${event.pnlPercent.toFixed(2)}%`,
+        currentValue: `${event.currentValueSol.toFixed(4)} SOL`,
+        reason: event.reason,
+      },
+      `[pump.fun] Position trigger: ${event.type}`,
+    );
+  });
+
+  pumpFunMonitor.on('sell-complete', (data: { tokenMint: string; signature: string; exitValueSol: number; pnlPercent: number; reason: string }) => {
+    logger.info(
+      {
+        mint: data.tokenMint,
+        signature: data.signature,
+        exitValueSol: data.exitValueSol.toFixed(4),
+        pnlPercent: `${data.pnlPercent >= 0 ? '+' : ''}${data.pnlPercent.toFixed(2)}%`,
+        reason: data.reason,
+      },
+      '[pump.fun] Position sell complete',
+    );
   });
 
   // === Startup Recovery (Phase 3) ===
@@ -530,17 +585,18 @@ const runListener = async () => {
     }
   }
 
-  // Start position monitor
+  // Start position monitors
   positionMonitor.start();
-  logger.info('Risk control systems initialized');
+  pumpFunMonitor.start();
+  logger.info('Risk control systems initialized (Raydium + pump.fun monitors active)');
 
   // === Initialize Mint Detection (Phase 0) ===
   // Initialize mint cache with TTL from config
   initMintCache(MAX_TOKEN_AGE_SECONDS);
   logger.info({ ttlSeconds: MAX_TOKEN_AGE_SECONDS }, 'Mint cache initialized');
 
-  // Start mint listener if enabled
-  if (ENABLE_HELIUS_MINT_DETECTION) {
+  // Start mint listener if enabled AND not in pump.fun-only mode
+  if (ENABLE_HELIUS_MINT_DETECTION && !PUMP_FUN_ONLY_MODE) {
     mintListener = initMintListener(connection);
 
     mintListener.on('mint-detected', (mint, signature, source) => {
@@ -556,6 +612,8 @@ const runListener = async () => {
 
     await mintListener.start();
     logger.info('Helius mint detection listener started');
+  } else if (PUMP_FUN_ONLY_MODE) {
+    logger.info('Helius mint detection disabled (PUMP_FUN_ONLY_MODE=true)');
   } else {
     logger.info('Helius mint detection disabled - using fallback token age validation');
   }
@@ -575,153 +633,172 @@ const runListener = async () => {
     logger.info('pump.fun detection disabled');
   }
 
-  if (PRE_LOAD_EXISTING_MARKETS) {
-    await marketCache.init({ quoteToken });
-  }
-
-  const runTimestamp = Math.floor(new Date().getTime() / 1000);
-
-  // Initialize listeners with reconnection support
-  // Stats are now tracked internally by listeners via getStats()
-  listeners = new Listeners(connection);
-
-  // Connect listener events to health server
-  if (dashboardServer) {
-    listeners.on('connected', () => {
-      dashboardServer!.setWebSocketConnected(true);
-    });
-
-    listeners.on('disconnected', () => {
-      dashboardServer!.setWebSocketConnected(false);
-    });
-
-    listeners.on('reconnecting', ({ attempt, delay }) => {
-      logger.info({ attempt, delay }, 'WebSocket reconnecting...');
-    });
-  }
-
-  // Start listeners with verification config
-  const verificationConfig: VerificationConfig = {
-    maxTokenAgeSeconds: MAX_TOKEN_AGE_SECONDS,
-    dexscreenerFallbackEnabled: DEXSCREENER_FALLBACK_ENABLED,
-    runTimestamp,
-  };
-
-  await listeners.start({
-    walletPublicKey: wallet.publicKey,
-    quoteToken,
-    autoSell: AUTO_SELL,
-    cacheNewMarkets: CACHE_NEW_MARKETS,
-    enableCpmm: ENABLE_CPMM,
-    enableDlmm: ENABLE_DLMM,
-    verification: verificationConfig,
-  });
-
-  // Update health server status
-  if (dashboardServer) {
-    dashboardServer.setWebSocketConnected(true);
-    dashboardServer.setRpcHealthy(true);
-  }
-
-  listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
-    const marketState = MARKET_STATE_LAYOUT_V3.decode(updatedAccountInfo.accountInfo.data);
-    marketCache.save(updatedAccountInfo.accountId.toString(), marketState);
-
-    // Record activity
-    if (dashboardServer) {
-      dashboardServer.recordWebSocketActivity();
-    }
-  });
-
   // ══════════════════════════════════════════════════════════════════════════════
-  // UNIFIED 'new-token' EVENT HANDLER
-  // All platforms (Raydium AmmV4, CPMM, Meteora DLMM) emit this single event
-  // Verification (mint cache + DexScreener) is handled inside the listeners
+  // RAYDIUM / METEORA LISTENERS (Skip in pump.fun-only mode)
   // ══════════════════════════════════════════════════════════════════════════════
-  listeners.on('new-token', async (token: DetectedToken) => {
-    // Record activity
+  if (!PUMP_FUN_ONLY_MODE) {
+    if (PRE_LOAD_EXISTING_MARKETS) {
+      await marketCache.init({ quoteToken });
+    }
+
+    const runTimestamp = Math.floor(new Date().getTime() / 1000);
+
+    // Initialize listeners with reconnection support
+    // Stats are now tracked internally by listeners via getStats()
+    listeners = new Listeners(connection);
+
+    // Connect listener events to health server
     if (dashboardServer) {
-      dashboardServer.recordWebSocketActivity();
+      listeners.on('connected', () => {
+        dashboardServer!.setWebSocketConnected(true);
+      });
+
+      listeners.on('disconnected', () => {
+        dashboardServer!.setWebSocketConnected(false);
+      });
+
+      listeners.on('reconnecting', ({ attempt, delay }) => {
+        logger.info({ attempt, delay }, 'WebSocket reconnecting...');
+      });
     }
 
-    const sourceName = getSourceDisplayName(token.source);
-    const baseMintStr = token.mint.toString();
+    // Start listeners with verification config
+    const verificationConfig: VerificationConfig = {
+      maxTokenAgeSeconds: MAX_TOKEN_AGE_SECONDS,
+      dexscreenerFallbackEnabled: DEXSCREENER_FALLBACK_ENABLED,
+      runTimestamp,
+    };
 
-    logger.info(
-      {
-        mint: baseMintStr,
-        source: token.source,
-        poolId: token.poolId?.toString(),
-        verificationSource: token.verificationSource,
-        ageSeconds: token.ageSeconds,
-        inMintCache: token.inMintCache,
-      },
-      `[${sourceName}] New token verified - executing buy`
-    );
+    await listeners.start({
+      walletPublicKey: wallet.publicKey,
+      quoteToken,
+      autoSell: AUTO_SELL,
+      cacheNewMarkets: CACHE_NEW_MARKETS,
+      enableCpmm: ENABLE_CPMM,
+      enableDlmm: ENABLE_DLMM,
+      verification: verificationConfig,
+    });
 
-    if (!bot) {
-      logger.error({ mint: baseMintStr }, 'Bot not initialized');
-      return;
+    // Update health server status
+    if (dashboardServer) {
+      dashboardServer.setWebSocketConnected(true);
+      dashboardServer.setRpcHealthy(true);
     }
 
-    try {
-      // Execute buy based on pool type
-      switch (token.poolState.type) {
-        case 'ammv4':
-          poolCache.save(token.poolId!.toString(), token.poolState.state);
-          await bot.buy(token.poolId!, token.poolState.state);
-          break;
+    listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
+      const marketState = MARKET_STATE_LAYOUT_V3.decode(updatedAccountInfo.accountInfo.data);
+      marketCache.save(updatedAccountInfo.accountId.toString(), marketState);
 
-        case 'cpmm':
-          // Note: CPMM uses mintA/mintB, not compatible with poolCache (designed for AmmV4)
-          await bot.buyCpmm(token.poolId!, token.poolState.state);
-          break;
-
-        case 'dlmm':
-          // Note: DLMM uses tokenXMint/tokenYMint, not compatible with poolCache (designed for AmmV4)
-          await bot.buyDlmm(token.poolId!, token.poolState.state);
-          break;
-
-        default:
-          logger.warn({ source: token.source }, 'Unknown pool type in DEX handler');
+      // Record activity
+      if (dashboardServer) {
+        dashboardServer.recordWebSocketActivity();
       }
-    } catch (error) {
-      logger.error({ error, mint: baseMintStr, source: token.source }, 'Error executing buy');
-    }
-  });
+    });
 
-  // Token rejection handler (for stats/debugging)
-  listeners.on('token-rejected', (partialToken: Partial<DetectedToken>, reason: string) => {
-    logger.debug(
-      {
-        mint: partialToken.mint?.toString(),
-        source: partialToken.source,
-        reason,
-      },
-      'Token rejected during verification'
-    );
-  });
+    // ════════════════════════════════════════════════════════════════════════════
+    // UNIFIED 'new-token' EVENT HANDLER
+    // All platforms (Raydium AmmV4, CPMM, Meteora DLMM) emit this single event
+    // Verification (mint cache + DexScreener) is handled inside the listeners
+    // ════════════════════════════════════════════════════════════════════════════
+    listeners.on('new-token', async (token: DetectedToken) => {
+      // Record activity
+      if (dashboardServer) {
+        dashboardServer.recordWebSocketActivity();
+      }
 
-  listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {
-    const accountData = AccountLayout.decode(updatedAccountInfo.accountInfo.data);
+      const sourceName = getSourceDisplayName(token.source);
+      const baseMintStr = token.mint.toString();
 
-    // Record activity
+      logger.info(
+        {
+          mint: baseMintStr,
+          source: token.source,
+          poolId: token.poolId?.toString(),
+          verificationSource: token.verificationSource,
+          ageSeconds: token.ageSeconds,
+          inMintCache: token.inMintCache,
+        },
+        `[${sourceName}] New token verified - executing buy`
+      );
+
+      if (!bot) {
+        logger.error({ mint: baseMintStr }, 'Bot not initialized');
+        return;
+      }
+
+      try {
+        // Execute buy based on pool type
+        switch (token.poolState.type) {
+          case 'ammv4':
+            poolCache.save(token.poolId!.toString(), token.poolState.state);
+            await bot.buy(token.poolId!, token.poolState.state);
+            break;
+
+          case 'cpmm':
+            // Note: CPMM uses mintA/mintB, not compatible with poolCache (designed for AmmV4)
+            await bot.buyCpmm(token.poolId!, token.poolState.state);
+            break;
+
+          case 'dlmm':
+            // Note: DLMM uses tokenXMint/tokenYMint, not compatible with poolCache (designed for AmmV4)
+            await bot.buyDlmm(token.poolId!, token.poolState.state);
+            break;
+
+          default:
+            logger.warn({ source: token.source }, 'Unknown pool type in DEX handler');
+        }
+      } catch (error) {
+        logger.error({ error, mint: baseMintStr, source: token.source }, 'Error executing buy');
+      }
+    });
+
+    // Token rejection handler (for stats/debugging)
+    listeners.on('token-rejected', (partialToken: Partial<DetectedToken>, reason: string) => {
+      logger.debug(
+        {
+          mint: partialToken.mint?.toString(),
+          source: partialToken.source,
+          reason,
+        },
+        'Token rejected during verification'
+      );
+    });
+
+    listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {
+      const accountData = AccountLayout.decode(updatedAccountInfo.accountInfo.data);
+
+      // Record activity
+      if (dashboardServer) {
+        dashboardServer.recordWebSocketActivity();
+      }
+
+      if (accountData.mint.equals(quoteToken.mint)) {
+        return;
+      }
+
+      if (bot) {
+        await bot.sell(updatedAccountInfo.accountId, accountData);
+      }
+    });
+
+    logger.info('Raydium/Meteora listeners started');
+  } else {
+    logger.info('═══════════════════════════════════════════════════════════════════════');
+    logger.info('PUMP_FUN_ONLY_MODE is ENABLED');
+    logger.info('Raydium AmmV4, CPMM, and Meteora DLMM detection is DISABLED');
+    logger.info('Only pump.fun bonding curve detection is active');
+    logger.info('═══════════════════════════════════════════════════════════════════════');
+
+    // Update health server status (pump.fun listener is WebSocket-based)
     if (dashboardServer) {
-      dashboardServer.recordWebSocketActivity();
+      dashboardServer.setRpcHealthy(true);
     }
-
-    if (accountData.mint.equals(quoteToken.mint)) {
-      return;
-    }
-
-    if (bot) {
-      await bot.sell(updatedAccountInfo.accountId, accountData);
-    }
-  });
+  }
 
   // ══════════════════════════════════════════════════════════════════════════════
   // PUMP.FUN UNIFIED 'new-token' HANDLER
   // pump.fun listener also emits 'new-token' with DetectedToken interface
+  // Full pipeline: detection → safety checks → buy → position tracking
   // ══════════════════════════════════════════════════════════════════════════════
   if (pumpFunListener) {
     pumpFunListener.on('new-token', async (token: DetectedToken) => {
@@ -736,32 +813,157 @@ const runListener = async () => {
       }
 
       const baseMintStr = token.mint.toString();
+      const bondingCurveStr = token.bondingCurve?.toString() || 'unknown';
+      const stateStore = getStateStore();
+      const tradeAmount = Number(QUOTE_AMOUNT);
 
       logger.info(
         {
           mint: baseMintStr,
           name: token.name || 'Unknown',
           symbol: token.symbol || 'Unknown',
-          bondingCurve: token.bondingCurve?.toString(),
+          bondingCurve: bondingCurveStr,
           creator: token.creator?.toString(),
         },
         '[pump.fun] New token detected on bonding curve'
       );
 
-      // Verify bonding curve is active and not graduated
+      // ════════════════════════════════════════════════════════════════════════
+      // SAFETY CHECK 1: Already seen/processed
+      // ════════════════════════════════════════════════════════════════════════
+      if (stateStore) {
+        // Check if we've already processed this bonding curve (use as pool ID)
+        if (stateStore.hasSeenPool(bondingCurveStr)) {
+          logger.debug({ bondingCurve: bondingCurveStr, mint: baseMintStr }, '[pump.fun] Skipping - bonding curve already processed');
+          return;
+        }
+
+        // Check if we already have an open position for this token
+        if (stateStore.hasOpenPosition(baseMintStr)) {
+          logger.debug({ mint: baseMintStr }, '[pump.fun] Skipping buy - already have open position');
+          stateStore.recordSeenPool({
+            poolId: bondingCurveStr,
+            tokenMint: baseMintStr,
+            actionTaken: 'skipped',
+            filterReason: 'Already have open position',
+          });
+          return;
+        }
+
+        // Check for pending buy trade (idempotency)
+        const pendingTrade = stateStore.getPendingTradeForToken(baseMintStr, 'buy');
+        if (pendingTrade) {
+          logger.debug({ mint: baseMintStr, tradeId: pendingTrade.id }, '[pump.fun] Skipping buy - pending trade exists');
+          return;
+        }
+      }
+
+      // ════════════════════════════════════════════════════════════════════════
+      // SAFETY CHECK 2: Blacklist
+      // ════════════════════════════════════════════════════════════════════════
+      const blacklist = getBlacklist();
+      if (blacklist.isTokenBlacklisted(baseMintStr)) {
+        logger.debug({ mint: baseMintStr }, '[pump.fun] Skipping buy - token is blacklisted');
+        if (stateStore) {
+          stateStore.recordSeenPool({
+            poolId: bondingCurveStr,
+            tokenMint: baseMintStr,
+            actionTaken: 'blacklisted',
+            filterReason: 'Token is blacklisted',
+          });
+          stateStore.recordPoolDetection({
+            poolId: bondingCurveStr,
+            tokenMint: baseMintStr,
+            action: 'blacklisted',
+            poolType: 'pumpfun',
+            filterResults: [],
+            riskCheckPassed: false,
+            riskCheckReason: 'Token is blacklisted',
+            summary: '[pump.fun] Blacklisted token - skipped',
+          });
+        }
+        return;
+      }
+
+      // Check creator blacklist if available
+      if (token.creator && blacklist.isCreatorBlacklisted(token.creator.toString())) {
+        logger.debug({ mint: baseMintStr, creator: token.creator.toString() }, '[pump.fun] Skipping buy - creator is blacklisted');
+        if (stateStore) {
+          stateStore.recordSeenPool({
+            poolId: bondingCurveStr,
+            tokenMint: baseMintStr,
+            actionTaken: 'blacklisted',
+            filterReason: 'Creator is blacklisted',
+          });
+        }
+        return;
+      }
+
+      // ════════════════════════════════════════════════════════════════════════
+      // SAFETY CHECK 3: Exposure and balance limits
+      // ════════════════════════════════════════════════════════════════════════
+      const exposureManager = getExposureManager();
+      if (exposureManager) {
+        const exposureCheck = await exposureManager.canTrade(tradeAmount);
+
+        if (!exposureCheck.allowed) {
+          logger.warn({ mint: baseMintStr, reason: exposureCheck.reason }, '[pump.fun] Skipping buy - risk limit exceeded');
+          if (stateStore) {
+            stateStore.recordSeenPool({
+              poolId: bondingCurveStr,
+              tokenMint: baseMintStr,
+              actionTaken: 'skipped',
+              filterReason: exposureCheck.reason || 'Risk limit exceeded',
+            });
+            stateStore.recordPoolDetection({
+              poolId: bondingCurveStr,
+              tokenMint: baseMintStr,
+              action: 'skipped',
+              poolType: 'pumpfun',
+              filterResults: [],
+              riskCheckPassed: false,
+              riskCheckReason: exposureCheck.reason || 'Risk limit exceeded',
+              summary: `[pump.fun] Risk limit: ${exposureCheck.reason || 'Exposure limit exceeded'}`,
+            });
+          }
+          return;
+        }
+      }
+
+      // ════════════════════════════════════════════════════════════════════════
+      // VERIFY BONDING CURVE STATE
+      // ════════════════════════════════════════════════════════════════════════
       try {
         const bondingCurveState = await getBondingCurveState(connection, token.bondingCurve!);
         if (!bondingCurveState) {
           logger.warn({ mint: baseMintStr }, '[pump.fun] Could not get bonding curve state');
+          if (stateStore) {
+            stateStore.recordSeenPool({
+              poolId: bondingCurveStr,
+              tokenMint: baseMintStr,
+              actionTaken: 'skipped',
+              filterReason: 'Could not fetch bonding curve state',
+            });
+          }
           return;
         }
 
         if (bondingCurveState.complete) {
-          logger.info({ mint: baseMintStr }, '[pump.fun] Token already graduated from bonding curve');
+          logger.info({ mint: baseMintStr }, '[pump.fun] Token already graduated from bonding curve - skipping');
+          if (stateStore) {
+            stateStore.recordSeenPool({
+              poolId: bondingCurveStr,
+              tokenMint: baseMintStr,
+              actionTaken: 'skipped',
+              filterReason: 'Token already graduated',
+            });
+          }
           return;
         }
 
-        // Execute buy on pump.fun bonding curve
+        // ════════════════════════════════════════════════════════════════════════
+        // EXECUTE BUY
+        // ════════════════════════════════════════════════════════════════════════
         logger.info(
           {
             mint: baseMintStr,
@@ -769,22 +971,45 @@ const runListener = async () => {
             symbol: token.symbol || 'Unknown',
             virtualSolReserves: bondingCurveState.virtualSolReserves.toString(),
             virtualTokenReserves: bondingCurveState.virtualTokenReserves.toString(),
+            amountSol: tradeAmount,
           },
-          '[pump.fun] Executing buy on bonding curve'
+          '[pump.fun] All checks passed - executing buy on bonding curve'
         );
+
+        // Record that we're processing this pool BEFORE the buy attempt
+        if (stateStore) {
+          stateStore.recordSeenPool({
+            poolId: bondingCurveStr,
+            tokenMint: baseMintStr,
+            actionTaken: 'buy_attempted',
+          });
+        }
 
         if (DRY_RUN) {
           logger.info(
-            { mint: baseMintStr, amountSol: QUOTE_AMOUNT.toString() },
+            { mint: baseMintStr, amountSol: tradeAmount },
             '[pump.fun] DRY RUN - would have bought token'
           );
+
+          // Record simulated position for dry run
+          if (stateStore) {
+            stateStore.recordPoolDetection({
+              poolId: bondingCurveStr,
+              tokenMint: baseMintStr,
+              action: 'bought',
+              poolType: 'pumpfun',
+              filterResults: [],
+              riskCheckPassed: true,
+              summary: '[pump.fun] DRY RUN - simulated buy',
+            });
+          }
         } else {
           const buyResult = await buyOnPumpFun({
             connection,
             wallet,
             mint: token.mint,
             bondingCurve: token.bondingCurve!,
-            amountSol: Number(QUOTE_AMOUNT),
+            amountSol: tradeAmount,
             slippageBps: BUY_SLIPPAGE * 100,
             computeUnitLimit: COMPUTE_UNIT_LIMIT,
             computeUnitPrice: COMPUTE_UNIT_PRICE,
@@ -796,9 +1021,81 @@ const runListener = async () => {
                 mint: baseMintStr,
                 signature: buyResult.signature,
                 tokensReceived: buyResult.tokensReceived,
-                amountSol: QUOTE_AMOUNT.toString(),
+                amountSol: tradeAmount,
               },
               '[pump.fun] Buy successful'
+            );
+
+            // ════════════════════════════════════════════════════════════════════
+            // RECORD POSITION
+            // ════════════════════════════════════════════════════════════════════
+            const pnlTracker = getPnlTracker();
+            const entryTimestamp = Date.now();
+
+            // Record buy in P&L tracker
+            pnlTracker.recordBuy({
+              tokenMint: baseMintStr,
+              amountSol: tradeAmount,
+              amountToken: buyResult.tokensReceived || 0,
+              txSignature: buyResult.signature || '',
+              poolId: bondingCurveStr,
+            });
+
+            // Record position in state store
+            if (stateStore) {
+              const tokensReceived = buyResult.tokensReceived || 0;
+              const entryPrice = tokensReceived > 0 ? tradeAmount / tokensReceived : 0;
+              stateStore.createPosition({
+                tokenMint: baseMintStr,
+                poolId: bondingCurveStr,
+                amountSol: tradeAmount,
+                amountToken: tokensReceived,
+                entryPrice,
+              });
+
+              stateStore.recordPoolDetection({
+                poolId: bondingCurveStr,
+                tokenMint: baseMintStr,
+                action: 'bought',
+                poolType: 'pumpfun',
+                filterResults: [],
+                riskCheckPassed: true,
+                summary: `[pump.fun] Buy successful: ${buyResult.tokensReceived} tokens for ${tradeAmount} SOL`,
+              });
+            }
+
+            // Add to exposure manager
+            if (exposureManager) {
+              exposureManager.addPosition({
+                tokenMint: baseMintStr,
+                entryAmountSol: tradeAmount,
+                currentValueSol: tradeAmount, // Initial value = entry
+                entryTimestamp,
+                poolId: bondingCurveStr,
+              });
+            }
+
+            // Add to pump.fun position monitor for TP/SL monitoring
+            const pumpFunMonitorInstance = getPumpFunPositionMonitor();
+            if (pumpFunMonitorInstance) {
+              pumpFunMonitorInstance.addPosition({
+                tokenMint: baseMintStr,
+                bondingCurve: bondingCurveStr,
+                entryAmountSol: tradeAmount,
+                tokenAmount: buyResult.tokensReceived || 0,
+                entryTimestamp,
+                buySignature: buyResult.signature || '',
+              });
+            }
+
+            logger.info(
+              {
+                mint: baseMintStr,
+                signature: buyResult.signature,
+                tokensReceived: buyResult.tokensReceived,
+                amountSol: tradeAmount,
+              },
+              '[pump.fun] Position recorded - monitoring for sell triggers'
             );
           } else {
             logger.error(
@@ -808,10 +1105,32 @@ const runListener = async () => {
               },
               '[pump.fun] Buy failed'
             );
+
+            // Record failed buy
+            if (stateStore) {
+              stateStore.recordPoolDetection({
+                poolId: bondingCurveStr,
+                tokenMint: baseMintStr,
+                action: 'buy_failed',
+                poolType: 'pumpfun',
+                filterResults: [],
+                riskCheckPassed: true,
+                riskCheckReason: buyResult.error,
+                summary: `[pump.fun] Buy failed: ${buyResult.error}`,
+              });
+            }
           }
         }
       } catch (error) {
         logger.error({ error, mint: baseMintStr }, '[pump.fun] Error processing token');
+        if (stateStore) {
+          stateStore.recordSeenPool({
+            poolId: bondingCurveStr,
+            tokenMint: baseMintStr,
+            actionTaken: 'error',
+            filterReason: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          });
+        }
       }
     });
   }

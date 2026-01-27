@@ -101,6 +101,9 @@ export interface ValidatedConfig {
   // DexScreener Fallback (Token Monitoring Phase 2)
   dexscreenerFallbackEnabled: boolean;
   dexscreenerRateLimit: number;
+
+  // Focused Mode (Scope Reduction)
+  pumpFunOnlyMode: boolean;
 }
 
 interface ValidationError {
@@ -370,6 +373,11 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'DEXSCREENER_RATE_LIMIT', message: 'DEXSCREENER_RATE_LIMIT must be between 1 and 300' });
   }
 
+  // === FOCUSED MODE (Scope Reduction) ===
+  // When true, ONLY pump.fun detection runs. All other detection (Raydium, Meteora, Helius) is disabled.
+  // This simplifies the bot to a single pipeline for focused iteration.
+  const pumpFunOnlyMode = requireBoolean('PUMP_FUN_ONLY_MODE', true);
+
   // Validate private key format (base58)
   if (privateKey) {
     try {
@@ -473,6 +481,7 @@ export function validateConfig(): ValidatedConfig {
     enablePumpfunDetection,
     dexscreenerFallbackEnabled,
     dexscreenerRateLimit,
+    pumpFunOnlyMode,
   };
 
   // Log dry run mode warning
