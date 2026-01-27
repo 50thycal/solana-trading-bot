@@ -182,10 +182,12 @@ export class PumpFunListener extends EventEmitter {
     // pump.fun logs "Instruction: Create" when a new token is created
     const logMessages = logs.logs || [];
     let hasCreate = false;
+    let createLogLine = '';
 
     for (const log of logMessages) {
       if (log.includes('Program log: Instruction: Create')) {
         hasCreate = true;
+        createLogLine = log;
         break;
       }
     }
@@ -193,6 +195,18 @@ export class PumpFunListener extends EventEmitter {
     if (!hasCreate) {
       return;
     }
+
+    // DEBUG: Log all the log messages for Create transactions
+    logger.info(
+      {
+        signature,
+        createLogLine,
+        allLogs: logMessages.filter(l =>
+          l.includes('Program log:') || l.includes('Instruction:')
+        ),
+      },
+      '[pump.fun DEBUG] Create instruction detected in logs'
+    );
 
     this.stats.createInstructionsDetected++;
     this.platformStats.detected++;
@@ -316,7 +330,18 @@ export class PumpFunListener extends EventEmitter {
       const instructions = tx.transaction.message.instructions;
       const accountKeys = tx.transaction.message.accountKeys;
 
+      // DEBUG: Log all account keys in the transaction
+      logger.debug(
+        {
+          signature,
+          accountKeyCount: accountKeys.length,
+          accountKeys: accountKeys.slice(0, 15).map((k, i) => `[${i}] ${k.pubkey.toString()}`),
+        },
+        '[pump.fun DEBUG] Transaction account keys'
+      );
+
       // Find the pump.fun program instruction
+      let ixIndex = 0;
       for (const ix of instructions) {
         // Check if this is a pump.fun instruction (unparsed)
         if (!('parsed' in ix) && 'programId' in ix) {
@@ -326,12 +351,47 @@ export class PumpFunListener extends EventEmitter {
             // Get the accounts from this instruction
             const accounts = ix.accounts;
 
+            // DEBUG: Log all accounts for this instruction
+            logger.info(
+              {
+                signature,
+                ixIndex,
+                accountCount: accounts.length,
+                accounts: accounts.map((a, i) => `[${i}] ${a.toString()}`),
+              },
+              '[pump.fun DEBUG] pump.fun instruction accounts'
+            );
+
             if (accounts.length >= 8) {
               // Extract key accounts based on the layout
               const mint = accounts[0];
               const bondingCurve = accounts[2];
               const associatedBondingCurve = accounts[3];
               const creator = accounts[7];
+
+              // DEBUG: Log extracted values
+              logger.info(
+                {
+                  signature,
+                  extractedMint: mint.toString(),
+                  extractedBondingCurve: bondingCurve.toString(),
+                  extractedAssociatedBondingCurve: associatedBondingCurve.toString(),
+                  extractedCreator: creator.toString(),
+                  isPumpFunGlobal: mint.equals(PUMP_FUN_GLOBAL),
+                  isMintAProgram: mint.toString().length < 44, // Programs have shorter addresses
+                },
+                '[pump.fun DEBUG] Extracted accounts from assumed layout'
+              );
+
+              // VALIDATION: Skip if mint is actually PUMP_FUN_GLOBAL (wrong instruction)
+              if (mint.equals(PUMP_FUN_GLOBAL)) {
+                logger.warn(
+                  { signature, mint: mint.toString() },
+                  '[pump.fun] Skipping - mint is PUMP_FUN_GLOBAL (wrong instruction type)'
+                );
+                ixIndex++;
+                continue;
+              }
 
               // Try to extract metadata from inner instructions or logs
               const { name, symbol, uri } = this.extractMetadataFromLogs(tx);
@@ -350,9 +410,11 @@ export class PumpFunListener extends EventEmitter {
             }
           }
         }
+        ixIndex++;
       }
 
       // If we couldn't find it in outer instructions, check inner instructions
+      logger.debug({ signature }, '[pump.fun DEBUG] Checking inner instructions');
       const innerInstructions = tx.meta?.innerInstructions || [];
       for (const innerIx of innerInstructions) {
         for (const ix of innerIx.instructions) {
@@ -361,10 +423,31 @@ export class PumpFunListener extends EventEmitter {
 
             if (programId.equals(PUMP_FUN_PROGRAM) && ix.accounts.length >= 8) {
               const accounts = ix.accounts;
+
+              // DEBUG: Log inner instruction accounts
+              logger.info(
+                {
+                  signature,
+                  innerIxIndex: innerIx.index,
+                  accountCount: accounts.length,
+                  accounts: accounts.map((a, i) => `[${i}] ${a.toString()}`),
+                },
+                '[pump.fun DEBUG] Inner pump.fun instruction accounts'
+              );
+
               const mint = accounts[0];
               const bondingCurve = accounts[2];
               const associatedBondingCurve = accounts[3];
               const creator = accounts[7];
+
+              // Skip if mint is PUMP_FUN_GLOBAL
+              if (mint.equals(PUMP_FUN_GLOBAL)) {
+                logger.warn(
+                  { signature },
+                  '[pump.fun] Skipping inner instruction - mint is PUMP_FUN_GLOBAL'
+                );
+                continue;
+              }
 
               const { name, symbol, uri } = this.extractMetadataFromLogs(tx);
 
@@ -386,12 +469,28 @@ export class PumpFunListener extends EventEmitter {
 
       // Fallback: Try to extract from post token balances
       // The newly created mint should appear in postTokenBalances
+      logger.debug({ signature }, '[pump.fun DEBUG] Using postTokenBalances fallback');
       const postBalances = tx.meta?.postTokenBalances || [];
       if (postBalances.length > 0) {
+        // DEBUG: Log post token balances
+        logger.info(
+          {
+            signature,
+            postBalanceCount: postBalances.length,
+            mints: postBalances.map((b, i) => `[${i}] ${b.mint}`),
+          },
+          '[pump.fun DEBUG] Post token balances'
+        );
+
         // The first new token balance is likely our new mint
         for (const balance of postBalances) {
           if (balance.mint) {
             const mint = new PublicKey(balance.mint);
+
+            // Skip known constants
+            if (mint.equals(PUMP_FUN_GLOBAL) || mint.equals(WSOL_MINT)) {
+              continue;
+            }
 
             // Derive bonding curve PDA
             const [bondingCurve] = PublicKey.findProgramAddressSync(
@@ -403,6 +502,16 @@ export class PumpFunListener extends EventEmitter {
 
             // Get creator from fee payer
             const creator = accountKeys[0].pubkey;
+
+            logger.info(
+              {
+                signature,
+                mint: mint.toString(),
+                bondingCurve: bondingCurve.toString(),
+                creator: creator.toString(),
+              },
+              '[pump.fun DEBUG] Extracted from postTokenBalances fallback'
+            );
 
             return {
               mint,
@@ -419,6 +528,7 @@ export class PumpFunListener extends EventEmitter {
         }
       }
 
+      logger.warn({ signature }, '[pump.fun DEBUG] Failed to extract token from transaction');
       return null;
     } catch (error) {
       logger.debug({ signature, error }, 'Failed to parse pump.fun create transaction');
