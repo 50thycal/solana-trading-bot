@@ -1,4 +1,7 @@
 import { Connection, PublicKey, Logs, ParsedTransactionWithMeta } from '@solana/web3.js';
+import { getTokenMetadata, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
+import { getPdaMetadataKey } from '@raydium-io/raydium-sdk';
+import { getMetadataAccountDataSerializer } from '@metaplex-foundation/mpl-token-metadata';
 import { EventEmitter } from 'events';
 import { getMintCache } from '../cache/mint.cache';
 import { logger } from '../helpers/logger';
@@ -253,6 +256,18 @@ export class PumpFunListener extends EventEmitter {
         this.stats.lastDetectedAt = Date.now();
         this.platformStats.isNew++;
 
+        // Try to fetch Token-2022 metadata if name/symbol not extracted from logs
+        let tokenName = token.name;
+        let tokenSymbol = token.symbol;
+        let tokenUri = token.uri;
+
+        if (!tokenName || !tokenSymbol) {
+          const metadata = await this.fetchTokenMetadata(token.mint);
+          if (metadata.name) tokenName = metadata.name;
+          if (metadata.symbol) tokenSymbol = metadata.symbol;
+          if (metadata.uri && !tokenUri) tokenUri = metadata.uri;
+        }
+
         // Build the unified DetectedToken
         const currentTime = Math.floor(Date.now() / 1000);
 
@@ -268,9 +283,9 @@ export class PumpFunListener extends EventEmitter {
           bondingCurve: token.bondingCurve,
           associatedBondingCurve: token.associatedBondingCurve,
           quoteMint: WSOL_MINT,
-          name: token.name || undefined,
-          symbol: token.symbol || undefined,
-          uri: token.uri || undefined,
+          name: tokenName || undefined,
+          symbol: tokenSymbol || undefined,
+          uri: tokenUri || undefined,
           creator: token.creator,
           detectedAt: currentTime,
           inMintCache: true, // We just added it
@@ -290,8 +305,8 @@ export class PumpFunListener extends EventEmitter {
         logger.info(
           {
             mint: token.mint.toString(),
-            name: token.name,
-            symbol: token.symbol,
+            name: tokenName,
+            symbol: tokenSymbol,
             bondingCurve: token.bondingCurve.toString(),
             creator: token.creator.toString(),
             signature,
@@ -575,6 +590,92 @@ export class PumpFunListener extends EventEmitter {
     }
 
     return { name, symbol, uri };
+  }
+
+  /**
+   * Fetch token metadata from on-chain accounts
+   *
+   * Tries multiple sources:
+   * 1. Metaplex Token Metadata (for SPL tokens using Create instruction)
+   * 2. Token-2022 embedded metadata (for CreateV2 tokens)
+   */
+  private async fetchTokenMetadata(mint: PublicKey): Promise<{
+    name: string;
+    symbol: string;
+    uri: string;
+  }> {
+    // Try Metaplex metadata first (most pump.fun SPL tokens use this)
+    try {
+      const metadataPDA = getPdaMetadataKey(mint);
+      const metadataAccount = await this.connection.getAccountInfo(
+        metadataPDA.publicKey,
+        'confirmed'
+      );
+
+      if (metadataAccount?.data) {
+        const serializer = getMetadataAccountDataSerializer();
+        const [metadata] = serializer.deserialize(metadataAccount.data);
+
+        if (metadata.name || metadata.symbol) {
+          // Metaplex metadata has null-padded strings, trim them
+          const name = metadata.name.replace(/\0/g, '').trim();
+          const symbol = metadata.symbol.replace(/\0/g, '').trim();
+          const uri = metadata.uri.replace(/\0/g, '').trim();
+
+          logger.debug(
+            {
+              mint: mint.toString(),
+              name,
+              symbol,
+              uri,
+            },
+            '[pump.fun] Fetched Metaplex metadata'
+          );
+
+          return { name, symbol, uri };
+        }
+      }
+    } catch (error) {
+      logger.debug(
+        { mint: mint.toString(), error: String(error) },
+        '[pump.fun] Could not fetch Metaplex metadata'
+      );
+    }
+
+    // Fallback: Try Token-2022 metadata (for CreateV2 tokens)
+    try {
+      const metadata = await getTokenMetadata(
+        this.connection,
+        mint,
+        'confirmed',
+        TOKEN_2022_PROGRAM_ID
+      );
+
+      if (metadata) {
+        logger.debug(
+          {
+            mint: mint.toString(),
+            name: metadata.name,
+            symbol: metadata.symbol,
+            uri: metadata.uri,
+          },
+          '[pump.fun] Fetched Token-2022 metadata'
+        );
+
+        return {
+          name: metadata.name || '',
+          symbol: metadata.symbol || '',
+          uri: metadata.uri || '',
+        };
+      }
+    } catch (error) {
+      logger.debug(
+        { mint: mint.toString(), error: String(error) },
+        '[pump.fun] Could not fetch Token-2022 metadata'
+      );
+    }
+
+    return { name: '', symbol: '', uri: '' };
   }
 
   /**
