@@ -1,4 +1,5 @@
 import { Connection, PublicKey, Logs, ParsedTransactionWithMeta } from '@solana/web3.js';
+import { getTokenMetadata, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
 import { EventEmitter } from 'events';
 import { getMintCache } from '../cache/mint.cache';
 import { logger } from '../helpers/logger';
@@ -253,6 +254,18 @@ export class PumpFunListener extends EventEmitter {
         this.stats.lastDetectedAt = Date.now();
         this.platformStats.isNew++;
 
+        // Try to fetch Token-2022 metadata if name/symbol not extracted from logs
+        let tokenName = token.name;
+        let tokenSymbol = token.symbol;
+        let tokenUri = token.uri;
+
+        if (!tokenName || !tokenSymbol) {
+          const metadata = await this.fetchToken2022Metadata(token.mint);
+          if (metadata.name) tokenName = metadata.name;
+          if (metadata.symbol) tokenSymbol = metadata.symbol;
+          if (metadata.uri && !tokenUri) tokenUri = metadata.uri;
+        }
+
         // Build the unified DetectedToken
         const currentTime = Math.floor(Date.now() / 1000);
 
@@ -268,9 +281,9 @@ export class PumpFunListener extends EventEmitter {
           bondingCurve: token.bondingCurve,
           associatedBondingCurve: token.associatedBondingCurve,
           quoteMint: WSOL_MINT,
-          name: token.name || undefined,
-          symbol: token.symbol || undefined,
-          uri: token.uri || undefined,
+          name: tokenName || undefined,
+          symbol: tokenSymbol || undefined,
+          uri: tokenUri || undefined,
           creator: token.creator,
           detectedAt: currentTime,
           inMintCache: true, // We just added it
@@ -290,8 +303,8 @@ export class PumpFunListener extends EventEmitter {
         logger.info(
           {
             mint: token.mint.toString(),
-            name: token.name,
-            symbol: token.symbol,
+            name: tokenName,
+            symbol: tokenSymbol,
             bondingCurve: token.bondingCurve.toString(),
             creator: token.creator.toString(),
             signature,
@@ -575,6 +588,53 @@ export class PumpFunListener extends EventEmitter {
     }
 
     return { name, symbol, uri };
+  }
+
+  /**
+   * Fetch Token-2022 metadata from the mint account
+   *
+   * pump.fun CreateV2 tokens use Token-2022 with embedded metadata.
+   * This fetches the actual name/symbol from the on-chain metadata.
+   */
+  private async fetchToken2022Metadata(mint: PublicKey): Promise<{
+    name: string;
+    symbol: string;
+    uri: string;
+  }> {
+    try {
+      const metadata = await getTokenMetadata(
+        this.connection,
+        mint,
+        'confirmed',
+        TOKEN_2022_PROGRAM_ID
+      );
+
+      if (metadata) {
+        logger.debug(
+          {
+            mint: mint.toString(),
+            name: metadata.name,
+            symbol: metadata.symbol,
+            uri: metadata.uri,
+          },
+          '[pump.fun] Fetched Token-2022 metadata'
+        );
+
+        return {
+          name: metadata.name || '',
+          symbol: metadata.symbol || '',
+          uri: metadata.uri || '',
+        };
+      }
+    } catch (error) {
+      // Token might not be Token-2022 or metadata not available
+      logger.debug(
+        { mint: mint.toString(), error: String(error) },
+        '[pump.fun] Could not fetch Token-2022 metadata (may be SPL token)'
+      );
+    }
+
+    return { name: '', symbol: '', uri: '' };
   }
 
   /**
