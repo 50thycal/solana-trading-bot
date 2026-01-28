@@ -887,7 +887,7 @@ const runListener = async () => {
       // ════════════════════════════════════════════════════════════════════════
       const detectionEvent: DetectionEvent = {
         signature: token.signature || `detection-${Date.now()}`,
-        slot: token.slot || 0,
+        slot: (token as unknown as { slot?: number }).slot || 0,
         mint: token.mint,
         bondingCurve: token.bondingCurve!,
         associatedBondingCurve: token.associatedBondingCurve!,
