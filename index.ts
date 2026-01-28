@@ -114,6 +114,11 @@ import {
   getPumpFunFilters,
   PumpFunFilterContext,
 } from './filters';
+import {
+  initPipeline,
+  getPipeline,
+  DetectionEvent,
+} from './pipeline';
 
 // Global references for graceful shutdown
 let listeners: Listeners | null = null;
@@ -491,6 +496,24 @@ const runListener = async () => {
   const pnlTracker = getPnlTracker();
   await pnlTracker.init();
 
+  // === Initialize pump.fun Pipeline ===
+  if (ENABLE_PUMPFUN_DETECTION) {
+    const tradeAmount = Number(QUOTE_AMOUNT);
+    initPipeline(connection, wallet, {
+      cheapGates: {
+        tradeAmountSol: tradeAmount,
+        allowToken2022: false,
+        skipMintInfoCheck: false,
+      },
+      deepFilters: {
+        skipBondingCurveCheck: false,
+        skipFilters: false,
+      },
+      verbose: LOG_LEVEL === 'debug' || LOG_LEVEL === 'trace',
+    });
+    logger.info('[pipeline] pump.fun processing pipeline initialized');
+  }
+
   // Initialize position monitor (independent monitoring loop) - for Raydium pools
   const positionMonitor = initPositionMonitor(connection, quoteToken, {
     checkIntervalMs: PRICE_CHECK_INTERVAL,
@@ -828,8 +851,8 @@ const runListener = async () => {
 
   // ══════════════════════════════════════════════════════════════════════════════
   // PUMP.FUN UNIFIED 'new-token' HANDLER
-  // pump.fun listener also emits 'new-token' with DetectedToken interface
-  // Full pipeline: detection → safety checks → buy → position tracking
+  // Uses the Pipeline abstraction for clear stage boundaries
+  // Flow: Detection → Cheap Gates → Deep Filters → Execute
   // ══════════════════════════════════════════════════════════════════════════════
   if (pumpFunListener) {
     pumpFunListener.on('new-token', async (token: DetectedToken) => {
@@ -860,242 +883,166 @@ const runListener = async () => {
       );
 
       // ════════════════════════════════════════════════════════════════════════
-      // SAFETY CHECK 1: Already seen/processed
+      // STAGE 1: Create DetectionEvent from DetectedToken
       // ════════════════════════════════════════════════════════════════════════
-      if (stateStore) {
-        // Check if we've already processed this bonding curve (use as pool ID)
-        if (stateStore.hasSeenPool(bondingCurveStr)) {
-          logger.debug({ bondingCurve: bondingCurveStr, mint: baseMintStr }, '[pump.fun] Skipping - bonding curve already processed');
-          return;
-        }
+      const detectionEvent: DetectionEvent = {
+        signature: token.signature || `detection-${Date.now()}`,
+        slot: (token as unknown as { slot?: number }).slot || 0,
+        mint: token.mint,
+        bondingCurve: token.bondingCurve!,
+        associatedBondingCurve: token.associatedBondingCurve!,
+        creator: token.creator || null,
+        name: token.name,
+        symbol: token.symbol,
+        rawLogs: [], // Not available at this level
+        detectedAt: Date.now(),
+        source: 'websocket',
+      };
 
-        // Check if we already have an open position for this token
-        if (stateStore.hasOpenPosition(baseMintStr)) {
-          logger.debug({ mint: baseMintStr }, '[pump.fun] Skipping buy - already have open position');
-          stateStore.recordSeenPool({
-            poolId: bondingCurveStr,
-            tokenMint: baseMintStr,
-            actionTaken: 'skipped',
-            filterReason: 'Already have open position',
-          });
-          return;
-        }
-
-        // Check for pending buy trade (idempotency)
-        const pendingTrade = stateStore.getPendingTradeForToken(baseMintStr, 'buy');
-        if (pendingTrade) {
-          logger.debug({ mint: baseMintStr, tradeId: pendingTrade.id }, '[pump.fun] Skipping buy - pending trade exists');
-          return;
-        }
+      // ════════════════════════════════════════════════════════════════════════
+      // STAGE 2 & 3: Run through Pipeline (Cheap Gates + Deep Filters)
+      // ════════════════════════════════════════════════════════════════════════
+      const pipeline = getPipeline();
+      if (!pipeline) {
+        logger.error({ mint: baseMintStr }, '[pump.fun] Pipeline not initialized');
+        return;
       }
 
-      // ════════════════════════════════════════════════════════════════════════
-      // SAFETY CHECK 2: Blacklist
-      // ════════════════════════════════════════════════════════════════════════
-      const blacklist = getBlacklist();
-      if (blacklist.isTokenBlacklisted(baseMintStr)) {
-        logger.debug({ mint: baseMintStr }, '[pump.fun] Skipping buy - token is blacklisted');
+      const pipelineResult = await pipeline.process(detectionEvent);
+
+      if (!pipelineResult.success) {
+        // Pipeline rejected the token - already logged by pipeline
+        // Record the rejection in state store
         if (stateStore) {
           stateStore.recordSeenPool({
             poolId: bondingCurveStr,
             tokenMint: baseMintStr,
-            actionTaken: 'blacklisted',
-            filterReason: 'Token is blacklisted',
+            actionTaken: 'filtered',
+            filterReason: pipelineResult.rejectionReason || 'Pipeline rejected',
           });
           stateStore.recordPoolDetection({
             poolId: bondingCurveStr,
             tokenMint: baseMintStr,
-            action: 'blacklisted',
+            action: 'filtered',
             poolType: 'pumpfun',
-            filterResults: [],
+            filterResults: pipelineResult.stageResults.map((s) => ({
+              name: s.stage,
+              displayName: s.stage,
+              passed: s.pass,
+              checked: true,
+              reason: s.reason,
+              expectedValue: '',
+              actualValue: '',
+            })),
             riskCheckPassed: false,
-            riskCheckReason: 'Token is blacklisted',
-            summary: '[pump.fun] Blacklisted token - skipped',
+            riskCheckReason: pipelineResult.rejectionReason,
+            summary: `[pipeline] Rejected at ${pipelineResult.rejectedAt}: ${pipelineResult.rejectionReason}`,
           });
         }
         return;
       }
 
-      // Check creator blacklist if available
-      if (token.creator && blacklist.isCreatorBlacklisted(token.creator.toString())) {
-        logger.debug({ mint: baseMintStr, creator: token.creator.toString() }, '[pump.fun] Skipping buy - creator is blacklisted');
+      // ════════════════════════════════════════════════════════════════════════
+      // STAGE 4: EXECUTE BUY
+      // ════════════════════════════════════════════════════════════════════════
+      const { context } = pipelineResult;
+      const bondingCurveState = context.deepFilters?.bondingCurveState;
+
+      if (!bondingCurveState) {
+        logger.error({ mint: baseMintStr }, '[pump.fun] No bonding curve state after pipeline');
+        return;
+      }
+
+      logger.info(
+        {
+          mint: baseMintStr,
+          name: token.name || 'Unknown',
+          symbol: token.symbol || 'Unknown',
+          score: context.deepFilters?.filterResults.score,
+          pipelineDurationMs: pipelineResult.totalDurationMs,
+          amountSol: tradeAmount,
+        },
+        '[pump.fun] Pipeline passed - executing buy'
+      );
+
+      // Record that we're processing this pool BEFORE the buy attempt
+      if (stateStore) {
+        stateStore.recordSeenPool({
+          poolId: bondingCurveStr,
+          tokenMint: baseMintStr,
+          actionTaken: 'buy_attempted',
+        });
+      }
+
+      if (DRY_RUN) {
+        logger.info(
+          { mint: baseMintStr, amountSol: tradeAmount },
+          '[pump.fun] DRY RUN - would have bought token'
+        );
+
+        // Record simulated position for dry run
         if (stateStore) {
-          stateStore.recordSeenPool({
+          stateStore.recordPoolDetection({
             poolId: bondingCurveStr,
             tokenMint: baseMintStr,
-            actionTaken: 'blacklisted',
-            filterReason: 'Creator is blacklisted',
+            action: 'bought',
+            poolType: 'pumpfun',
+            filterResults: [],
+            riskCheckPassed: true,
+            summary: '[pump.fun] DRY RUN - simulated buy',
           });
         }
-        return;
-      }
+      } else {
+        const buyResult = await buyOnPumpFun({
+          connection,
+          wallet,
+          mint: token.mint,
+          bondingCurve: token.bondingCurve!,
+          amountSol: tradeAmount,
+          slippageBps: BUY_SLIPPAGE * 100,
+          computeUnitLimit: COMPUTE_UNIT_LIMIT,
+          computeUnitPrice: COMPUTE_UNIT_PRICE,
+        });
 
-      // ════════════════════════════════════════════════════════════════════════
-      // SAFETY CHECK 3: Exposure and balance limits
-      // ════════════════════════════════════════════════════════════════════════
-      const exposureManager = getExposureManager();
-      if (exposureManager) {
-        const exposureCheck = await exposureManager.canTrade(tradeAmount);
-
-        if (!exposureCheck.allowed) {
-          logger.warn({ mint: baseMintStr, reason: exposureCheck.reason }, '[pump.fun] Skipping buy - risk limit exceeded');
-          if (stateStore) {
-            stateStore.recordSeenPool({
-              poolId: bondingCurveStr,
-              tokenMint: baseMintStr,
-              actionTaken: 'skipped',
-              filterReason: exposureCheck.reason || 'Risk limit exceeded',
-            });
-            stateStore.recordPoolDetection({
-              poolId: bondingCurveStr,
-              tokenMint: baseMintStr,
-              action: 'skipped',
-              poolType: 'pumpfun',
-              filterResults: [],
-              riskCheckPassed: false,
-              riskCheckReason: exposureCheck.reason || 'Risk limit exceeded',
-              summary: `[pump.fun] Risk limit: ${exposureCheck.reason || 'Exposure limit exceeded'}`,
-            });
-          }
-          return;
-        }
-      }
-
-      // ════════════════════════════════════════════════════════════════════════
-      // VERIFY BONDING CURVE STATE
-      // ════════════════════════════════════════════════════════════════════════
-      try {
-        const bondingCurveState = await getBondingCurveState(connection, token.bondingCurve!);
-        if (!bondingCurveState) {
-          logger.warn({ mint: baseMintStr }, '[pump.fun] Could not get bonding curve state');
-          if (stateStore) {
-            stateStore.recordSeenPool({
-              poolId: bondingCurveStr,
-              tokenMint: baseMintStr,
-              actionTaken: 'skipped',
-              filterReason: 'Could not fetch bonding curve state',
-            });
-          }
-          return;
-        }
-
-        if (bondingCurveState.complete) {
-          logger.info({ mint: baseMintStr }, '[pump.fun] Token already graduated from bonding curve - skipping');
-          if (stateStore) {
-            stateStore.recordSeenPool({
-              poolId: bondingCurveStr,
-              tokenMint: baseMintStr,
-              actionTaken: 'skipped',
-              filterReason: 'Token already graduated',
-            });
-          }
-          return;
-        }
-
-        // ════════════════════════════════════════════════════════════════════════
-        // SAFETY CHECK 4: pump.fun Filters
-        // ════════════════════════════════════════════════════════════════════════
-        const pumpFunFilters = getPumpFunFilters();
-        if (pumpFunFilters) {
-          const filterContext: PumpFunFilterContext = {
-            mint: token.mint,
-            bondingCurve: token.bondingCurve!,
-            bondingCurveState,
-            creator: token.creator,
-            name: token.name,
-            symbol: token.symbol,
-            detectedAt: Date.now(),
-          };
-
-          const filterResults = await pumpFunFilters.execute(filterContext);
-
-          if (!filterResults.allPassed) {
-            logger.info(
-              {
-                mint: baseMintStr,
-                summary: filterResults.summary,
-                filters: filterResults.filters.map((f) => ({
-                  name: f.filterName,
-                  passed: f.passed,
-                  reason: f.reason,
-                })),
-              },
-              '[pump.fun] Token rejected by filters'
-            );
-
-            if (stateStore) {
-              stateStore.recordSeenPool({
-                poolId: bondingCurveStr,
-                tokenMint: baseMintStr,
-                actionTaken: 'filtered',
-                filterReason: filterResults.summary,
-              });
-              stateStore.recordPoolDetection({
-                poolId: bondingCurveStr,
-                tokenMint: baseMintStr,
-                action: 'filtered',
-                poolType: 'pumpfun',
-                filterResults: filterResults.filters.map((f) => ({
-                  name: f.filterName,
-                  displayName: f.filterName,
-                  passed: f.passed,
-                  checked: true,
-                  reason: f.reason,
-                  expectedValue: f.thresholdValue != null ? String(f.thresholdValue) : undefined,
-                  actualValue: f.actualValue != null ? String(f.actualValue) : undefined,
-                  numericValue: f.score,
-                })),
-                riskCheckPassed: false,
-                riskCheckReason: filterResults.summary,
-                summary: `[pump.fun] Filtered: ${filterResults.summary}`,
-              });
-            }
-            return;
-          }
-
-          // Log successful filter pass with score
+        if (buyResult.success) {
           logger.info(
             {
               mint: baseMintStr,
-              score: filterResults.normalizedScore,
-              summary: filterResults.summary,
+              signature: buyResult.signature,
+              tokensReceived: buyResult.tokensReceived,
+              amountSol: tradeAmount,
             },
-            '[pump.fun] Token passed all filters'
+            '[pump.fun] Buy successful'
           );
-        }
 
-        // ════════════════════════════════════════════════════════════════════════
-        // EXECUTE BUY
-        // ════════════════════════════════════════════════════════════════════════
-        logger.info(
-          {
-            mint: baseMintStr,
-            name: token.name || 'Unknown',
-            symbol: token.symbol || 'Unknown',
-            virtualSolReserves: bondingCurveState.virtualSolReserves.toString(),
-            virtualTokenReserves: bondingCurveState.virtualTokenReserves.toString(),
-            amountSol: tradeAmount,
-          },
-          '[pump.fun] All checks passed - executing buy on bonding curve'
-        );
+          // ════════════════════════════════════════════════════════════════════
+          // RECORD POSITION
+          // ════════════════════════════════════════════════════════════════════
+          const pnlTracker = getPnlTracker();
+          const exposureManager = getExposureManager();
+          const entryTimestamp = Date.now();
 
-        // Record that we're processing this pool BEFORE the buy attempt
-        if (stateStore) {
-          stateStore.recordSeenPool({
-            poolId: bondingCurveStr,
+          // Record buy in P&L tracker
+          pnlTracker.recordBuy({
             tokenMint: baseMintStr,
-            actionTaken: 'buy_attempted',
+            amountSol: tradeAmount,
+            amountToken: buyResult.tokensReceived || 0,
+            txSignature: buyResult.signature || '',
+            poolId: bondingCurveStr,
           });
-        }
 
-        if (DRY_RUN) {
-          logger.info(
-            { mint: baseMintStr, amountSol: tradeAmount },
-            '[pump.fun] DRY RUN - would have bought token'
-          );
-
-          // Record simulated position for dry run
+          // Record position in state store
           if (stateStore) {
+            const tokensReceived = buyResult.tokensReceived || 0;
+            const entryPrice = tokensReceived > 0 ? tradeAmount / tokensReceived : 0;
+            stateStore.createPosition({
+              tokenMint: baseMintStr,
+              poolId: bondingCurveStr,
+              amountSol: tradeAmount,
+              amountToken: tokensReceived,
+              entryPrice,
+            });
+
             stateStore.recordPoolDetection({
               poolId: bondingCurveStr,
               tokenMint: baseMintStr,
@@ -1103,136 +1050,65 @@ const runListener = async () => {
               poolType: 'pumpfun',
               filterResults: [],
               riskCheckPassed: true,
-              summary: '[pump.fun] DRY RUN - simulated buy',
+              summary: `[pump.fun] Buy successful: ${buyResult.tokensReceived} tokens for ${tradeAmount} SOL`,
             });
           }
-        } else {
-          const buyResult = await buyOnPumpFun({
-            connection,
-            wallet,
-            mint: token.mint,
-            bondingCurve: token.bondingCurve!,
-            amountSol: tradeAmount,
-            slippageBps: BUY_SLIPPAGE * 100,
-            computeUnitLimit: COMPUTE_UNIT_LIMIT,
-            computeUnitPrice: COMPUTE_UNIT_PRICE,
-          });
 
-          if (buyResult.success) {
-            logger.info(
-              {
-                mint: baseMintStr,
-                signature: buyResult.signature,
-                tokensReceived: buyResult.tokensReceived,
-                amountSol: tradeAmount,
-              },
-              '[pump.fun] Buy successful'
-            );
-
-            // ════════════════════════════════════════════════════════════════════
-            // RECORD POSITION
-            // ════════════════════════════════════════════════════════════════════
-            const pnlTracker = getPnlTracker();
-            const entryTimestamp = Date.now();
-
-            // Record buy in P&L tracker
-            pnlTracker.recordBuy({
+          // Add to exposure manager
+          if (exposureManager) {
+            exposureManager.addPosition({
               tokenMint: baseMintStr,
-              amountSol: tradeAmount,
-              amountToken: buyResult.tokensReceived || 0,
-              txSignature: buyResult.signature || '',
+              entryAmountSol: tradeAmount,
+              currentValueSol: tradeAmount, // Initial value = entry
+              entryTimestamp,
               poolId: bondingCurveStr,
             });
-
-            // Record position in state store
-            if (stateStore) {
-              const tokensReceived = buyResult.tokensReceived || 0;
-              const entryPrice = tokensReceived > 0 ? tradeAmount / tokensReceived : 0;
-              stateStore.createPosition({
-                tokenMint: baseMintStr,
-                poolId: bondingCurveStr,
-                amountSol: tradeAmount,
-                amountToken: tokensReceived,
-                entryPrice,
-              });
-
-              stateStore.recordPoolDetection({
-                poolId: bondingCurveStr,
-                tokenMint: baseMintStr,
-                action: 'bought',
-                poolType: 'pumpfun',
-                filterResults: [],
-                riskCheckPassed: true,
-                summary: `[pump.fun] Buy successful: ${buyResult.tokensReceived} tokens for ${tradeAmount} SOL`,
-              });
-            }
-
-            // Add to exposure manager
-            if (exposureManager) {
-              exposureManager.addPosition({
-                tokenMint: baseMintStr,
-                entryAmountSol: tradeAmount,
-                currentValueSol: tradeAmount, // Initial value = entry
-                entryTimestamp,
-                poolId: bondingCurveStr,
-              });
-            }
-
-            // Add to pump.fun position monitor for TP/SL monitoring
-            const pumpFunMonitorInstance = getPumpFunPositionMonitor();
-            if (pumpFunMonitorInstance) {
-              pumpFunMonitorInstance.addPosition({
-                tokenMint: baseMintStr,
-                bondingCurve: bondingCurveStr,
-                entryAmountSol: tradeAmount,
-                tokenAmount: buyResult.tokensReceived || 0,
-                entryTimestamp,
-                buySignature: buyResult.signature || '',
-              });
-            }
-
-            logger.info(
-              {
-                mint: baseMintStr,
-                signature: buyResult.signature,
-                tokensReceived: buyResult.tokensReceived,
-                amountSol: tradeAmount,
-              },
-              '[pump.fun] Position recorded - monitoring for sell triggers'
-            );
-          } else {
-            logger.error(
-              {
-                mint: baseMintStr,
-                error: buyResult.error,
-              },
-              '[pump.fun] Buy failed'
-            );
-
-            // Record failed buy
-            if (stateStore) {
-              stateStore.recordPoolDetection({
-                poolId: bondingCurveStr,
-                tokenMint: baseMintStr,
-                action: 'buy_failed',
-                poolType: 'pumpfun',
-                filterResults: [],
-                riskCheckPassed: true,
-                riskCheckReason: buyResult.error,
-                summary: `[pump.fun] Buy failed: ${buyResult.error}`,
-              });
-            }
           }
-        }
-      } catch (error) {
-        logger.error({ error, mint: baseMintStr }, '[pump.fun] Error processing token');
-        if (stateStore) {
-          stateStore.recordSeenPool({
-            poolId: bondingCurveStr,
-            tokenMint: baseMintStr,
-            actionTaken: 'error',
-            filterReason: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          });
+
+          // Add to pump.fun position monitor for TP/SL monitoring
+          const pumpFunMonitorInstance = getPumpFunPositionMonitor();
+          if (pumpFunMonitorInstance) {
+            pumpFunMonitorInstance.addPosition({
+              tokenMint: baseMintStr,
+              bondingCurve: bondingCurveStr,
+              entryAmountSol: tradeAmount,
+              tokenAmount: buyResult.tokensReceived || 0,
+              entryTimestamp,
+              buySignature: buyResult.signature || '',
+            });
+          }
+
+          logger.info(
+            {
+              mint: baseMintStr,
+              signature: buyResult.signature,
+              tokensReceived: buyResult.tokensReceived,
+              amountSol: tradeAmount,
+            },
+            '[pump.fun] Position recorded - monitoring for sell triggers'
+          );
+        } else {
+          logger.error(
+            {
+              mint: baseMintStr,
+              error: buyResult.error,
+            },
+            '[pump.fun] Buy failed'
+          );
+
+          // Record failed buy
+          if (stateStore) {
+            stateStore.recordPoolDetection({
+              poolId: bondingCurveStr,
+              tokenMint: baseMintStr,
+              action: 'buy_failed',
+              poolType: 'pumpfun',
+              filterResults: [],
+              riskCheckPassed: true,
+              riskCheckReason: buyResult.error,
+              summary: `[pump.fun] Buy failed: ${buyResult.error}`,
+            });
+          }
         }
       }
     });
