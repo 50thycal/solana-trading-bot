@@ -357,7 +357,7 @@ export function validateConfig(): ValidatedConfig {
 
   // === DASHBOARD (Phase 5) ===
   const dashboardEnabled = requireBoolean('DASHBOARD_ENABLED', true);
-  const dashboardPort = requireNumber('DASHBOARD_PORT', 8080); // Same as health port by default
+  const dashboardPort = requireNumber('DASHBOARD_PORT', 8081); // Different from health port to avoid conflict
   const dashboardPollInterval = requireNumber('DASHBOARD_POLL_INTERVAL', 5000);
 
   // === TOKEN AGE VALIDATION (Pool Detection Phase 1) ===

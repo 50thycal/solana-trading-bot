@@ -5,14 +5,15 @@
  * This ensures that Railway's health checks can succeed even during initialization.
  *
  * The health server stays running throughout the app lifecycle to handle health checks
- * on the PORT that Railway expects, while the main app's dashboard runs on DASHBOARD_PORT.
+ * on the PORT that Railway expects (default 8080), while the main app's dashboard runs
+ * on DASHBOARD_PORT (default 8081).
  */
 
 import http from 'http';
 
 // Railway typically sets PORT env var - use that for health checks
-// Fall back to DASHBOARD_PORT or HEALTH_PORT for compatibility
-const HEALTH_PORT = parseInt(process.env.PORT || process.env.DASHBOARD_PORT || process.env.HEALTH_PORT || '8080', 10);
+// Fall back to HEALTH_PORT for compatibility (dashboard runs on separate port)
+const HEALTH_PORT = parseInt(process.env.PORT || process.env.HEALTH_PORT || '8080', 10);
 
 // Startup state
 let startupState: 'initializing' | 'loading' | 'ready' | 'failed' = 'initializing';
