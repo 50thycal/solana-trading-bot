@@ -686,6 +686,20 @@ const runListener = async () => {
       logger.error({ error }, 'pump.fun listener error');
     });
 
+    // Connect pump.fun listener events to dashboard server
+    if (dashboardServer) {
+      pumpFunListener.on('started', () => {
+        dashboardServer!.setWebSocketConnected(true);
+        dashboardServer!.setRpcHealthy(true);
+        logger.info('pump.fun listener connected - dashboard status updated');
+      });
+
+      pumpFunListener.on('stopped', () => {
+        dashboardServer!.setWebSocketConnected(false);
+        logger.info('pump.fun listener stopped - dashboard status updated');
+      });
+    }
+
     await pumpFunListener.start();
     logger.info('pump.fun token detection listener started');
   } else {
