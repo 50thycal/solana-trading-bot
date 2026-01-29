@@ -3,178 +3,181 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Solana Trading Bot Dashboard</title>
+  <title>Pump.fun Trading Bot Dashboard</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <div class="container">
     <!-- Header -->
     <header class="header">
-      <h1>Solana Trading Bot</h1>
-      <div class="status-indicator" id="connection-status">
-        <span class="status-dot"></span>
-        <span class="status-text">Connecting...</span>
+      <div class="header-left">
+        <h1>Pump.fun Trading Bot</h1>
+        <span class="header-badge">Pipeline Monitor</span>
+      </div>
+      <div class="header-right">
+        <div class="status-indicator" id="connection-status">
+          <span class="status-dot"></span>
+          <span class="status-text">Connecting...</span>
+        </div>
       </div>
     </header>
 
     <!-- Overview Cards -->
     <section class="overview-cards">
       <div class="card">
-        <div class="card-label">Uptime</div>
-        <div class="card-value" id="uptime">--</div>
+        <div class="card-label">Tokens Detected</div>
+        <div class="card-value" id="tokens-detected">0</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Tokens Bought</div>
+        <div class="card-value positive" id="tokens-bought">0</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Buy Rate</div>
+        <div class="card-value" id="buy-rate">0%</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Avg Pipeline Time</div>
+        <div class="card-value" id="avg-pipeline-time">0ms</div>
       </div>
       <div class="card">
         <div class="card-label">Wallet Balance</div>
         <div class="card-value" id="wallet-balance">-- SOL</div>
       </div>
       <div class="card">
-        <div class="card-label">Total P&L</div>
-        <div class="card-value" id="total-pnl">-- SOL</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Open Positions</div>
-        <div class="card-value" id="open-positions">--</div>
+        <div class="card-label">Uptime</div>
+        <div class="card-value" id="uptime">--</div>
       </div>
     </section>
 
-    <!-- Test Trade Section -->
-    <section class="panel test-trade-panel">
+    <!-- Pipeline Funnel -->
+    <section class="panel pipeline-funnel-panel">
       <div class="panel-header">
-        <h2>Test Trade</h2>
-      </div>
-      <div class="test-trade-content">
-        <div class="test-trade-form">
-          <div class="form-group">
-            <label for="pool-selector">Select from Recent Pools</label>
-            <select id="pool-selector" class="form-input">
-              <option value="">-- Select a pool --</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="pool-id-input">Pool ID</label>
-            <input type="text" id="pool-id-input" placeholder="Enter Raydium pool ID..." class="form-input">
-          </div>
-          <div class="form-row">
-            <div class="form-group form-group-small">
-              <label for="amount-input">Amount (SOL)</label>
-              <input type="number" id="amount-input" placeholder="Default" step="0.001" min="0.001" class="form-input">
-            </div>
-            <div class="form-group form-group-checkbox">
-              <label class="checkbox-label">
-                <input type="checkbox" id="dry-run-checkbox">
-                <span>Dry Run</span>
-              </label>
-            </div>
-          </div>
-          <div class="form-actions">
-            <button id="test-trade-btn" class="btn btn-primary">Execute Trade</button>
-          </div>
+        <h2>Pipeline Funnel</h2>
+        <div class="panel-actions">
+          <button class="btn btn-secondary btn-small" id="reset-stats-btn">Reset Stats</button>
         </div>
-        <div class="test-trade-result" id="test-trade-result" style="display: none;">
-          <div class="result-header">
-            <span class="result-icon"></span>
-            <span class="result-message"></span>
-          </div>
-          <div class="result-details"></div>
+      </div>
+      <div class="pipeline-funnel" id="pipeline-funnel">
+        <div class="funnel-stage" id="funnel-detected">
+          <div class="funnel-label">Detected</div>
+          <div class="funnel-value">0</div>
+        </div>
+        <div class="funnel-arrow">→</div>
+        <div class="funnel-stage" id="funnel-cheap-gates">
+          <div class="funnel-label">Cheap Gates</div>
+          <div class="funnel-value">0</div>
+        </div>
+        <div class="funnel-arrow">→</div>
+        <div class="funnel-stage" id="funnel-deep-filters">
+          <div class="funnel-label">Deep Filters</div>
+          <div class="funnel-value">0</div>
+        </div>
+        <div class="funnel-arrow">→</div>
+        <div class="funnel-stage funnel-stage-success" id="funnel-bought">
+          <div class="funnel-label">Bought</div>
+          <div class="funnel-value">0</div>
         </div>
       </div>
     </section>
 
     <!-- Main Content Grid -->
     <div class="main-grid">
-      <!-- Pool Activity Section -->
-      <section class="panel pool-activity">
-        <div class="panel-header">
-          <h2>Pool Activity</h2>
-          <div class="filter-controls">
-            <select id="pool-type-filter" style="margin-right: 0.5rem;">
-              <option value="">All Types</option>
-              <option value="AmmV4">AmmV4</option>
-              <option value="CPMM">CPMM</option>
-              <option value="DLMM">DLMM</option>
-            </select>
-            <select id="pool-filter">
-              <option value="">All</option>
-              <option value="bought">Bought</option>
-              <option value="filtered">Filtered</option>
-              <option value="skipped">Skipped</option>
-              <option value="blacklisted">Blacklisted</option>
-            </select>
-          </div>
-        </div>
-        <div class="pool-list" id="pool-list">
-          <div class="loading">Loading pool activity...</div>
-        </div>
-      </section>
-
-      <!-- Right Sidebar -->
-      <aside class="sidebar">
-        <!-- Open Positions -->
-        <section class="panel positions-panel">
+      <!-- Left Column: Gate Stats -->
+      <div class="left-column">
+        <!-- Cheap Gates Stats -->
+        <section class="panel gate-stats-panel">
           <div class="panel-header">
-            <h2>Open Positions</h2>
+            <h2>Cheap Gates</h2>
+            <span class="panel-subtitle">Fast pre-checks (minimal RPC)</span>
           </div>
-          <div class="positions-list" id="positions-list">
-            <div class="empty-state">No open positions</div>
+          <div class="gate-stats-list" id="cheap-gates-stats">
+            <div class="loading">Loading stats...</div>
           </div>
         </section>
 
-        <!-- Statistics -->
-        <section class="panel stats-panel">
+        <!-- Deep Filters Stats -->
+        <section class="panel gate-stats-panel">
           <div class="panel-header">
-            <h2>Statistics</h2>
+            <h2>Deep Filters</h2>
+            <span class="panel-subtitle">On-chain validation</span>
           </div>
-          <div class="stats-content" id="stats-content">
-            <div class="stat-row">
-              <span class="stat-label">Pools Detected</span>
-              <span class="stat-value" id="stat-pools-detected">--</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Pools Bought</span>
-              <span class="stat-value" id="stat-pools-bought">--</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Buy Rate</span>
-              <span class="stat-value" id="stat-buy-rate">--%</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Win Rate</span>
-              <span class="stat-value" id="stat-win-rate">--%</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">AmmV4 Pools</span>
-              <span class="stat-value" id="stat-ammv4-pools">--</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">CPMM Pools</span>
-              <span class="stat-value" id="stat-cpmm-pools">--</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">DLMM Pools</span>
-              <span class="stat-value" id="stat-dlmm-pools">--</span>
-            </div>
+          <div class="gate-stats-list" id="deep-filters-stats">
+            <div class="loading">Loading stats...</div>
           </div>
+        </section>
 
-          <div class="panel-header" style="margin-top: 1rem;">
-            <h3>Top Rejection Reasons</h3>
+        <!-- Top Rejection Reasons -->
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Top Rejection Reasons</h2>
           </div>
           <div class="rejection-list" id="rejection-list">
             <div class="empty-state">No data yet</div>
           </div>
         </section>
-      </aside>
+      </div>
+
+      <!-- Right Column: Token Activity -->
+      <div class="right-column">
+        <!-- Recent Tokens -->
+        <section class="panel tokens-panel">
+          <div class="panel-header">
+            <h2>Recent Tokens</h2>
+            <div class="filter-controls">
+              <select id="token-filter">
+                <option value="">All</option>
+                <option value="bought">Bought</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </div>
+          </div>
+          <div class="token-list" id="token-list">
+            <div class="empty-state">No tokens detected yet</div>
+          </div>
+        </section>
+
+        <!-- Open Positions -->
+        <section class="panel positions-panel">
+          <div class="panel-header">
+            <h2>Open Positions</h2>
+            <span class="position-count" id="position-count">0</span>
+          </div>
+          <div class="positions-list" id="positions-list">
+            <div class="empty-state">No open positions</div>
+          </div>
+        </section>
+      </div>
     </div>
 
-    <!-- Pool Detail Modal -->
-    <div class="modal" id="pool-modal">
-      <div class="modal-backdrop" onclick="closePoolModal()"></div>
+    <!-- Token Detail Modal -->
+    <div class="modal" id="token-modal">
+      <div class="modal-backdrop" onclick="closeTokenModal()"></div>
       <div class="modal-content">
         <div class="modal-header">
-          <h3>Pool Details</h3>
-          <button class="modal-close" onclick="closePoolModal()">&times;</button>
+          <h3>Token Details</h3>
+          <button class="modal-close" onclick="closeTokenModal()">&times;</button>
         </div>
-        <div class="modal-body" id="pool-modal-body">
+        <div class="modal-body" id="token-modal-body">
           <!-- Populated by JavaScript -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Reset Stats Confirmation Modal -->
+    <div class="modal" id="reset-modal">
+      <div class="modal-backdrop" onclick="closeResetModal()"></div>
+      <div class="modal-content modal-small">
+        <div class="modal-header">
+          <h3>Reset Statistics</h3>
+          <button class="modal-close" onclick="closeResetModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-message">Are you sure you want to reset all pipeline statistics? This action cannot be undone.</p>
+          <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="closeResetModal()">Cancel</button>
+            <button class="btn btn-danger" id="confirm-reset-btn">Reset Stats</button>
+          </div>
         </div>
       </div>
     </div>
