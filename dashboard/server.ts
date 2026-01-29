@@ -14,6 +14,7 @@ import { getStateStore } from '../persistence';
 import { getPnlTracker, getExposureManager, getPositionMonitor } from '../risk';
 import { PoolAction, PoolType } from '../persistence/models';
 import { getPipelineStats, resetPipelineStats } from '../pipeline';
+import { getPaperTradeTracker } from '../risk';
 
 // Dynamic import for test-trade to avoid crash if file doesn't exist
 let executeTestTrade: ((options: { poolId: string; dryRun: boolean; amount?: number }) => Promise<any>) | null = null;
@@ -255,6 +256,10 @@ export class DashboardServer {
           data = this.getApiPipelineStats();
           break;
 
+        case '/api/paper-trades':
+          data = this.getApiPaperTrades();
+          break;
+
         default:
           // Check for /api/pools/:id pattern
           if (pathname.startsWith('/api/pools/')) {
@@ -295,6 +300,14 @@ export class DashboardServer {
 
         case '/api/pipeline-stats/reset':
           await this.handleResetPipelineStats(res);
+          break;
+
+        case '/api/paper-trades/check-pnl':
+          await this.handleCheckPaperPnL(res);
+          break;
+
+        case '/api/paper-trades/clear':
+          await this.handleClearPaperTrades(res);
           break;
 
         default:
@@ -694,6 +707,82 @@ export class DashboardServer {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: errorMessage }));
     }
+  }
+
+  /**
+   * GET /api/paper-trades - List paper trades without P&L calculation
+   */
+  private getApiPaperTrades() {
+    const tracker = getPaperTradeTracker();
+    if (!tracker) {
+      return { error: 'Paper trade tracker not initialized (not in dry run mode)', trades: [], count: 0 };
+    }
+
+    const trades = tracker.getPaperTrades();
+    return {
+      count: trades.length,
+      maxTrades: 100,
+      trades: trades.map((t) => ({
+        mint: t.mint,
+        name: t.name,
+        symbol: t.symbol,
+        entrySol: t.hypotheticalSolSpent,
+        tokensReceived: t.hypotheticalTokensReceived,
+        entryPrice: t.entryPricePerToken,
+        entryTimestamp: t.entryTimestamp,
+        bondingCurve: t.bondingCurve,
+      })),
+    };
+  }
+
+  /**
+   * POST /api/paper-trades/check-pnl - Calculate P&L for all paper trades
+   */
+  private async handleCheckPaperPnL(res: http.ServerResponse): Promise<void> {
+    const tracker = getPaperTradeTracker();
+    if (!tracker) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Paper trade tracker not initialized (not in dry run mode)' }));
+      return;
+    }
+
+    try {
+      logger.info('[dashboard] Checking paper P&L...');
+      const summary = await tracker.checkPnL();
+      logger.info(
+        {
+          totalTrades: summary.totalTrades,
+          activeTrades: summary.activeTrades,
+          totalPnlSol: summary.totalPnlSol,
+          totalPnlPercent: summary.totalPnlPercent,
+        },
+        '[dashboard] Paper P&L check complete'
+      );
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(summary, null, 2));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ error: errorMessage }, '[dashboard] Paper P&L check failed');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: errorMessage }));
+    }
+  }
+
+  /**
+   * POST /api/paper-trades/clear - Clear all paper trades
+   */
+  private async handleClearPaperTrades(res: http.ServerResponse): Promise<void> {
+    const tracker = getPaperTradeTracker();
+    if (!tracker) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Paper trade tracker not initialized (not in dry run mode)' }));
+      return;
+    }
+
+    tracker.clearPaperTrades();
+    logger.info('[dashboard] Paper trades cleared via dashboard');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, message: 'Paper trades cleared' }));
   }
 
   // ============================================================

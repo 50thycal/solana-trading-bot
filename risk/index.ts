@@ -37,3 +37,12 @@ export {
   initPumpFunPositionMonitor,
   getPumpFunPositionMonitor,
 } from './pumpfun-position-monitor';
+
+export {
+  PaperTradeTracker,
+  PaperTrade,
+  PaperPnLResult,
+  PaperPnLSummary,
+  initPaperTradeTracker,
+  getPaperTradeTracker,
+} from './paper-trade-tracker';
