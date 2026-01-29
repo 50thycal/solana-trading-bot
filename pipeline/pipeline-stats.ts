@@ -263,7 +263,27 @@ export class PipelineStats {
       SCORE_TOO_LOW: 'max-sol', // Score failures happen after all filters
     };
 
-    const failedFilter = reasonToFilter[reason] || 'graduation';
+    // Handle composite rejection reasons like "Failed filter check: failed: minsolincurve (1/2 passed)"
+    let failedFilter = reasonToFilter[reason];
+
+    if (!failedFilter) {
+      // Parse the composite reason string to extract the actual failing filter
+      const lowerReason = reason.toLowerCase();
+
+      if (lowerReason.includes('minsolincurve') || lowerReason.includes('min_sol') || lowerReason.includes('min sol')) {
+        failedFilter = 'min-sol';
+      } else if (lowerReason.includes('maxsolincurve') || lowerReason.includes('max_sol') || lowerReason.includes('max sol')) {
+        failedFilter = 'max-sol';
+      } else if (lowerReason.includes('graduated') || lowerReason.includes('curve_not_found') || lowerReason.includes('bonding curve')) {
+        failedFilter = 'graduation';
+      } else if (lowerReason.includes('score')) {
+        failedFilter = 'max-sol'; // Score check happens last
+      } else {
+        // Default to graduation for unknown reasons
+        failedFilter = 'graduation';
+      }
+    }
+
     let foundFailed = false;
 
     for (const filter of DEEP_FILTERS) {
