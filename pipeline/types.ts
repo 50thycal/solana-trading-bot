@@ -199,7 +199,6 @@ export const RejectionReasons = {
   MINT_NOT_RENOUNCED: 'Mint authority not renounced',
   HAS_FREEZE_AUTHORITY: 'Token has freeze authority',
   INVALID_DECIMALS: 'Invalid token decimals',
-  TOKEN_2022_UNSUPPORTED: 'Token-2022 not supported (for now)',
 
   // Pattern
   JUNK_NAME: 'Token name matches junk pattern',

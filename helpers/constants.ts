@@ -162,12 +162,6 @@ export const PUMPFUN_ENABLE_MAX_SOL_FILTER = config.pumpfunEnableMaxSolFilter;
 export const PUMPFUN_MIN_SCORE_REQUIRED = config.pumpfunMinScoreRequired;
 
 // ============================================================================
-// TOKEN-2022 SUPPORT
-// pump.fun migrated to Token-2022 (Mayhem Mode), enable this for pump.fun trading
-// ============================================================================
-export const ALLOW_TOKEN_2022 = config.allowToken2022;
-
-// ============================================================================
 // LOGGING
 // ============================================================================
 
