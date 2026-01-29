@@ -11,7 +11,7 @@
  */
 
 import { Connection, PublicKey } from '@solana/web3.js';
-import { getMint, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
+import { getMint, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
 import {
   DetectionEvent,
   StageResult,
@@ -253,16 +253,25 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
 
     if (!this.config.skipMintInfoCheck) {
       try {
-        // pump.fun uses Token-2022 exclusively (since Mayhem Mode migration)
+        // pump.fun uses both Token-2022 (CreateV2) and SPL Token (Create)
+        // Try Token-2022 first (newer standard), fall back to SPL Token
         let mint;
+        let isToken2022 = false;
+
         try {
           mint = await getMint(this.connection, detection.mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
-        } catch (e) {
-          return this.reject(
-            'Failed to fetch mint info (Token-2022)',
-            startTime,
-            { mint: mintStr, error: String(e) }
-          );
+          isToken2022 = true;
+        } catch {
+          // Fall back to SPL Token (legacy Create instruction)
+          try {
+            mint = await getMint(this.connection, detection.mint, 'confirmed', TOKEN_PROGRAM_ID);
+          } catch (e) {
+            return this.reject(
+              'Failed to fetch mint info',
+              startTime,
+              { mint: mintStr, error: String(e) }
+            );
+          }
         }
 
         // Check mint authority (must be null = renounced)
@@ -297,7 +306,7 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
           freezeAuthority: mint.freezeAuthority,
           decimals: mint.decimals,
           supply: mint.supply,
-          isToken2022: true, // pump.fun uses Token-2022 exclusively
+          isToken2022,
         };
       } catch (error) {
         return this.reject(
