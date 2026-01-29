@@ -1,6 +1,6 @@
 /**
- * Solana Trading Bot Dashboard
- * Vanilla JavaScript with polling
+ * Pump.fun Trading Bot Dashboard
+ * Pipeline monitoring with gate-by-gate statistics
  */
 
 // Configuration
@@ -8,38 +8,52 @@ const POLL_INTERVAL = 5000; // 5 seconds
 const API_BASE = '';
 
 // State
-let currentPoolFilter = '';
-let currentPoolTypeFilter = '';
-let selectedPoolId = null;
+let currentTokenFilter = '';
+let pipelineStats = null;
+let recentTokens = [];
 
 // DOM Elements
 const elements = {
+  // Header
   connectionStatus: document.getElementById('connection-status'),
   uptime: document.getElementById('uptime'),
+
+  // Overview cards
+  tokensDetected: document.getElementById('tokens-detected'),
+  tokensBought: document.getElementById('tokens-bought'),
+  buyRate: document.getElementById('buy-rate'),
+  avgPipelineTime: document.getElementById('avg-pipeline-time'),
   walletBalance: document.getElementById('wallet-balance'),
-  totalPnl: document.getElementById('total-pnl'),
-  openPositions: document.getElementById('open-positions'),
-  poolList: document.getElementById('pool-list'),
-  poolFilter: document.getElementById('pool-filter'),
+
+  // Funnel
+  funnelDetected: document.getElementById('funnel-detected'),
+  funnelCheapGates: document.getElementById('funnel-cheap-gates'),
+  funnelDeepFilters: document.getElementById('funnel-deep-filters'),
+  funnelBought: document.getElementById('funnel-bought'),
+
+  // Gate stats
+  cheapGatesStats: document.getElementById('cheap-gates-stats'),
+  deepFiltersStats: document.getElementById('deep-filters-stats'),
+
+  // Token list
+  tokenList: document.getElementById('token-list'),
+  tokenFilter: document.getElementById('token-filter'),
+
+  // Positions
   positionsList: document.getElementById('positions-list'),
-  statPoolsDetected: document.getElementById('stat-pools-detected'),
-  statPoolsBought: document.getElementById('stat-pools-bought'),
-  statBuyRate: document.getElementById('stat-buy-rate'),
-  statWinRate: document.getElementById('stat-win-rate'),
-  statAmmv4Pools: document.getElementById('stat-ammv4-pools'),
-  statCpmmPools: document.getElementById('stat-cpmm-pools'),
-  statDlmmPools: document.getElementById('stat-dlmm-pools'),
+  positionCount: document.getElementById('position-count'),
+
+  // Rejection reasons
   rejectionList: document.getElementById('rejection-list'),
-  poolTypeFilter: document.getElementById('pool-type-filter'),
-  poolModal: document.getElementById('pool-modal'),
-  poolModalBody: document.getElementById('pool-modal-body'),
-  // Test trade elements
-  poolSelector: document.getElementById('pool-selector'),
-  poolIdInput: document.getElementById('pool-id-input'),
-  amountInput: document.getElementById('amount-input'),
-  dryRunCheckbox: document.getElementById('dry-run-checkbox'),
-  testTradeBtn: document.getElementById('test-trade-btn'),
-  testTradeResult: document.getElementById('test-trade-result'),
+
+  // Buttons
+  resetStatsBtn: document.getElementById('reset-stats-btn'),
+  confirmResetBtn: document.getElementById('confirm-reset-btn'),
+
+  // Modals
+  tokenModal: document.getElementById('token-modal'),
+  tokenModalBody: document.getElementById('token-modal-body'),
+  resetModal: document.getElementById('reset-modal'),
 };
 
 // ============================================================
@@ -55,6 +69,20 @@ async function fetchApi(endpoint) {
     return await response.json();
   } catch (error) {
     console.error(`API error for ${endpoint}:`, error);
+    return null;
+  }
+}
+
+async function postApi(endpoint, data = {}) {
+  try {
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return await response.json();
+  } catch (error) {
+    console.error(`API POST error for ${endpoint}:`, error);
     return null;
   }
 }
@@ -82,334 +110,297 @@ async function updateStatus() {
   // Uptime
   elements.uptime.textContent = data.uptimeFormatted || '--';
 
-  // Actual wallet balance from chain
+  // Wallet balance
   if (data.walletBalance !== null && data.walletBalance !== undefined) {
     elements.walletBalance.textContent = `${data.walletBalance.toFixed(4)} SOL`;
   } else {
     elements.walletBalance.textContent = '-- SOL';
   }
 
-  // P&L
-  if (data.pnl) {
-    const pnl = data.pnl.total;
-    elements.totalPnl.textContent = `${pnl >= 0 ? '+' : ''}${pnl.toFixed(4)} SOL`;
-    elements.totalPnl.className = 'card-value ' + (pnl >= 0 ? 'positive' : 'negative');
-  }
-
-  // Open positions count
-  elements.openPositions.textContent = data.positions?.open || 0;
+  // Position count
+  elements.positionCount.textContent = data.positions?.open || 0;
 }
 
-async function updatePools() {
-  const filterParam = currentPoolFilter ? `&action=${currentPoolFilter}` : '';
-  const poolTypeParam = currentPoolTypeFilter ? `&poolType=${currentPoolTypeFilter}` : '';
-  const data = await fetchApi(`/api/pools?limit=50${filterParam}${poolTypeParam}`);
-  if (!data || !data.pools) return;
+async function updatePipelineStats() {
+  const data = await fetchApi('/api/pipeline-stats');
+  if (!data) return;
 
-  if (data.pools.length === 0) {
-    elements.poolList.innerHTML = '<div class="empty-state">No pool activity yet</div>';
+  pipelineStats = data;
+  recentTokens = data.recentTokens || [];
+
+  // Update overview cards
+  elements.tokensDetected.textContent = data.tokensDetected || 0;
+  elements.tokensBought.textContent = data.tokensBought || 0;
+  elements.buyRate.textContent = `${(data.buyRate || 0).toFixed(1)}%`;
+  elements.avgPipelineTime.textContent = `${Math.round(data.avgPipelineDurationMs || 0)}ms`;
+
+  // Update funnel
+  updateFunnel(data);
+
+  // Update gate stats
+  updateGateStats(data.gateStats);
+
+  // Update rejection reasons
+  updateRejectionReasons(data.topRejectionReasons);
+
+  // Update token list
+  updateTokenList();
+}
+
+function updateFunnel(data) {
+  const detected = data.tokensDetected || 0;
+  const bought = data.tokensBought || 0;
+
+  // Calculate how many passed each stage
+  // Tokens that passed cheap gates = tokens that reached deep filters + bought
+  const cheapGates = data.gateStats?.cheapGates || [];
+  const deepFilters = data.gateStats?.deepFilters || [];
+
+  // Get the last cheap gate passed count (those that made it through all cheap gates)
+  const lastCheapGate = cheapGates[cheapGates.length - 1];
+  const passedCheapGates = lastCheapGate ? lastCheapGate.passed : 0;
+
+  // Get the last deep filter passed count
+  const lastDeepFilter = deepFilters[deepFilters.length - 1];
+  const passedDeepFilters = lastDeepFilter ? lastDeepFilter.passed : 0;
+
+  // Update funnel values
+  elements.funnelDetected.querySelector('.funnel-value').textContent = detected;
+  elements.funnelCheapGates.querySelector('.funnel-value').textContent = passedCheapGates;
+  elements.funnelDeepFilters.querySelector('.funnel-value').textContent = passedDeepFilters;
+  elements.funnelBought.querySelector('.funnel-value').textContent = bought;
+}
+
+function updateGateStats(gateStats) {
+  if (!gateStats) return;
+
+  // Cheap gates
+  if (gateStats.cheapGates && gateStats.cheapGates.length > 0) {
+    elements.cheapGatesStats.innerHTML = gateStats.cheapGates.map(renderGateStat).join('');
+  } else {
+    elements.cheapGatesStats.innerHTML = '<div class="empty-state">No data yet</div>';
+  }
+
+  // Deep filters
+  if (gateStats.deepFilters && gateStats.deepFilters.length > 0) {
+    elements.deepFiltersStats.innerHTML = gateStats.deepFilters.map(renderGateStat).join('');
+  } else {
+    elements.deepFiltersStats.innerHTML = '<div class="empty-state">No data yet</div>';
+  }
+}
+
+function renderGateStat(gate) {
+  const total = gate.totalChecked || 0;
+  const passRate = total > 0 ? (gate.passed / total) * 100 : 0;
+
+  return `
+    <div class="gate-stat-item">
+      <span class="gate-stat-name">${gate.displayName}</span>
+      <div class="gate-stat-values">
+        <span class="gate-stat-passed" title="Passed">${gate.passed}</span>
+        <span class="gate-stat-failed" title="Failed">${gate.failed}</span>
+        <div class="gate-stat-bar">
+          <div class="gate-stat-bar-fill" style="width: ${passRate}%"></div>
+        </div>
+        <span class="gate-stat-rate">${passRate.toFixed(0)}%</span>
+      </div>
+    </div>
+  `;
+}
+
+function updateRejectionReasons(reasons) {
+  if (!reasons || reasons.length === 0) {
+    elements.rejectionList.innerHTML = '<div class="empty-state">No rejections yet</div>';
     return;
   }
 
-  elements.poolList.innerHTML = data.pools.map(pool => renderPoolItem(pool)).join('');
+  elements.rejectionList.innerHTML = reasons.slice(0, 8).map(item => `
+    <div class="rejection-item">
+      <span class="rejection-name">${formatRejectionReason(item.reason)}</span>
+      <span class="rejection-count">${item.count}</span>
+    </div>
+  `).join('');
+}
+
+function formatRejectionReason(reason) {
+  // Convert SCREAMING_CASE to Title Case
+  return reason
+    .toLowerCase()
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+function updateTokenList() {
+  let tokens = recentTokens;
+
+  // Apply filter
+  if (currentTokenFilter) {
+    tokens = tokens.filter(t => t.outcome === currentTokenFilter);
+  }
+
+  if (tokens.length === 0) {
+    elements.tokenList.innerHTML = '<div class="empty-state">No tokens detected yet</div>';
+    return;
+  }
+
+  elements.tokenList.innerHTML = tokens.map(renderTokenItem).join('');
+}
+
+function renderTokenItem(token) {
+  const time = formatTimeAgo(token.detectedAt);
+  const addressShort = shortenAddress(token.mint);
+  const name = token.name || 'Unknown';
+  const symbol = token.symbol ? `($${token.symbol})` : '';
+
+  let metaHtml = `<div class="token-time">${time}</div>`;
+  if (token.outcome === 'rejected' && token.rejectionReason) {
+    metaHtml += `<div class="token-rejection">${formatRejectionReason(token.rejectionReason)}</div>`;
+  }
+  metaHtml += `<div class="token-duration">${token.pipelineDurationMs}ms</div>`;
+
+  return `
+    <div class="token-item" onclick="showTokenDetail('${token.mint}')">
+      <div class="token-outcome ${token.outcome}"></div>
+      <div class="token-info">
+        <div class="token-name">${escapeHtml(name)} <span class="symbol">${escapeHtml(symbol)}</span></div>
+        <div class="token-address">
+          <span class="token-address-text" onclick="event.stopPropagation(); copyToClipboard('${token.mint}', this)">${addressShort}</span>
+          <button class="copy-btn" onclick="event.stopPropagation(); copyToClipboard('${token.mint}', this)" title="Copy address">📋</button>
+        </div>
+      </div>
+      <div class="token-meta">
+        ${metaHtml}
+      </div>
+    </div>
+  `;
 }
 
 async function updatePositions() {
   const data = await fetchApi('/api/positions');
   if (!data || !data.positions) return;
 
+  elements.positionCount.textContent = data.positions.length;
+
   if (data.positions.length === 0) {
     elements.positionsList.innerHTML = '<div class="empty-state">No open positions</div>';
     return;
   }
 
-  elements.positionsList.innerHTML = data.positions.map(pos => renderPositionItem(pos)).join('');
-}
+  elements.positionsList.innerHTML = data.positions.map(pos => {
+    const tokenShort = shortenAddress(pos.tokenMint);
+    const pnlPercent = pos.currentPnlPercent ?? 0;
+    const pnlClass = pnlPercent >= 0 ? 'positive' : 'negative';
 
-async function updateStats() {
-  const [statsData, pnlData] = await Promise.all([
-    fetchApi('/api/stats'),
-    fetchApi('/api/pnl'),
-  ]);
-
-  if (statsData?.pools) {
-    elements.statPoolsDetected.textContent = statsData.pools.totalDetected;
-    elements.statPoolsBought.textContent = statsData.pools.bought;
-    elements.statBuyRate.textContent = `${statsData.pools.buyRate}%`;
-
-    // Pool type breakdown
-    if (statsData.pools.byPoolType) {
-      const ammv4 = statsData.pools.byPoolType.AmmV4 || { total: 0, bought: 0 };
-      const cpmm = statsData.pools.byPoolType.CPMM || { total: 0, bought: 0 };
-      const dlmm = statsData.pools.byPoolType.DLMM || { total: 0, bought: 0 };
-      elements.statAmmv4Pools.textContent = `${ammv4.total} (${ammv4.bought} bought)`;
-      elements.statCpmmPools.textContent = `${cpmm.total} (${cpmm.bought} bought)`;
-      elements.statDlmmPools.textContent = `${dlmm.total} (${dlmm.bought} bought)`;
-    }
-  }
-
-  if (pnlData) {
-    const winRate = pnlData.totalTrades > 0
-      ? ((pnlData.winningTrades / pnlData.totalTrades) * 100).toFixed(1)
-      : '0';
-    elements.statWinRate.textContent = `${winRate}%`;
-  }
-
-  // Rejection reasons
-  if (statsData?.topRejectionReasons?.length > 0) {
-    elements.rejectionList.innerHTML = statsData.topRejectionReasons
-      .slice(0, 5)
-      .map(item => `
-        <div class="rejection-item">
-          <span class="rejection-name">${item.name}</span>
-          <span class="rejection-count">${item.count}</span>
+    return `
+      <div class="position-item">
+        <div class="position-token">${tokenShort}</div>
+        <div class="position-details">
+          <div>Entry: ${pos.amountSol.toFixed(4)} SOL</div>
+          <div class="position-pnl ${pnlClass}">${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(1)}%</div>
         </div>
-      `).join('');
-  } else {
-    elements.rejectionList.innerHTML = '<div class="empty-state">No data yet</div>';
-  }
-}
-
-async function updatePoolSelector() {
-  // Fetch recent pools for the dropdown (limit to 10 most recent)
-  const data = await fetchApi('/api/pools?limit=10');
-  if (!data || !data.pools) return;
-
-  // Keep the default option, add pool options
-  const defaultOption = '<option value="">-- Select a pool --</option>';
-
-  if (data.pools.length === 0) {
-    elements.poolSelector.innerHTML = defaultOption + '<option disabled>No pools available</option>';
-    return;
-  }
-
-  const poolOptions = data.pools.map(pool => {
-    const tokenShort = shortenAddress(pool.tokenMint);
-    const poolShort = shortenAddress(pool.poolId);
-    const time = formatTimeAgo(pool.detectedAt);
-    const actionLabel = pool.action.charAt(0).toUpperCase() + pool.action.slice(1);
-
-    return `<option value="${pool.poolId}">${poolShort} - ${tokenShort} (${actionLabel}, ${time})</option>`;
+      </div>
+    `;
   }).join('');
-
-  elements.poolSelector.innerHTML = defaultOption + poolOptions;
 }
 
 // ============================================================
-// RENDERING
+// MODALS
 // ============================================================
 
-function renderPoolItem(pool) {
-  const time = formatTimeAgo(pool.detectedAt);
-  const tokenShort = shortenAddress(pool.tokenMint);
-  const poolType = pool.poolType || 'AmmV4';
-  const poolTypeClass = poolType.toLowerCase();
+function showTokenDetail(mint) {
+  const token = recentTokens.find(t => t.mint === mint);
+  if (!token) return;
 
-  // Filter badges (show first 3 failed or all passed)
-  const filterBadges = renderFilterBadges(pool.filterResults);
+  const time = new Date(token.detectedAt).toLocaleString();
+  const name = token.name || 'Unknown';
+  const symbol = token.symbol || '--';
 
-  return `
-    <div class="pool-item" onclick="showPoolDetail('${pool.id}')">
-      <div class="pool-header">
-        <div>
-          <span class="pool-action ${pool.action}">${pool.action}</span>
-          <span class="pool-type ${poolTypeClass}">${poolType}</span>
-          <span class="pool-token">${tokenShort}</span>
-        </div>
-        <span class="pool-time">${time}</span>
-      </div>
-      <div class="pool-summary">${pool.summary}</div>
-      ${filterBadges ? `<div class="filter-preview">${filterBadges}</div>` : ''}
-    </div>
-  `;
-}
+  const outcomeIcon = token.outcome === 'bought' ? '✓' : '✗';
+  const outcomeText = token.outcome === 'bought' ? 'Bought' : 'Rejected';
+  const outcomeDetail = token.outcome === 'rejected' && token.rejectionReason
+    ? `at ${token.rejectedAt}: ${formatRejectionReason(token.rejectionReason)}`
+    : `Pipeline completed in ${token.pipelineDurationMs}ms`;
 
-function renderFilterBadges(filterResults) {
-  if (!filterResults || filterResults.length === 0) return '';
-
-  const checkedFilters = filterResults.filter(f => f.checked);
-  if (checkedFilters.length === 0) return '';
-
-  // Show failed filters first, then passed
-  const failed = checkedFilters.filter(f => !f.passed);
-  const passed = checkedFilters.filter(f => f.passed);
-
-  const toShow = [...failed.slice(0, 3), ...passed.slice(0, Math.max(0, 3 - failed.length))];
-
-  return toShow.map(f => `
-    <span class="filter-badge ${f.passed ? 'pass' : 'fail'}">
-      <span class="icon">${f.passed ? '\u2713' : '\u2717'}</span>
-      ${f.displayName}
-    </span>
-  `).join('');
-}
-
-function renderPositionItem(pos) {
-  const tokenShort = shortenAddress(pos.tokenMint);
-  const pnlPercent = pos.currentPnlPercent ?? 0;
-  const pnlClass = pnlPercent >= 0 ? 'positive' : 'negative';
-
-  return `
-    <div class="position-item">
-      <div class="position-token">${tokenShort}</div>
-      <div class="position-details">
-        <div>Entry: ${pos.amountSol.toFixed(4)} SOL</div>
-        <div class="position-pnl ${pnlClass}">${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(1)}%</div>
-        <div>TP: ${pos.takeProfitSol?.toFixed(4) || '--'}</div>
-        <div>SL: ${pos.stopLossSol?.toFixed(4) || '--'}</div>
-      </div>
-    </div>
-  `;
-}
-
-// ============================================================
-// MODAL
-// ============================================================
-
-async function showPoolDetail(poolId) {
-  selectedPoolId = poolId;
-  const pool = await fetchApi(`/api/pools/${poolId}`);
-  if (!pool || pool.error) {
-    alert('Failed to load pool details');
-    return;
-  }
-
-  elements.poolModalBody.innerHTML = renderPoolDetailContent(pool);
-  elements.poolModal.classList.add('open');
-}
-
-function closePoolModal() {
-  elements.poolModal.classList.remove('open');
-  selectedPoolId = null;
-}
-
-function renderPoolDetailContent(pool) {
-  const time = new Date(pool.detectedAt).toLocaleString();
-  const poolType = pool.poolType || 'AmmV4';
-  const poolTypeClass = poolType.toLowerCase();
-
-  // Token info section
-  const tokenInfo = `
+  elements.tokenModalBody.innerHTML = `
     <div class="modal-section">
       <h4>Token Information</h4>
-      <div class="token-info">
+      <div class="token-info-grid">
         <div class="token-field">
-          <div class="token-field-label">Token Mint</div>
-          <div class="token-field-value">${pool.tokenMint}</div>
+          <div class="token-field-label">Name</div>
+          <div class="token-field-value">${escapeHtml(name)}</div>
         </div>
         <div class="token-field">
-          <div class="token-field-label">Pool ID</div>
-          <div class="token-field-value">${pool.poolId}</div>
+          <div class="token-field-label">Symbol</div>
+          <div class="token-field-value">${escapeHtml(symbol)}</div>
         </div>
-        <div class="token-field">
-          <div class="token-field-label">Pool Type</div>
-          <div class="token-field-value">
-            <span class="pool-type ${poolTypeClass}">${poolType}</span>
-          </div>
+        <div class="token-field full-width">
+          <div class="token-field-label">Mint Address</div>
+          <div class="token-field-value copyable" onclick="copyToClipboard('${token.mint}', this)">${token.mint}</div>
         </div>
         <div class="token-field">
           <div class="token-field-label">Detected At</div>
           <div class="token-field-value">${time}</div>
         </div>
         <div class="token-field">
-          <div class="token-field-label">Action</div>
-          <div class="token-field-value">
-            <span class="pool-action ${pool.action}">${pool.action}</span>
-          </div>
+          <div class="token-field-label">Pipeline Duration</div>
+          <div class="token-field-value">${token.pipelineDurationMs}ms</div>
         </div>
       </div>
     </div>
-  `;
 
-  // Filter results section
-  let filterSection = '';
-  if (pool.filterResults && pool.filterResults.length > 0) {
-    const filterItems = pool.filterResults.map(f => {
-      const iconClass = !f.checked ? 'skipped' : (f.passed ? 'pass' : 'fail');
-      const icon = !f.checked ? '-' : (f.passed ? '\u2713' : '\u2717');
-
-      let valuesHtml = '';
-      if (f.expectedValue || f.actualValue) {
-        valuesHtml = `
-          <div class="filter-values">
-            ${f.expectedValue ? `Expected: ${f.expectedValue}` : ''}
-            ${f.expectedValue && f.actualValue ? ' | ' : ''}
-            ${f.actualValue ? `Actual: ${f.actualValue}` : ''}
-          </div>
-        `;
-      }
-
-      return `
-        <div class="filter-detail">
-          <span class="filter-icon ${iconClass}">${icon}</span>
-          <div class="filter-info">
-            <div class="filter-name">${f.displayName}</div>
-            <div class="filter-reason">${f.reason}</div>
-            ${valuesHtml}
-          </div>
-        </div>
-      `;
-    }).join('');
-
-    filterSection = `
-      <div class="modal-section">
-        <h4>Filter Results</h4>
-        ${filterItems}
-      </div>
-    `;
-  }
-
-  // Risk check section
-  let riskSection = '';
-  if (pool.riskCheckReason) {
-    riskSection = `
-      <div class="modal-section">
-        <h4>Risk Check</h4>
-        <div class="filter-detail">
-          <span class="filter-icon ${pool.riskCheckPassed ? 'pass' : 'fail'}">
-            ${pool.riskCheckPassed ? '\u2713' : '\u2717'}
-          </span>
-          <div class="filter-info">
-            <div class="filter-name">Risk Assessment</div>
-            <div class="filter-reason">${pool.riskCheckReason}</div>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  // Summary section
-  const summarySection = `
     <div class="modal-section">
-      <h4>Summary</h4>
-      <div class="filter-detail">
-        <div class="filter-info">
-          <div class="filter-reason">${pool.summary}</div>
+      <h4>Pipeline Result</h4>
+      <div class="pipeline-result ${token.outcome}">
+        <span class="pipeline-result-icon">${outcomeIcon}</span>
+        <div class="pipeline-result-text">
+          <div class="pipeline-result-status">${outcomeText}</div>
+          <div class="pipeline-result-detail">${outcomeDetail}</div>
         </div>
       </div>
     </div>
-  `;
 
-  // External links
-  const linksSection = `
     <div class="modal-section">
       <h4>External Links</h4>
-      <div class="token-info">
-        <div class="token-field">
-          <a href="https://dexscreener.com/solana/${pool.tokenMint}" target="_blank" rel="noopener" style="color: var(--accent-blue);">
-            DexScreener
-          </a>
-        </div>
-        <div class="token-field">
-          <a href="https://solscan.io/token/${pool.tokenMint}" target="_blank" rel="noopener" style="color: var(--accent-blue);">
-            Solscan
-          </a>
-        </div>
+      <div class="external-links">
+        <a href="https://pump.fun/${token.mint}" target="_blank" rel="noopener" class="external-link">Pump.fun</a>
+        <a href="https://dexscreener.com/solana/${token.mint}" target="_blank" rel="noopener" class="external-link">DexScreener</a>
+        <a href="https://solscan.io/token/${token.mint}" target="_blank" rel="noopener" class="external-link">Solscan</a>
       </div>
     </div>
   `;
 
-  return tokenInfo + filterSection + riskSection + summarySection + linksSection;
+  elements.tokenModal.classList.add('open');
+}
+
+function closeTokenModal() {
+  elements.tokenModal.classList.remove('open');
+}
+
+function openResetModal() {
+  elements.resetModal.classList.add('open');
+}
+
+function closeResetModal() {
+  elements.resetModal.classList.remove('open');
+}
+
+async function confirmResetStats() {
+  elements.confirmResetBtn.disabled = true;
+  elements.confirmResetBtn.textContent = 'Resetting...';
+
+  const result = await postApi('/api/pipeline-stats/reset');
+
+  if (result && result.success) {
+    closeResetModal();
+    // Immediately refresh stats
+    await updatePipelineStats();
+  } else {
+    alert('Failed to reset stats: ' + (result?.error || 'Unknown error'));
+  }
+
+  elements.confirmResetBtn.disabled = false;
+  elements.confirmResetBtn.textContent = 'Reset Stats';
 }
 
 // ============================================================
@@ -430,139 +421,59 @@ function formatTimeAgo(timestamp) {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+async function copyToClipboard(text, element) {
+  try {
+    await navigator.clipboard.writeText(text);
+
+    // Show feedback
+    if (element) {
+      const originalText = element.textContent;
+      if (element.classList.contains('copy-btn')) {
+        element.textContent = '✓';
+        element.classList.add('copied');
+        setTimeout(() => {
+          element.textContent = '📋';
+          element.classList.remove('copied');
+        }, 1500);
+      } else {
+        element.style.color = 'var(--accent-green)';
+        setTimeout(() => {
+          element.style.color = '';
+        }, 1500);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to copy:', err);
+  }
+}
+
 // ============================================================
 // EVENT HANDLERS
 // ============================================================
 
-elements.poolFilter.addEventListener('change', (e) => {
-  currentPoolFilter = e.target.value;
-  updatePools();
+elements.tokenFilter.addEventListener('change', (e) => {
+  currentTokenFilter = e.target.value;
+  updateTokenList();
 });
 
-elements.poolTypeFilter.addEventListener('change', (e) => {
-  currentPoolTypeFilter = e.target.value;
-  updatePools();
-});
+elements.resetStatsBtn.addEventListener('click', openResetModal);
+elements.confirmResetBtn.addEventListener('click', confirmResetStats);
 
-// Pool selector for test trade
-elements.poolSelector.addEventListener('change', (e) => {
-  const selectedPoolId = e.target.value;
-  if (selectedPoolId) {
-    elements.poolIdInput.value = selectedPoolId;
-  }
-});
-
-// Close modal on Escape key
+// Close modals on Escape key
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && elements.poolModal.classList.contains('open')) {
-    closePoolModal();
-  }
-});
-
-// ============================================================
-// TEST TRADE
-// ============================================================
-
-let isTestTradeRunning = false;
-
-async function executeTestTrade() {
-  if (isTestTradeRunning) return;
-
-  const poolId = elements.poolIdInput.value.trim();
-  const amountValue = elements.amountInput.value.trim();
-  const dryRun = elements.dryRunCheckbox.checked;
-
-  // Validate pool ID
-  if (!poolId) {
-    showTestTradeResult(false, 'Please enter a Pool ID');
-    return;
-  }
-
-  // Validate pool ID format (base58, 32-44 characters)
-  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(poolId)) {
-    showTestTradeResult(false, 'Invalid Pool ID format');
-    return;
-  }
-
-  // Parse amount if provided
-  let amount;
-  if (amountValue) {
-    amount = parseFloat(amountValue);
-    if (isNaN(amount) || amount <= 0) {
-      showTestTradeResult(false, 'Invalid amount');
-      return;
+  if (e.key === 'Escape') {
+    if (elements.tokenModal.classList.contains('open')) {
+      closeTokenModal();
     }
-  }
-
-  // Start loading state
-  isTestTradeRunning = true;
-  elements.testTradeBtn.disabled = true;
-  elements.testTradeBtn.textContent = 'Executing...';
-  hideTestTradeResult();
-
-  try {
-    const response = await fetch(`${API_BASE}/api/test-trade`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        poolId,
-        dryRun,
-        amount,
-      }),
-    });
-
-    const result = await response.json();
-    showTestTradeResult(result.success, result.message, result.details);
-  } catch (error) {
-    console.error('Test trade error:', error);
-    showTestTradeResult(false, 'Failed to execute test trade', { error: error.message });
-  } finally {
-    isTestTradeRunning = false;
-    elements.testTradeBtn.disabled = false;
-    elements.testTradeBtn.textContent = 'Execute Trade';
-  }
-}
-
-function showTestTradeResult(success, message, details) {
-  const resultEl = elements.testTradeResult;
-  const iconEl = resultEl.querySelector('.result-icon');
-  const messageEl = resultEl.querySelector('.result-message');
-  const detailsEl = resultEl.querySelector('.result-details');
-
-  resultEl.style.display = 'block';
-  resultEl.className = `test-trade-result ${success ? 'success' : 'error'}`;
-
-  iconEl.textContent = success ? '\u2713' : '\u2717';
-  messageEl.textContent = message;
-
-  if (details) {
-    const detailItems = [];
-    if (details.poolId) detailItems.push(`Pool: ${shortenAddress(details.poolId)}`);
-    if (details.tokenMint) detailItems.push(`Token: ${shortenAddress(details.tokenMint)}`);
-    if (details.amount) detailItems.push(`Amount: ${details.amount} SOL`);
-    if (details.dryRun !== undefined) detailItems.push(`Mode: ${details.dryRun ? 'Dry Run' : 'Live'}`);
-    if (details.txSignature) detailItems.push(`Tx: ${shortenAddress(details.txSignature)}`);
-    if (details.error) detailItems.push(`Error: ${details.error}`);
-
-    detailsEl.innerHTML = detailItems.map(item => `<div>${item}</div>`).join('');
-  } else {
-    detailsEl.innerHTML = '';
-  }
-}
-
-function hideTestTradeResult() {
-  elements.testTradeResult.style.display = 'none';
-}
-
-// Test trade button handler
-elements.testTradeBtn.addEventListener('click', executeTestTrade);
-
-// Handle Enter key in pool ID input
-elements.poolIdInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    executeTestTrade();
+    if (elements.resetModal.classList.contains('open')) {
+      closeResetModal();
+    }
   }
 });
 
@@ -573,10 +484,8 @@ elements.poolIdInput.addEventListener('keydown', (e) => {
 async function updateAll() {
   await Promise.all([
     updateStatus(),
-    updatePools(),
+    updatePipelineStats(),
     updatePositions(),
-    updateStats(),
-    updatePoolSelector(),
   ]);
 }
 
@@ -587,5 +496,7 @@ updateAll();
 setInterval(updateAll, POLL_INTERVAL);
 
 // Make functions available globally for onclick handlers
-window.showPoolDetail = showPoolDetail;
-window.closePoolModal = closePoolModal;
+window.showTokenDetail = showTokenDetail;
+window.closeTokenModal = closeTokenModal;
+window.closeResetModal = closeResetModal;
+window.copyToClipboard = copyToClipboard;

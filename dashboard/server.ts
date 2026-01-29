@@ -13,6 +13,7 @@ import { logger } from '../helpers';
 import { getStateStore } from '../persistence';
 import { getPnlTracker, getExposureManager, getPositionMonitor } from '../risk';
 import { PoolAction, PoolType } from '../persistence/models';
+import { getPipelineStats, resetPipelineStats } from '../pipeline';
 
 // Dynamic import for test-trade to avoid crash if file doesn't exist
 let executeTestTrade: ((options: { poolId: string; dryRun: boolean; amount?: number }) => Promise<any>) | null = null;
@@ -250,6 +251,10 @@ export class DashboardServer {
           data = this.getApiStats();
           break;
 
+        case '/api/pipeline-stats':
+          data = this.getApiPipelineStats();
+          break;
+
         default:
           // Check for /api/pools/:id pattern
           if (pathname.startsWith('/api/pools/')) {
@@ -286,6 +291,10 @@ export class DashboardServer {
       switch (pathname) {
         case '/api/test-trade':
           await this.handleTestTrade(body, res);
+          break;
+
+        case '/api/pipeline-stats/reset':
+          await this.handleResetPipelineStats(res);
           break;
 
         default:
@@ -645,6 +654,46 @@ export class DashboardServer {
       topRejectionReasons: sortedRejections.slice(0, 10),
       blacklist: dbStats.blacklist,
     };
+  }
+
+  /**
+   * GET /api/pipeline-stats - Pipeline statistics for pump.fun dashboard
+   */
+  private getApiPipelineStats() {
+    const pipelineStats = getPipelineStats();
+    if (!pipelineStats) {
+      return {
+        error: 'Pipeline stats not initialized',
+        startedAt: Date.now(),
+        tokensDetected: 0,
+        tokensBought: 0,
+        tokensRejected: 0,
+        buyRate: 0,
+        gateStats: { cheapGates: [], deepFilters: [] },
+        topRejectionReasons: [],
+        avgPipelineDurationMs: 0,
+        recentTokens: [],
+      };
+    }
+
+    return pipelineStats.getSnapshot();
+  }
+
+  /**
+   * POST /api/pipeline-stats/reset - Reset pipeline statistics
+   */
+  private async handleResetPipelineStats(res: http.ServerResponse): Promise<void> {
+    try {
+      resetPipelineStats();
+      logger.info('Pipeline stats reset via dashboard');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Pipeline stats reset successfully' }));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ error: errorMessage }, 'Failed to reset pipeline stats');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: errorMessage }));
+    }
   }
 
   // ============================================================

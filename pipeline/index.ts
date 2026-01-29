@@ -13,3 +13,6 @@ export * from './deep-filters';
 
 // Pipeline orchestrator
 export * from './pipeline';
+
+// Pipeline stats tracking
+export * from './pipeline-stats';

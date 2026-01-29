@@ -118,6 +118,8 @@ import {
   initPipeline,
   getPipeline,
   DetectionEvent,
+  initPipelineStats,
+  getPipelineStats,
 } from './pipeline';
 
 // Global references for graceful shutdown
@@ -511,6 +513,10 @@ const runListener = async () => {
       verbose: LOG_LEVEL === 'debug' || LOG_LEVEL === 'trace',
     });
     logger.info('[pipeline] pump.fun processing pipeline initialized');
+
+    // Initialize pipeline stats for dashboard tracking
+    initPipelineStats();
+    logger.info('[pipeline-stats] Pipeline statistics tracker initialized');
   }
 
   // Initialize position monitor (independent monitoring loop) - for Raydium pools
@@ -908,6 +914,12 @@ const runListener = async () => {
       }
 
       const pipelineResult = await pipeline.process(detectionEvent);
+
+      // Record pipeline result for dashboard stats
+      const pipelineStats = getPipelineStats();
+      if (pipelineStats) {
+        pipelineStats.recordResult(pipelineResult);
+      }
 
       if (!pipelineResult.success) {
         // Pipeline rejected the token - already logged by pipeline
