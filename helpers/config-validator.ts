@@ -111,6 +111,9 @@ export interface ValidatedConfig {
   pumpfunEnableMinSolFilter: boolean;
   pumpfunEnableMaxSolFilter: boolean;
   pumpfunMinScoreRequired: number;
+
+  // Token-2022 Support (pump.fun now uses Token-2022)
+  allowToken2022: boolean;
 }
 
 interface ValidationError {
@@ -404,6 +407,10 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'PUMPFUN_MIN_SCORE_REQUIRED', message: 'PUMPFUN_MIN_SCORE_REQUIRED must be between 0 and 100' });
   }
 
+  // === TOKEN-2022 SUPPORT ===
+  // pump.fun migrated to Token-2022 in 2025, so this should be enabled for pump.fun trading
+  const allowToken2022 = requireBoolean('ALLOW_TOKEN_2022', true);
+
   // Validate private key format (base58)
   if (privateKey) {
     try {
@@ -513,6 +520,7 @@ export function validateConfig(): ValidatedConfig {
     pumpfunEnableMinSolFilter,
     pumpfunEnableMaxSolFilter,
     pumpfunMinScoreRequired,
+    allowToken2022,
   };
 
   // Log dry run mode warning

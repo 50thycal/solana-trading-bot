@@ -79,6 +79,7 @@ import {
   PUMPFUN_ENABLE_MIN_SOL_FILTER,
   PUMPFUN_ENABLE_MAX_SOL_FILTER,
   PUMPFUN_MIN_SCORE_REQUIRED,
+  ALLOW_TOKEN_2022,
 } from './helpers';
 // verifyTokenAge is now called internally by listeners
 import {
@@ -502,7 +503,7 @@ const runListener = async () => {
     initPipeline(connection, wallet, {
       cheapGates: {
         tradeAmountSol: tradeAmount,
-        allowToken2022: false,
+        allowToken2022: ALLOW_TOKEN_2022,
         skipMintInfoCheck: false,
       },
       deepFilters: {
