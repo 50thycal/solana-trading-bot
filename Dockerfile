@@ -70,7 +70,7 @@ ENV NODE_ENV=production
 ENV HEALTH_PORT=8080
 ENV DATA_DIR=./data
 ENV DASHBOARD_ENABLED=true
-ENV DASHBOARD_PORT=8080
+ENV DASHBOARD_PORT=3000
 
 # Entrypoint handles permission fixing and user switching
 ENTRYPOINT ["docker-entrypoint.sh"]
