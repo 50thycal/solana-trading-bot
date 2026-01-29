@@ -502,7 +502,6 @@ const runListener = async () => {
     initPipeline(connection, wallet, {
       cheapGates: {
         tradeAmountSol: tradeAmount,
-        allowToken2022: false,
         skipMintInfoCheck: false,
       },
       deepFilters: {

@@ -11,7 +11,7 @@
  */
 
 import { Connection, PublicKey } from '@solana/web3.js';
-import { getMint, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
+import { getMint, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
 import {
   DetectionEvent,
   StageResult,
@@ -117,16 +117,12 @@ export interface CheapGatesConfig {
   /** Trade amount in SOL for exposure check */
   tradeAmountSol: number;
 
-  /** Allow Token-2022 tokens? (default: false for safety) */
-  allowToken2022: boolean;
-
   /** Skip mint info check? (for testing only) */
   skipMintInfoCheck: boolean;
 }
 
 const DEFAULT_CONFIG: CheapGatesConfig = {
   tradeAmountSol: 0.01,
-  allowToken2022: false,
   skipMintInfoCheck: false,
 };
 
@@ -257,32 +253,15 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
 
     if (!this.config.skipMintInfoCheck) {
       try {
-        // Try SPL Token first
+        // pump.fun uses Token-2022 exclusively (since Mayhem Mode migration)
         let mint;
-        let isToken2022 = false;
-
         try {
-          mint = await getMint(this.connection, detection.mint, 'confirmed', TOKEN_PROGRAM_ID);
-        } catch {
-          // Try Token-2022
-          try {
-            mint = await getMint(this.connection, detection.mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
-            isToken2022 = true;
-          } catch (e) {
-            return this.reject(
-              'Failed to fetch mint info',
-              startTime,
-              { mint: mintStr, error: String(e) }
-            );
-          }
-        }
-
-        // Check Token-2022 policy
-        if (isToken2022 && !this.config.allowToken2022) {
+          mint = await getMint(this.connection, detection.mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
+        } catch (e) {
           return this.reject(
-            RejectionReasons.TOKEN_2022_UNSUPPORTED,
+            'Failed to fetch mint info (Token-2022)',
             startTime,
-            { mint: mintStr }
+            { mint: mintStr, error: String(e) }
           );
         }
 
@@ -318,7 +297,7 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
           freezeAuthority: mint.freezeAuthority,
           decimals: mint.decimals,
           supply: mint.supply,
-          isToken2022,
+          isToken2022: true, // pump.fun uses Token-2022 exclusively
         };
       } catch (error) {
         return this.reject(
@@ -334,7 +313,7 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
         freezeAuthority: null,
         decimals: 6,
         supply: BigInt(0),
-        isToken2022: false,
+        isToken2022: true, // pump.fun uses Token-2022 exclusively
       };
     }
 
