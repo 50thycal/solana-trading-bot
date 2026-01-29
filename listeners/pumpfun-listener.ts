@@ -1,5 +1,7 @@
 import { Connection, PublicKey, Logs, ParsedTransactionWithMeta } from '@solana/web3.js';
 import { getTokenMetadata, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
+import { getPdaMetadataKey } from '@raydium-io/raydium-sdk';
+import { getMetadataAccountDataSerializer } from '@metaplex-foundation/mpl-token-metadata';
 import { EventEmitter } from 'events';
 import { getMintCache } from '../cache/mint.cache';
 import { logger } from '../helpers/logger';
@@ -260,7 +262,7 @@ export class PumpFunListener extends EventEmitter {
         let tokenUri = token.uri;
 
         if (!tokenName || !tokenSymbol) {
-          const metadata = await this.fetchToken2022Metadata(token.mint);
+          const metadata = await this.fetchTokenMetadata(token.mint);
           if (metadata.name) tokenName = metadata.name;
           if (metadata.symbol) tokenSymbol = metadata.symbol;
           if (metadata.uri && !tokenUri) tokenUri = metadata.uri;
@@ -591,16 +593,56 @@ export class PumpFunListener extends EventEmitter {
   }
 
   /**
-   * Fetch Token-2022 metadata from the mint account
+   * Fetch token metadata from on-chain accounts
    *
-   * pump.fun CreateV2 tokens use Token-2022 with embedded metadata.
-   * This fetches the actual name/symbol from the on-chain metadata.
+   * Tries multiple sources:
+   * 1. Metaplex Token Metadata (for SPL tokens using Create instruction)
+   * 2. Token-2022 embedded metadata (for CreateV2 tokens)
    */
-  private async fetchToken2022Metadata(mint: PublicKey): Promise<{
+  private async fetchTokenMetadata(mint: PublicKey): Promise<{
     name: string;
     symbol: string;
     uri: string;
   }> {
+    // Try Metaplex metadata first (most pump.fun SPL tokens use this)
+    try {
+      const metadataPDA = getPdaMetadataKey(mint);
+      const metadataAccount = await this.connection.getAccountInfo(
+        metadataPDA.publicKey,
+        'confirmed'
+      );
+
+      if (metadataAccount?.data) {
+        const serializer = getMetadataAccountDataSerializer();
+        const [metadata] = serializer.deserialize(metadataAccount.data);
+
+        if (metadata.name || metadata.symbol) {
+          // Metaplex metadata has null-padded strings, trim them
+          const name = metadata.name.replace(/\0/g, '').trim();
+          const symbol = metadata.symbol.replace(/\0/g, '').trim();
+          const uri = metadata.uri.replace(/\0/g, '').trim();
+
+          logger.debug(
+            {
+              mint: mint.toString(),
+              name,
+              symbol,
+              uri,
+            },
+            '[pump.fun] Fetched Metaplex metadata'
+          );
+
+          return { name, symbol, uri };
+        }
+      }
+    } catch (error) {
+      logger.debug(
+        { mint: mint.toString(), error: String(error) },
+        '[pump.fun] Could not fetch Metaplex metadata'
+      );
+    }
+
+    // Fallback: Try Token-2022 metadata (for CreateV2 tokens)
     try {
       const metadata = await getTokenMetadata(
         this.connection,
@@ -627,10 +669,9 @@ export class PumpFunListener extends EventEmitter {
         };
       }
     } catch (error) {
-      // Token might not be Token-2022 or metadata not available
       logger.debug(
         { mint: mint.toString(), error: String(error) },
-        '[pump.fun] Could not fetch Token-2022 metadata (may be SPL token)'
+        '[pump.fun] Could not fetch Token-2022 metadata'
       );
     }
 
