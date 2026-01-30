@@ -228,7 +228,48 @@ export class PipelineStats {
       MINT_FETCH_FAILED: 'mint-info',
     };
 
-    const failedGate = reasonToGate[reason] || 'dedupe'; // Default to first gate if unknown
+    let failedGate = reasonToGate[reason];
+
+    // If no direct match, use pattern matching for dynamic rejection reasons
+    if (!failedGate) {
+      const lowerReason = reason.toLowerCase();
+
+      // Name/Symbol pattern rejections (from checkNameSymbolPatterns)
+      if (
+        lowerReason.includes('name') ||
+        lowerReason.includes('symbol') ||
+        lowerReason.includes('junk pattern') ||
+        lowerReason.includes('special characters')
+      ) {
+        failedGate = 'pattern';
+      }
+      // Mint info related errors
+      else if (
+        lowerReason.includes('mint') ||
+        lowerReason.includes('authority') ||
+        lowerReason.includes('decimals') ||
+        lowerReason.includes('freeze')
+      ) {
+        failedGate = 'mint-info';
+      }
+      // Blacklist related
+      else if (lowerReason.includes('blacklist')) {
+        failedGate = 'blacklist';
+      }
+      // Exposure related
+      else if (
+        lowerReason.includes('exposure') ||
+        lowerReason.includes('balance') ||
+        lowerReason.includes('trades per')
+      ) {
+        failedGate = 'exposure';
+      }
+      // Default to dedupe for truly unknown reasons
+      else {
+        failedGate = 'dedupe';
+      }
+    }
+
     let foundFailed = false;
 
     for (const gate of CHEAP_GATES) {
