@@ -43,6 +43,9 @@ export {
   PaperTrade,
   PaperPnLResult,
   PaperPnLSummary,
+  PaperMonitorConfig,
+  PaperTradeStatus,
+  PaperCloseReason,
   initPaperTradeTracker,
   getPaperTradeTracker,
 } from './paper-trade-tracker';

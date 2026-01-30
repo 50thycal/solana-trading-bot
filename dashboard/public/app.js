@@ -334,8 +334,22 @@ async function updatePaperTradeCount() {
 
   const data = await fetchApi('/api/paper-trades');
   if (data) {
-    const count = data.count || 0;
-    elements.paperTradeCount.textContent = `${count} trade${count !== 1 ? 's' : ''}`;
+    const activeCount = data.activeCount || 0;
+    const closedCount = data.closedCount || 0;
+    const totalCount = activeCount + closedCount;
+
+    let countText = `${totalCount} trade${totalCount !== 1 ? 's' : ''}`;
+    if (closedCount > 0) {
+      countText += ` (${activeCount} active, ${closedCount} closed)`;
+    }
+    elements.paperTradeCount.textContent = countText;
+
+    // Show monitoring status indicator
+    if (data.monitoringEnabled) {
+      elements.paperTradeCount.title = 'TP/SL monitoring active';
+    } else {
+      elements.paperTradeCount.title = 'TP/SL monitoring disabled';
+    }
   }
 }
 
@@ -366,29 +380,51 @@ function renderPaperPnLSummary(summary) {
     return;
   }
 
-  const pnlClass = (summary.totalPnlPercent || 0) >= 0 ? 'positive' : 'negative';
-  const pnlSign = (summary.totalPnlPercent || 0) >= 0 ? '+' : '';
+  const totalPnlClass = (summary.totalPnlPercent || 0) >= 0 ? 'positive' : 'negative';
+  const totalPnlSign = (summary.totalPnlPercent || 0) >= 0 ? '+' : '';
+
+  const realizedPnlClass = (summary.realizedPnlSol || 0) >= 0 ? 'positive' : 'negative';
+  const realizedPnlSign = (summary.realizedPnlSol || 0) >= 0 ? '+' : '';
+
+  const unrealizedPnlClass = (summary.unrealizedPnlPercent || 0) >= 0 ? 'positive' : 'negative';
+  const unrealizedPnlSign = (summary.unrealizedPnlPercent || 0) >= 0 ? '+' : '';
+
+  const monitoringStatus = summary.monitoringEnabled
+    ? '<span class="monitoring-badge active">TP/SL Active</span>'
+    : '<span class="monitoring-badge inactive">Monitoring Off</span>';
 
   elements.paperPnlSummary.innerHTML = `
+    <div class="pnl-header">
+      ${monitoringStatus}
+    </div>
     <div class="pnl-summary-grid">
       <div class="pnl-stat">
-        <div class="pnl-stat-label">Total Entry</div>
-        <div class="pnl-stat-value">${summary.totalEntrySol.toFixed(4)} SOL</div>
+        <div class="pnl-stat-label">Open Positions (${summary.activeTrades})</div>
+        <div class="pnl-stat-value ${unrealizedPnlClass}">
+          ${summary.unrealizedPnlSol !== null
+            ? `${unrealizedPnlSign}${summary.unrealizedPnlSol.toFixed(4)} SOL (${unrealizedPnlSign}${(summary.unrealizedPnlPercent || 0).toFixed(2)}%)`
+            : 'N/A'}
+        </div>
+        <div class="pnl-stat-sublabel">Unrealized</div>
       </div>
       <div class="pnl-stat">
-        <div class="pnl-stat-label">Current Value</div>
-        <div class="pnl-stat-value">${summary.totalCurrentSol !== null ? summary.totalCurrentSol.toFixed(4) + ' SOL' : 'N/A'}</div>
+        <div class="pnl-stat-label">Closed Positions (${summary.closedTrades})</div>
+        <div class="pnl-stat-value ${realizedPnlClass}">
+          ${realizedPnlSign}${summary.realizedPnlSol.toFixed(4)} SOL
+          ${summary.realizedPnlPercent !== null ? `(${realizedPnlSign}${summary.realizedPnlPercent.toFixed(2)}%)` : ''}
+        </div>
+        <div class="pnl-stat-sublabel">Realized (locked in)</div>
       </div>
-      <div class="pnl-stat">
-        <div class="pnl-stat-label">Paper P&L</div>
-        <div class="pnl-stat-value ${pnlClass}">
-          ${summary.totalPnlSol !== null ? `${pnlSign}${summary.totalPnlSol.toFixed(4)} SOL` : 'N/A'}
-          ${summary.totalPnlPercent !== null ? `(${pnlSign}${summary.totalPnlPercent.toFixed(2)}%)` : ''}
+      <div class="pnl-stat total">
+        <div class="pnl-stat-label">Total Paper P&L</div>
+        <div class="pnl-stat-value ${totalPnlClass}">
+          ${summary.totalPnlSol !== null ? `${totalPnlSign}${summary.totalPnlSol.toFixed(4)} SOL` : 'N/A'}
+          ${summary.totalPnlPercent !== null ? `(${totalPnlSign}${summary.totalPnlPercent.toFixed(2)}%)` : ''}
         </div>
       </div>
       <div class="pnl-stat">
-        <div class="pnl-stat-label">Trades</div>
-        <div class="pnl-stat-value">${summary.activeTrades} active / ${summary.totalTrades} total</div>
+        <div class="pnl-stat-label">Trade Breakdown</div>
+        <div class="pnl-stat-value">${summary.activeTrades} active, ${summary.closedTrades} closed, ${summary.graduatedTrades} graduated</div>
       </div>
     </div>
     <div class="pnl-timestamp">Last checked: ${new Date(summary.checkedAt).toLocaleTimeString()}</div>
@@ -405,25 +441,49 @@ function renderPaperTradesList(trades) {
     const pnlClass = (trade.pnlPercent || 0) >= 0 ? 'positive' : 'negative';
     const pnlSign = (trade.pnlPercent || 0) >= 0 ? '+' : '';
 
+    // Status badge based on trade status and close reason
     let statusBadge = '';
-    if (trade.status === 'graduated') {
+    if (trade.status === 'closed' && trade.closedReason) {
+      const reasonMap = {
+        'take_profit': { text: 'TP Hit', class: 'take-profit' },
+        'stop_loss': { text: 'SL Hit', class: 'stop-loss' },
+        'time_exit': { text: 'Time Exit', class: 'time-exit' },
+        'graduated': { text: 'Graduated', class: 'graduated' },
+      };
+      const badge = reasonMap[trade.closedReason] || { text: 'Closed', class: 'closed' };
+      statusBadge = `<span class="status-badge ${badge.class}">${badge.text}</span>`;
+    } else if (trade.status === 'graduated') {
       statusBadge = '<span class="status-badge graduated">Graduated</span>';
     } else if (trade.status === 'error') {
       statusBadge = '<span class="status-badge error">Error</span>';
+    } else if (trade.status === 'active') {
+      statusBadge = '<span class="status-badge active">Open</span>';
     }
 
     const name = escapeHtml(trade.name || 'Unknown');
     const symbol = trade.symbol ? escapeHtml(`($${trade.symbol})`) : '';
     const mintShort = shortenAddress(trade.mint);
-    const timeAgo = formatTimeAgo(trade.entryTimestamp);
+
+    // For closed trades, show how long ago it was closed; for active, show entry time
+    let timeInfo = '';
+    if (trade.closedTimestamp) {
+      const holdDuration = trade.closedTimestamp - trade.entryTimestamp;
+      const holdDurationStr = formatDuration(holdDuration);
+      timeInfo = `
+        <span class="paper-trade-time">Closed ${formatTimeAgo(trade.closedTimestamp)}</span>
+        <span class="paper-trade-hold-time">Held: ${holdDurationStr}</span>
+      `;
+    } else {
+      timeInfo = `<span class="paper-trade-time">Entered ${formatTimeAgo(trade.entryTimestamp)}</span>`;
+    }
 
     return `
-      <div class="paper-trade-item ${trade.status}">
+      <div class="paper-trade-item ${trade.status} ${trade.closedReason || ''}">
         <div class="paper-trade-info">
           <div class="paper-trade-name">${name} <span class="symbol">${symbol}</span></div>
           <div class="paper-trade-meta">
             <span class="paper-trade-mint" onclick="copyToClipboard('${trade.mint}', this)" title="Click to copy">${mintShort}</span>
-            <span class="paper-trade-time">${timeAgo}</span>
+            ${timeInfo}
           </div>
         </div>
         <div class="paper-trade-pnl">
@@ -436,6 +496,18 @@ function renderPaperTradesList(trades) {
       </div>
     `;
   }).join('');
+}
+
+/**
+ * Format duration in ms to human readable string
+ */
+function formatDuration(ms) {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${hours}h ${minutes}m`;
 }
 
 async function clearPaperTrades() {

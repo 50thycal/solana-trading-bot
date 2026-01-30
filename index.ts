@@ -292,6 +292,13 @@ async function gracefulShutdown(signal: string): Promise<void> {
       pumpFunMonitor.stop();
     }
 
+    // Stop paper trade monitor (dry run mode)
+    const paperTracker = getPaperTradeTracker();
+    if (paperTracker) {
+      logger.info('Stopping paper trade monitor...');
+      paperTracker.stop();
+    }
+
     // Stop listeners
     if (listeners) {
       logger.info('Stopping WebSocket listeners...');
@@ -526,10 +533,25 @@ const runListener = async () => {
     initPipelineStats();
     logger.info('[pipeline-stats] Pipeline statistics tracker initialized');
 
-    // Initialize paper trade tracker for dry run mode
+    // Initialize paper trade tracker for dry run mode with TP/SL monitoring
     if (DRY_RUN) {
-      initPaperTradeTracker(connection);
-      logger.info('[paper-trade] Paper trade tracker initialized for dry run mode');
+      const paperTracker = initPaperTradeTracker(connection, {
+        checkIntervalMs: PRICE_CHECK_INTERVAL,
+        takeProfit: TAKE_PROFIT,
+        stopLoss: STOP_LOSS,
+        maxHoldDurationMs: MAX_HOLD_DURATION_MS,
+        enabled: true, // Enable position monitoring for realistic P&L
+      });
+      paperTracker.start(); // Start the monitoring loop
+      logger.info(
+        {
+          checkInterval: `${PRICE_CHECK_INTERVAL}ms`,
+          takeProfit: `${TAKE_PROFIT}%`,
+          stopLoss: `${STOP_LOSS}%`,
+          maxHoldDuration: MAX_HOLD_DURATION_MS > 0 ? `${MAX_HOLD_DURATION_MS}ms` : 'disabled',
+        },
+        '[paper-trade] Paper trade tracker initialized with TP/SL monitoring for dry run mode'
+      );
     }
   }
 
