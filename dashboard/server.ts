@@ -711,18 +711,32 @@ export class DashboardServer {
 
   /**
    * GET /api/paper-trades - List paper trades without P&L calculation
+   * Now includes both active and closed trades
    */
   private getApiPaperTrades() {
     const tracker = getPaperTradeTracker();
     if (!tracker) {
-      return { error: 'Paper trade tracker not initialized (not in dry run mode)', trades: [], count: 0 };
+      return {
+        error: 'Paper trade tracker not initialized (not in dry run mode)',
+        activeTrades: [],
+        closedTrades: [],
+        activeCount: 0,
+        closedCount: 0,
+        monitoringEnabled: false,
+      };
     }
 
-    const trades = tracker.getPaperTrades();
+    const activeTrades = tracker.getActivePaperTrades();
+    const closedTrades = tracker.getClosedPaperTrades();
+    const summaryStats = tracker.getSummaryStats();
+
     return {
-      count: trades.length,
+      activeCount: activeTrades.length,
+      closedCount: closedTrades.length,
       maxTrades: 100,
-      trades: trades.map((t) => ({
+      monitoringEnabled: summaryStats.monitoringEnabled,
+      realizedPnlSol: summaryStats.realizedPnlSol,
+      activeTrades: activeTrades.map((t) => ({
         mint: t.mint,
         name: t.name,
         symbol: t.symbol,
@@ -731,6 +745,23 @@ export class DashboardServer {
         entryPrice: t.entryPricePerToken,
         entryTimestamp: t.entryTimestamp,
         bondingCurve: t.bondingCurve,
+        status: t.status,
+      })),
+      closedTrades: closedTrades.map((t) => ({
+        mint: t.mint,
+        name: t.name,
+        symbol: t.symbol,
+        entrySol: t.hypotheticalSolSpent,
+        tokensReceived: t.hypotheticalTokensReceived,
+        entryPrice: t.entryPricePerToken,
+        entryTimestamp: t.entryTimestamp,
+        bondingCurve: t.bondingCurve,
+        status: t.status,
+        closedTimestamp: t.closedTimestamp,
+        closedReason: t.closedReason,
+        exitSolReceived: t.exitSolReceived,
+        realizedPnlSol: t.realizedPnlSol,
+        realizedPnlPercent: t.realizedPnlPercent,
       })),
     };
   }

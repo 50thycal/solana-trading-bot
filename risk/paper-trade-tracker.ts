@@ -2,7 +2,8 @@
  * Paper Trade Tracker
  *
  * Tracks hypothetical trades that would have been executed in dry run mode.
- * Allows checking P&L on-demand without continuous RPC polling.
+ * Now includes continuous monitoring for TP/SL simulation to provide realistic
+ * paper trading results.
  */
 
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
@@ -18,6 +19,9 @@ import BN from 'bn.js';
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════════
+
+export type PaperTradeStatus = 'active' | 'closed' | 'graduated' | 'error';
+export type PaperCloseReason = 'take_profit' | 'stop_loss' | 'time_exit' | 'graduated';
 
 export interface PaperTrade {
   id: string;
@@ -39,6 +43,26 @@ export interface PaperTrade {
   // For display
   pipelineDurationMs: number;
   signature: string;
+
+  // Position status and close info (for TP/SL simulation)
+  status: PaperTradeStatus;
+  closedTimestamp?: number;
+  closedReason?: PaperCloseReason;
+  exitPricePerToken?: number;
+  exitSolReceived?: number;
+  realizedPnlSol?: number;
+  realizedPnlPercent?: number;
+}
+
+/**
+ * Configuration for paper trade monitoring
+ */
+export interface PaperMonitorConfig {
+  checkIntervalMs: number;
+  takeProfit: number; // percentage
+  stopLoss: number; // percentage
+  maxHoldDurationMs: number; // 0 = disabled
+  enabled: boolean;
 }
 
 export interface PaperPnLResult {
@@ -52,22 +76,37 @@ export interface PaperPnLResult {
   currentSol: number | null;
   pnlSol: number | null;
   pnlPercent: number | null;
-  status: 'active' | 'graduated' | 'error';
+  status: PaperTradeStatus;
   errorMessage?: string;
   entryTimestamp: number;
+  // For closed trades
+  closedTimestamp?: number;
+  closedReason?: PaperCloseReason;
 }
 
 export interface PaperPnLSummary {
   totalTrades: number;
   activeTrades: number;
+  closedTrades: number;
   graduatedTrades: number;
   errorTrades: number;
-  totalEntrySol: number;
+  // Active (unrealized) P&L
+  totalEntrySolActive: number;
   totalCurrentSol: number | null;
+  unrealizedPnlSol: number | null;
+  unrealizedPnlPercent: number | null;
+  // Closed (realized) P&L
+  realizedPnlSol: number;
+  realizedPnlPercent: number | null;
+  // Combined
+  totalEntrySol: number;
   totalPnlSol: number | null;
   totalPnlPercent: number | null;
+  // Trade details
   trades: PaperPnLResult[];
   checkedAt: number;
+  // Monitor status
+  monitoringEnabled: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -81,11 +120,231 @@ const MAX_PAPER_TRADES = 100;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export class PaperTradeTracker {
-  private trades: Map<string, PaperTrade> = new Map();
+  private activeTrades: Map<string, PaperTrade> = new Map();
+  private closedTrades: PaperTrade[] = [];
   private connection: Connection;
+  private monitorConfig: PaperMonitorConfig | null = null;
+  private monitorLoop: NodeJS.Timeout | null = null;
+  private isMonitoringActive: boolean = false;
 
-  constructor(connection: Connection) {
+  constructor(connection: Connection, monitorConfig?: PaperMonitorConfig) {
     this.connection = connection;
+    if (monitorConfig) {
+      this.monitorConfig = monitorConfig;
+    }
+  }
+
+  /**
+   * Start the position monitoring loop
+   */
+  start(): void {
+    if (!this.monitorConfig || !this.monitorConfig.enabled) {
+      logger.info('[paper-trade] Monitoring disabled - positions will not be auto-closed');
+      return;
+    }
+
+    if (this.isMonitoringActive) {
+      logger.warn('[paper-trade] Monitor already running');
+      return;
+    }
+
+    this.isMonitoringActive = true;
+    logger.info(
+      {
+        checkInterval: `${this.monitorConfig.checkIntervalMs}ms`,
+        takeProfit: `${this.monitorConfig.takeProfit}%`,
+        stopLoss: `${this.monitorConfig.stopLoss}%`,
+        maxHoldDuration: this.monitorConfig.maxHoldDurationMs > 0
+          ? `${this.monitorConfig.maxHoldDurationMs}ms`
+          : 'disabled',
+      },
+      '[paper-trade] Starting position monitor with TP/SL simulation'
+    );
+
+    // Run immediately, then on interval
+    this.checkPositions();
+
+    this.monitorLoop = setInterval(() => {
+      this.checkPositions();
+    }, this.monitorConfig.checkIntervalMs);
+  }
+
+  /**
+   * Stop the position monitoring loop
+   */
+  stop(): void {
+    if (this.monitorLoop) {
+      clearInterval(this.monitorLoop);
+      this.monitorLoop = null;
+    }
+    this.isMonitoringActive = false;
+    logger.info('[paper-trade] Position monitor stopped');
+  }
+
+  /**
+   * Check if monitoring is active
+   */
+  isMonitoring(): boolean {
+    return this.isMonitoringActive;
+  }
+
+  /**
+   * Check all active positions for TP/SL triggers
+   */
+  private async checkPositions(): Promise<void> {
+    if (this.activeTrades.size === 0) {
+      return;
+    }
+
+    logger.debug({ count: this.activeTrades.size }, '[paper-trade] Checking positions');
+
+    for (const [mint, trade] of this.activeTrades) {
+      try {
+        await this.checkPosition(trade);
+      } catch (error) {
+        logger.error(
+          { error, mint },
+          '[paper-trade] Error checking position'
+        );
+      }
+    }
+  }
+
+  /**
+   * Check a single position for TP/SL/time triggers
+   */
+  private async checkPosition(trade: PaperTrade): Promise<void> {
+    if (!this.monitorConfig) return;
+
+    const bondingCurve = new PublicKey(trade.bondingCurve);
+
+    // Fetch current bonding curve state
+    const accountInfo = await this.connection.getAccountInfo(bondingCurve);
+    if (!accountInfo) {
+      logger.warn({ mint: trade.mint }, '[paper-trade] Bonding curve account not found');
+      return;
+    }
+
+    const state = decodeBondingCurveState(accountInfo.data);
+    if (!state) {
+      logger.warn({ mint: trade.mint }, '[paper-trade] Failed to decode bonding curve');
+      return;
+    }
+
+    // Check if graduated
+    if (state.complete) {
+      this.closePaperTrade(trade, 'graduated', state);
+      return;
+    }
+
+    // Calculate current value
+    const tokensBN = new BN(trade.hypotheticalTokensReceived);
+    const currentSolOutLamports = calculateSellSolOut(state, tokensBN);
+    const currentValueSol = currentSolOutLamports.toNumber() / LAMPORTS_PER_SOL;
+
+    // Calculate P&L
+    const pnlSol = currentValueSol - trade.hypotheticalSolSpent;
+    const pnlPercent = (pnlSol / trade.hypotheticalSolSpent) * 100;
+
+    // Check take profit
+    if (pnlPercent >= this.monitorConfig.takeProfit) {
+      logger.info(
+        { mint: trade.mint, name: trade.name, pnlPercent: pnlPercent.toFixed(2) },
+        '[paper-trade] Take profit triggered'
+      );
+      this.closePaperTrade(trade, 'take_profit', state, currentValueSol, pnlPercent);
+      return;
+    }
+
+    // Check stop loss
+    if (pnlPercent <= -this.monitorConfig.stopLoss) {
+      logger.info(
+        { mint: trade.mint, name: trade.name, pnlPercent: pnlPercent.toFixed(2) },
+        '[paper-trade] Stop loss triggered'
+      );
+      this.closePaperTrade(trade, 'stop_loss', state, currentValueSol, pnlPercent);
+      return;
+    }
+
+    // Check max hold duration
+    if (this.monitorConfig.maxHoldDurationMs > 0) {
+      const holdDuration = Date.now() - trade.entryTimestamp;
+      if (holdDuration >= this.monitorConfig.maxHoldDurationMs) {
+        logger.info(
+          { mint: trade.mint, name: trade.name, holdDurationMs: holdDuration },
+          '[paper-trade] Max hold duration triggered'
+        );
+        this.closePaperTrade(trade, 'time_exit', state, currentValueSol, pnlPercent);
+        return;
+      }
+    }
+  }
+
+  /**
+   * Close a paper trade (simulate sell)
+   */
+  private closePaperTrade(
+    trade: PaperTrade,
+    reason: PaperCloseReason,
+    state: BondingCurveState,
+    currentValueSol?: number,
+    pnlPercent?: number
+  ): void {
+    const TOKEN_DECIMALS = 6;
+
+    // Calculate exit values if not provided
+    if (currentValueSol === undefined) {
+      const tokensBN = new BN(trade.hypotheticalTokensReceived);
+      const solOutLamports = calculateSellSolOut(state, tokensBN);
+      currentValueSol = solOutLamports.toNumber() / LAMPORTS_PER_SOL;
+    }
+
+    const pnlSol = currentValueSol - trade.hypotheticalSolSpent;
+    if (pnlPercent === undefined) {
+      pnlPercent = (pnlSol / trade.hypotheticalSolSpent) * 100;
+    }
+
+    // Calculate exit price
+    const exitPrice =
+      state.virtualSolReserves.toNumber() /
+      LAMPORTS_PER_SOL /
+      (state.virtualTokenReserves.toNumber() / Math.pow(10, TOKEN_DECIMALS));
+
+    // Update trade with closed state
+    const closedTrade: PaperTrade = {
+      ...trade,
+      status: reason === 'graduated' ? 'graduated' : 'closed',
+      closedTimestamp: Date.now(),
+      closedReason: reason,
+      exitPricePerToken: exitPrice,
+      exitSolReceived: currentValueSol,
+      realizedPnlSol: pnlSol,
+      realizedPnlPercent: pnlPercent,
+    };
+
+    // Move from active to closed
+    this.activeTrades.delete(trade.mint);
+    this.closedTrades.push(closedTrade);
+
+    const reasonDisplayMap: Record<PaperCloseReason, string> = {
+      take_profit: 'TP Hit',
+      stop_loss: 'SL Hit',
+      time_exit: 'Time Exit',
+      graduated: 'Graduated',
+    };
+
+    logger.info(
+      {
+        mint: trade.mint,
+        name: trade.name,
+        reason: reasonDisplayMap[reason],
+        entrySol: trade.hypotheticalSolSpent.toFixed(4),
+        exitSol: currentValueSol.toFixed(4),
+        pnlSol: pnlSol.toFixed(4),
+        pnlPercent: pnlPercent.toFixed(2) + '%',
+      },
+      '[paper-trade] Position closed'
+    );
   }
 
   /**
@@ -138,15 +397,16 @@ export class PaperTradeTracker {
       hypotheticalTokensReceived: tokensOut.toNumber(),
       pipelineDurationMs,
       signature,
+      status: 'active', // New trades start as active
     };
 
-    // Evict oldest if at limit
-    if (this.trades.size >= MAX_PAPER_TRADES) {
-      const oldestKey = this.trades.keys().next().value;
-      if (oldestKey) this.trades.delete(oldestKey);
+    // Evict oldest active trade if at limit
+    if (this.activeTrades.size >= MAX_PAPER_TRADES) {
+      const oldestKey = this.activeTrades.keys().next().value;
+      if (oldestKey) this.activeTrades.delete(oldestKey);
     }
 
-    this.trades.set(trade.mint, trade);
+    this.activeTrades.set(trade.mint, trade);
 
     logger.info(
       {
@@ -156,6 +416,7 @@ export class PaperTradeTracker {
         entrySol: hypotheticalSolSpent,
         tokensReceived: tokensOut.toNumber(),
         entryPrice: entryPrice.toExponential(4),
+        monitoringEnabled: this.isMonitoringActive,
       },
       '[paper-trade] Recorded paper trade'
     );
@@ -163,180 +424,293 @@ export class PaperTradeTracker {
 
   /**
    * Check P&L for all paper trades (called on button press)
-   * Fetches current bonding curve state for each trade
+   * Fetches current bonding curve state for each active trade
+   * Also includes closed trades with their realized P&L
    */
   async checkPnL(): Promise<PaperPnLSummary> {
     const results: PaperPnLResult[] = [];
-    const tradesList = Array.from(this.trades.values());
+    const activeTradesList = Array.from(this.activeTrades.values());
+    const totalTradeCount = activeTradesList.length + this.closedTrades.length;
 
-    if (tradesList.length === 0) {
+    // Handle empty case
+    if (totalTradeCount === 0) {
       return {
         totalTrades: 0,
         activeTrades: 0,
+        closedTrades: 0,
         graduatedTrades: 0,
         errorTrades: 0,
-        totalEntrySol: 0,
+        totalEntrySolActive: 0,
         totalCurrentSol: null,
+        unrealizedPnlSol: null,
+        unrealizedPnlPercent: null,
+        realizedPnlSol: 0,
+        realizedPnlPercent: null,
+        totalEntrySol: 0,
         totalPnlSol: null,
         totalPnlPercent: null,
         trades: [],
         checkedAt: Date.now(),
+        monitoringEnabled: this.isMonitoringActive,
       };
     }
 
-    // Batch fetch bonding curve states (up to 100)
-    const bondingCurves = tradesList.map((t) => new PublicKey(t.bondingCurve));
+    // First, add closed trades to results (they already have realized P&L)
+    let realizedPnlSol = 0;
+    let closedEntrySol = 0;
+    let graduatedCount = 0;
 
-    // Fetch all at once for efficiency
-    const accountInfos = await this.connection.getMultipleAccountsInfo(bondingCurves);
+    for (const trade of this.closedTrades) {
+      realizedPnlSol += trade.realizedPnlSol || 0;
+      closedEntrySol += trade.hypotheticalSolSpent;
 
-    let totalEntrySol = 0;
-    let totalCurrentSol = 0;
-    let activeTrades = 0;
-    let graduatedTrades = 0;
-    let errorTrades = 0;
-
-    const TOKEN_DECIMALS = 6;
-
-    for (let i = 0; i < tradesList.length; i++) {
-      const trade = tradesList[i];
-      const accountInfo = accountInfos[i];
-
-      totalEntrySol += trade.hypotheticalSolSpent;
-
-      if (!accountInfo) {
-        results.push({
-          mint: trade.mint,
-          name: trade.name,
-          symbol: trade.symbol,
-          entryPricePerToken: trade.entryPricePerToken,
-          currentPricePerToken: null,
-          hypotheticalTokens: trade.hypotheticalTokensReceived,
-          entrySol: trade.hypotheticalSolSpent,
-          currentSol: null,
-          pnlSol: null,
-          pnlPercent: null,
-          status: 'error',
-          errorMessage: 'Bonding curve not found',
-          entryTimestamp: trade.entryTimestamp,
-        });
-        errorTrades++;
-        continue;
+      if (trade.status === 'graduated') {
+        graduatedCount++;
       }
-
-      // Decode bonding curve state
-      const state = decodeBondingCurveState(accountInfo.data);
-
-      if (!state) {
-        results.push({
-          mint: trade.mint,
-          name: trade.name,
-          symbol: trade.symbol,
-          entryPricePerToken: trade.entryPricePerToken,
-          currentPricePerToken: null,
-          hypotheticalTokens: trade.hypotheticalTokensReceived,
-          entrySol: trade.hypotheticalSolSpent,
-          currentSol: null,
-          pnlSol: null,
-          pnlPercent: null,
-          status: 'error',
-          errorMessage: 'Failed to decode bonding curve',
-          entryTimestamp: trade.entryTimestamp,
-        });
-        errorTrades++;
-        continue;
-      }
-
-      // Check if graduated
-      if (state.complete) {
-        results.push({
-          mint: trade.mint,
-          name: trade.name,
-          symbol: trade.symbol,
-          entryPricePerToken: trade.entryPricePerToken,
-          currentPricePerToken: null,
-          hypotheticalTokens: trade.hypotheticalTokensReceived,
-          entrySol: trade.hypotheticalSolSpent,
-          currentSol: null,
-          pnlSol: null,
-          pnlPercent: null,
-          status: 'graduated',
-          entryTimestamp: trade.entryTimestamp,
-        });
-        graduatedTrades++;
-        continue;
-      }
-
-      // Calculate current value - how much SOL we'd get if we sold now
-      const tokensBN = new BN(trade.hypotheticalTokensReceived);
-      const currentSolOutLamports = calculateSellSolOut(state, tokensBN);
-      const currentSol = currentSolOutLamports.toNumber() / LAMPORTS_PER_SOL;
-
-      // Current price
-      const currentPrice =
-        state.virtualSolReserves.toNumber() /
-        LAMPORTS_PER_SOL /
-        (state.virtualTokenReserves.toNumber() / Math.pow(10, TOKEN_DECIMALS));
-
-      const pnlSol = currentSol - trade.hypotheticalSolSpent;
-      const pnlPercent = (pnlSol / trade.hypotheticalSolSpent) * 100;
-
-      totalCurrentSol += currentSol;
-      activeTrades++;
 
       results.push({
         mint: trade.mint,
         name: trade.name,
         symbol: trade.symbol,
         entryPricePerToken: trade.entryPricePerToken,
-        currentPricePerToken: currentPrice,
+        currentPricePerToken: trade.exitPricePerToken || null,
         hypotheticalTokens: trade.hypotheticalTokensReceived,
         entrySol: trade.hypotheticalSolSpent,
-        currentSol,
-        pnlSol,
-        pnlPercent,
-        status: 'active',
+        currentSol: trade.exitSolReceived || null,
+        pnlSol: trade.realizedPnlSol || null,
+        pnlPercent: trade.realizedPnlPercent || null,
+        status: trade.status,
         entryTimestamp: trade.entryTimestamp,
+        closedTimestamp: trade.closedTimestamp,
+        closedReason: trade.closedReason,
       });
     }
 
-    // Calculate totals only from active trades
-    const activeEntrySol = results
-      .filter((r) => r.status === 'active')
-      .reduce((sum, r) => sum + r.entrySol, 0);
+    // Now process active trades
+    let activeEntrySol = 0;
+    let totalCurrentSol = 0;
+    let activeTradeCount = 0;
+    let errorTrades = 0;
 
-    const totalPnlSol = activeTrades > 0 ? totalCurrentSol - activeEntrySol : null;
-    const totalPnlPercent =
-      totalPnlSol !== null && activeEntrySol > 0 ? (totalPnlSol / activeEntrySol) * 100 : null;
+    if (activeTradesList.length > 0) {
+      // Batch fetch bonding curve states (up to 100)
+      const bondingCurves = activeTradesList.map((t) => new PublicKey(t.bondingCurve));
+
+      // Fetch all at once for efficiency
+      const accountInfos = await this.connection.getMultipleAccountsInfo(bondingCurves);
+
+      const TOKEN_DECIMALS = 6;
+
+      for (let i = 0; i < activeTradesList.length; i++) {
+        const trade = activeTradesList[i];
+        const accountInfo = accountInfos[i];
+
+        activeEntrySol += trade.hypotheticalSolSpent;
+
+        if (!accountInfo) {
+          results.push({
+            mint: trade.mint,
+            name: trade.name,
+            symbol: trade.symbol,
+            entryPricePerToken: trade.entryPricePerToken,
+            currentPricePerToken: null,
+            hypotheticalTokens: trade.hypotheticalTokensReceived,
+            entrySol: trade.hypotheticalSolSpent,
+            currentSol: null,
+            pnlSol: null,
+            pnlPercent: null,
+            status: 'error',
+            errorMessage: 'Bonding curve not found',
+            entryTimestamp: trade.entryTimestamp,
+          });
+          errorTrades++;
+          continue;
+        }
+
+        // Decode bonding curve state
+        const state = decodeBondingCurveState(accountInfo.data);
+
+        if (!state) {
+          results.push({
+            mint: trade.mint,
+            name: trade.name,
+            symbol: trade.symbol,
+            entryPricePerToken: trade.entryPricePerToken,
+            currentPricePerToken: null,
+            hypotheticalTokens: trade.hypotheticalTokensReceived,
+            entrySol: trade.hypotheticalSolSpent,
+            currentSol: null,
+            pnlSol: null,
+            pnlPercent: null,
+            status: 'error',
+            errorMessage: 'Failed to decode bonding curve',
+            entryTimestamp: trade.entryTimestamp,
+          });
+          errorTrades++;
+          continue;
+        }
+
+        // Check if graduated (shouldn't happen if monitor is running, but check anyway)
+        if (state.complete) {
+          results.push({
+            mint: trade.mint,
+            name: trade.name,
+            symbol: trade.symbol,
+            entryPricePerToken: trade.entryPricePerToken,
+            currentPricePerToken: null,
+            hypotheticalTokens: trade.hypotheticalTokensReceived,
+            entrySol: trade.hypotheticalSolSpent,
+            currentSol: null,
+            pnlSol: null,
+            pnlPercent: null,
+            status: 'graduated',
+            entryTimestamp: trade.entryTimestamp,
+          });
+          graduatedCount++;
+          continue;
+        }
+
+        // Calculate current value - how much SOL we'd get if we sold now
+        const tokensBN = new BN(trade.hypotheticalTokensReceived);
+        const currentSolOutLamports = calculateSellSolOut(state, tokensBN);
+        const currentSol = currentSolOutLamports.toNumber() / LAMPORTS_PER_SOL;
+
+        // Current price
+        const currentPrice =
+          state.virtualSolReserves.toNumber() /
+          LAMPORTS_PER_SOL /
+          (state.virtualTokenReserves.toNumber() / Math.pow(10, TOKEN_DECIMALS));
+
+        const pnlSol = currentSol - trade.hypotheticalSolSpent;
+        const pnlPercent = (pnlSol / trade.hypotheticalSolSpent) * 100;
+
+        totalCurrentSol += currentSol;
+        activeTradeCount++;
+
+        results.push({
+          mint: trade.mint,
+          name: trade.name,
+          symbol: trade.symbol,
+          entryPricePerToken: trade.entryPricePerToken,
+          currentPricePerToken: currentPrice,
+          hypotheticalTokens: trade.hypotheticalTokensReceived,
+          entrySol: trade.hypotheticalSolSpent,
+          currentSol,
+          pnlSol,
+          pnlPercent,
+          status: 'active',
+          entryTimestamp: trade.entryTimestamp,
+        });
+      }
+    }
+
+    // Calculate unrealized P&L from active trades
+    const unrealizedPnlSol = activeTradeCount > 0 ? totalCurrentSol - activeEntrySol : null;
+    const unrealizedPnlPercent =
+      unrealizedPnlSol !== null && activeEntrySol > 0
+        ? (unrealizedPnlSol / activeEntrySol) * 100
+        : null;
+
+    // Calculate realized P&L percent
+    const realizedPnlPercent =
+      closedEntrySol > 0 ? (realizedPnlSol / closedEntrySol) * 100 : null;
+
+    // Calculate total P&L
+    const totalEntrySol = activeEntrySol + closedEntrySol;
+    const totalPnlSol = (unrealizedPnlSol || 0) + realizedPnlSol;
+    const totalPnlPercent = totalEntrySol > 0 ? (totalPnlSol / totalEntrySol) * 100 : null;
+
+    // Sort results: active first (by entry time desc), then closed (by close time desc)
+    results.sort((a, b) => {
+      // Active trades first
+      if (a.status === 'active' && b.status !== 'active') return -1;
+      if (a.status !== 'active' && b.status === 'active') return 1;
+
+      // For closed trades, sort by close time
+      if (a.closedTimestamp && b.closedTimestamp) {
+        return b.closedTimestamp - a.closedTimestamp;
+      }
+
+      // Otherwise sort by entry time
+      return b.entryTimestamp - a.entryTimestamp;
+    });
 
     return {
-      totalTrades: tradesList.length,
-      activeTrades,
-      graduatedTrades,
+      totalTrades: totalTradeCount,
+      activeTrades: activeTradeCount,
+      closedTrades: this.closedTrades.length,
+      graduatedTrades: graduatedCount,
       errorTrades,
+      totalEntrySolActive: activeEntrySol,
+      totalCurrentSol: activeTradeCount > 0 ? totalCurrentSol : null,
+      unrealizedPnlSol,
+      unrealizedPnlPercent,
+      realizedPnlSol,
+      realizedPnlPercent,
       totalEntrySol,
-      totalCurrentSol: activeTrades > 0 ? totalCurrentSol : null,
       totalPnlSol,
       totalPnlPercent,
-      trades: results.sort((a, b) => b.entryTimestamp - a.entryTimestamp),
+      trades: results,
       checkedAt: Date.now(),
+      monitoringEnabled: this.isMonitoringActive,
     };
   }
 
-  /** Get all paper trades without P&L calculation */
+  /** Get all paper trades (active + closed) without P&L calculation */
   getPaperTrades(): PaperTrade[] {
-    return Array.from(this.trades.values());
+    return [...Array.from(this.activeTrades.values()), ...this.closedTrades];
   }
 
-  /** Clear all paper trades */
+  /** Get only active paper trades */
+  getActivePaperTrades(): PaperTrade[] {
+    return Array.from(this.activeTrades.values());
+  }
+
+  /** Get only closed paper trades */
+  getClosedPaperTrades(): PaperTrade[] {
+    return [...this.closedTrades];
+  }
+
+  /** Clear all paper trades (active and closed) */
   clearPaperTrades(): void {
-    this.trades.clear();
+    this.activeTrades.clear();
+    this.closedTrades = [];
     logger.info('[paper-trade] All paper trades cleared');
   }
 
-  /** Get trade count */
+  /** Get total trade count (active + closed) */
   getTradeCount(): number {
-    return this.trades.size;
+    return this.activeTrades.size + this.closedTrades.length;
+  }
+
+  /** Get active trade count */
+  getActiveTradeCount(): number {
+    return this.activeTrades.size;
+  }
+
+  /** Get closed trade count */
+  getClosedTradeCount(): number {
+    return this.closedTrades.length;
+  }
+
+  /** Get summary stats without fetching prices */
+  getSummaryStats(): {
+    activeTrades: number;
+    closedTrades: number;
+    realizedPnlSol: number;
+    monitoringEnabled: boolean;
+  } {
+    const realizedPnlSol = this.closedTrades.reduce(
+      (sum, t) => sum + (t.realizedPnlSol || 0),
+      0
+    );
+
+    return {
+      activeTrades: this.activeTrades.size,
+      closedTrades: this.closedTrades.length,
+      realizedPnlSol,
+      monitoringEnabled: this.isMonitoringActive,
+    };
   }
 
   /** Update connection (for RPC failover) */
@@ -351,10 +725,20 @@ export class PaperTradeTracker {
 
 let paperTradeTrackerInstance: PaperTradeTracker | null = null;
 
-export function initPaperTradeTracker(connection: Connection): PaperTradeTracker {
+export function initPaperTradeTracker(
+  connection: Connection,
+  monitorConfig?: PaperMonitorConfig
+): PaperTradeTracker {
   if (!paperTradeTrackerInstance) {
-    paperTradeTrackerInstance = new PaperTradeTracker(connection);
-    logger.info('[paper-trade] Paper trade tracker initialized');
+    paperTradeTrackerInstance = new PaperTradeTracker(connection, monitorConfig);
+    logger.info(
+      {
+        monitoringEnabled: monitorConfig?.enabled ?? false,
+        takeProfit: monitorConfig?.takeProfit,
+        stopLoss: monitorConfig?.stopLoss,
+      },
+      '[paper-trade] Paper trade tracker initialized'
+    );
   }
   return paperTradeTrackerInstance;
 }

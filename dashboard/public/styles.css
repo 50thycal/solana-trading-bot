@@ -988,6 +988,99 @@ body {
   color: white;
 }
 
+.status-badge.take-profit {
+  background: var(--accent-green);
+  color: white;
+}
+
+.status-badge.stop-loss {
+  background: var(--accent-red);
+  color: white;
+}
+
+.status-badge.time-exit {
+  background: var(--accent-yellow);
+  color: var(--bg-primary);
+}
+
+.status-badge.active {
+  background: var(--accent-blue);
+  color: white;
+}
+
+.status-badge.closed {
+  background: var(--text-muted);
+  color: white;
+}
+
+/* Monitoring badge */
+.monitoring-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.monitoring-badge.active {
+  background: rgba(0, 200, 83, 0.2);
+  color: var(--accent-green);
+  border: 1px solid var(--accent-green);
+}
+
+.monitoring-badge.inactive {
+  background: rgba(139, 152, 165, 0.1);
+  color: var(--text-muted);
+  border: 1px solid var(--text-muted);
+}
+
+/* P&L header */
+.pnl-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+/* P&L stat sublabel */
+.pnl-stat-sublabel {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Total P&L stat highlight */
+.pnl-stat.total {
+  background: linear-gradient(135deg, rgba(33, 150, 243, 0.1), rgba(156, 39, 176, 0.1));
+  border: 1px solid var(--border-color);
+}
+
+/* Paper trade item with close reason styling */
+.paper-trade-item.closed {
+  border-left: 3px solid var(--text-muted);
+}
+
+.paper-trade-item.closed.take_profit {
+  border-left-color: var(--accent-green);
+}
+
+.paper-trade-item.closed.stop_loss {
+  border-left-color: var(--accent-red);
+}
+
+.paper-trade-item.closed.time_exit {
+  border-left-color: var(--accent-yellow);
+}
+
+/* Hold time display */
+.paper-trade-hold-time {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
 .error-state {
   color: var(--accent-red);
   padding: 1rem;
