@@ -12,6 +12,7 @@ let currentTokenFilter = '';
 let pipelineStats = null;
 let recentTokens = [];
 let isDryRunMode = false;
+let lastPaperPnLSummary = null;
 
 // DOM Elements
 const elements = {
@@ -62,6 +63,7 @@ const elements = {
   paperTradesList: document.getElementById('paper-trades-list'),
   paperTradeCount: document.getElementById('paper-trade-count'),
   checkPaperPnlBtn: document.getElementById('check-paper-pnl-btn'),
+  copyPaperPnlBtn: document.getElementById('copy-paper-pnl-btn'),
   clearPaperTradesBtn: document.getElementById('clear-paper-trades-btn'),
 };
 
@@ -362,6 +364,7 @@ async function checkPaperPnL() {
   const summary = await postApi('/api/paper-trades/check-pnl');
 
   if (summary && !summary.error) {
+    lastPaperPnLSummary = summary; // Store for copy function
     renderPaperPnLSummary(summary);
     renderPaperTradesList(summary.trades);
   } else {
@@ -372,6 +375,90 @@ async function checkPaperPnL() {
 
   elements.checkPaperPnlBtn.disabled = false;
   elements.checkPaperPnlBtn.textContent = 'Check P&L';
+}
+
+/**
+ * Copy paper P&L log as formatted text for AI analysis
+ */
+async function copyPaperPnLLog() {
+  if (!lastPaperPnLSummary || !lastPaperPnLSummary.trades) {
+    alert('Please click "Check P&L" first to load trade data.');
+    return;
+  }
+
+  const summary = lastPaperPnLSummary;
+  const trades = summary.trades || [];
+
+  // Format summary section
+  let logText = `=== PAPER TRADING P&L LOG ===
+Generated: ${new Date().toISOString()}
+Mode: DRY RUN (Paper Trading)
+
+=== SUMMARY ===
+Total Trades: ${summary.totalTrades}
+Active Trades: ${summary.activeTrades}
+Closed Trades: ${summary.closedTrades}
+Graduated Trades: ${summary.graduatedTrades}
+
+Unrealized P&L: ${summary.unrealizedPnlSol?.toFixed(4) || 'N/A'} SOL (${summary.unrealizedPnlPercent?.toFixed(2) || 'N/A'}%)
+Realized P&L: ${summary.realizedPnlSol?.toFixed(4) || '0'} SOL (${summary.realizedPnlPercent?.toFixed(2) || 'N/A'}%)
+Total P&L: ${summary.totalPnlSol?.toFixed(4) || 'N/A'} SOL (${summary.totalPnlPercent?.toFixed(2) || 'N/A'}%)
+
+TP/SL Monitoring: ${summary.monitoringEnabled ? 'ENABLED' : 'DISABLED'}
+
+=== INDIVIDUAL TRADES ===
+`;
+
+  // Format each trade
+  trades.forEach((trade, index) => {
+    const entryTime = new Date(trade.entryTimestamp).toISOString();
+    const closedTime = trade.closedTimestamp ? new Date(trade.closedTimestamp).toISOString() : null;
+    const holdDuration = trade.closedTimestamp
+      ? formatDuration(trade.closedTimestamp - trade.entryTimestamp)
+      : formatDuration(Date.now() - trade.entryTimestamp);
+
+    logText += `
+--- Trade ${index + 1} ---
+Token: ${trade.name || 'Unknown'} (${trade.symbol || 'N/A'})
+Mint: ${trade.mint}
+Status: ${trade.status.toUpperCase()}${trade.closedReason ? ` (${trade.closedReason})` : ''}
+
+Entry Time: ${entryTime}
+Entry Price: ${trade.entryPricePerToken?.toExponential(4) || 'N/A'} SOL/token
+Hypothetical SOL Spent: ${trade.hypotheticalSolSpent?.toFixed(4) || 'N/A'} SOL
+Hypothetical Tokens: ${trade.hypotheticalTokensReceived?.toLocaleString() || 'N/A'}
+`;
+
+    if (trade.closedTimestamp) {
+      logText += `Closed Time: ${closedTime}
+Hold Duration: ${holdDuration}
+Exit Price: ${trade.exitPricePerToken?.toExponential(4) || 'N/A'} SOL/token
+`;
+    } else {
+      logText += `Current Hold Duration: ${holdDuration}
+Current Price: ${trade.currentPricePerToken?.toExponential(4) || 'N/A'} SOL/token
+`;
+    }
+
+    logText += `P&L: ${trade.pnlSol?.toFixed(4) || 'N/A'} SOL (${trade.pnlPercent?.toFixed(2) || 'N/A'}%)
+Pipeline Duration: ${trade.pipelineDurationMs || 'N/A'}ms
+`;
+  });
+
+  logText += `
+=== END OF LOG ===
+`;
+
+  await copyToClipboard(logText, elements.copyPaperPnlBtn);
+
+  // Show feedback on the button
+  const originalText = elements.copyPaperPnlBtn.textContent;
+  elements.copyPaperPnlBtn.textContent = 'Copied!';
+  elements.copyPaperPnlBtn.classList.add('copied');
+  setTimeout(() => {
+    elements.copyPaperPnlBtn.textContent = originalText;
+    elements.copyPaperPnlBtn.classList.remove('copied');
+  }, 1500);
 }
 
 function renderPaperPnLSummary(summary) {
@@ -691,6 +778,9 @@ elements.confirmResetBtn.addEventListener('click', confirmResetStats);
 // Paper P&L event listeners
 if (elements.checkPaperPnlBtn) {
   elements.checkPaperPnlBtn.addEventListener('click', checkPaperPnL);
+}
+if (elements.copyPaperPnlBtn) {
+  elements.copyPaperPnlBtn.addEventListener('click', copyPaperPnLLog);
 }
 if (elements.clearPaperTradesBtn) {
   elements.clearPaperTradesBtn.addEventListener('click', clearPaperTrades);
