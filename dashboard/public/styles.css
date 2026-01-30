@@ -804,6 +804,196 @@ body {
   background: var(--text-muted);
 }
 
+/* Paper P&L Panel */
+.paper-pnl-panel {
+  border-left: 4px solid var(--accent-yellow);
+}
+
+.paper-pnl-panel .panel-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.dry-run-badge {
+  background: var(--accent-yellow);
+  color: var(--bg-primary);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.paper-trade-count {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  margin-right: 0.5rem;
+}
+
+.paper-pnl-content {
+  margin-top: 1rem;
+}
+
+.pnl-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.pnl-stat {
+  text-align: center;
+  padding: 0.75rem;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+}
+
+.pnl-stat-label {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.25rem;
+}
+
+.pnl-stat-value {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.pnl-stat-value.positive {
+  color: var(--accent-green);
+}
+
+.pnl-stat-value.negative {
+  color: var(--accent-red);
+}
+
+.pnl-timestamp {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-align: right;
+  margin-top: 0.5rem;
+}
+
+.paper-trades-list {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-top: 1rem;
+}
+
+.paper-trade-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+  transition: background 0.15s;
+}
+
+.paper-trade-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.paper-trade-item:last-child {
+  border-bottom: none;
+}
+
+.paper-trade-item.graduated,
+.paper-trade-item.error {
+  opacity: 0.6;
+}
+
+.paper-trade-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.paper-trade-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.paper-trade-name .symbol {
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.paper-trade-meta {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.paper-trade-mint {
+  cursor: pointer;
+  font-family: monospace;
+}
+
+.paper-trade-mint:hover {
+  color: var(--accent-blue);
+}
+
+.paper-trade-pnl {
+  text-align: right;
+  min-width: 100px;
+}
+
+.pnl-value {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.pnl-value.positive {
+  color: var(--accent-green);
+}
+
+.pnl-value.negative {
+  color: var(--accent-red);
+}
+
+.pnl-sol {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+.pnl-na {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.status-badge {
+  display: inline-block;
+  font-size: 0.6rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  margin-bottom: 0.25rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-badge.graduated {
+  background: var(--accent-blue);
+  color: white;
+}
+
+.status-badge.error {
+  background: var(--accent-red);
+  color: white;
+}
+
+.error-state {
+  color: var(--accent-red);
+  padding: 1rem;
+  text-align: center;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .overview-cards {

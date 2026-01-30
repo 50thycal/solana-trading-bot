@@ -81,6 +81,27 @@
       </div>
     </section>
 
+    <!-- Paper P&L Panel (only shown in dry run mode) -->
+    <section class="panel paper-pnl-panel" id="paper-pnl-panel" style="display: none;">
+      <div class="panel-header">
+        <h2>Paper P&L</h2>
+        <span class="dry-run-badge">DRY RUN</span>
+        <div class="panel-actions">
+          <span class="paper-trade-count" id="paper-trade-count">0 trades</span>
+          <button class="btn btn-primary btn-small" id="check-paper-pnl-btn">Check P&L</button>
+          <button class="btn btn-secondary btn-small" id="clear-paper-trades-btn">Clear</button>
+        </div>
+      </div>
+      <div class="paper-pnl-content">
+        <div class="paper-pnl-summary" id="paper-pnl-summary">
+          <div class="empty-state">Click "Check P&L" to calculate paper trading results</div>
+        </div>
+        <div class="paper-trades-list" id="paper-trades-list">
+          <!-- Populated by JavaScript -->
+        </div>
+      </div>
+    </section>
+
     <!-- Main Content Grid -->
     <div class="main-grid">
       <!-- Left Column: Gate Stats -->

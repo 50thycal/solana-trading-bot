@@ -103,6 +103,8 @@ import {
   initPumpFunPositionMonitor,
   getPumpFunPositionMonitor,
   PumpFunTriggerEvent,
+  initPaperTradeTracker,
+  getPaperTradeTracker,
 } from './risk';
 import {
   initStateStore,
@@ -501,10 +503,16 @@ const runListener = async () => {
   // === Initialize pump.fun Pipeline ===
   if (ENABLE_PUMPFUN_DETECTION) {
     const tradeAmount = Number(QUOTE_AMOUNT);
+    // Skip mint info check in pump.fun-only mode - pump.fun enforces safe token settings
+    // automatically (renounced mint authority, no freeze authority)
+    const skipMintCheck = PUMP_FUN_ONLY_MODE;
+    if (skipMintCheck) {
+      logger.info('[pipeline] Skipping mint info check - pump.fun tokens are safe by design');
+    }
     initPipeline(connection, wallet, {
       cheapGates: {
         tradeAmountSol: tradeAmount,
-        skipMintInfoCheck: false,
+        skipMintInfoCheck: skipMintCheck,
       },
       deepFilters: {
         skipBondingCurveCheck: false,
@@ -517,6 +525,12 @@ const runListener = async () => {
     // Initialize pipeline stats for dashboard tracking
     initPipelineStats();
     logger.info('[pipeline-stats] Pipeline statistics tracker initialized');
+
+    // Initialize paper trade tracker for dry run mode
+    if (DRY_RUN) {
+      initPaperTradeTracker(connection);
+      logger.info('[paper-trade] Paper trade tracker initialized for dry run mode');
+    }
   }
 
   // Initialize position monitor (independent monitoring loop) - for Raydium pools
@@ -1004,6 +1018,21 @@ const runListener = async () => {
           { mint: baseMintStr, amountSol: tradeAmount },
           '[pump.fun] DRY RUN - would have bought token'
         );
+
+        // Record paper trade for P&L tracking
+        const paperTracker = getPaperTradeTracker();
+        if (paperTracker && pipelineResult.context.deepFilters?.bondingCurveState) {
+          paperTracker.recordPaperTrade({
+            mint: token.mint,
+            bondingCurve: token.bondingCurve!,
+            bondingCurveState: pipelineResult.context.deepFilters.bondingCurveState,
+            hypotheticalSolSpent: tradeAmount,
+            name: token.name,
+            symbol: token.symbol,
+            signature: token.signature || 'unknown',
+            pipelineDurationMs: pipelineResult.totalDurationMs,
+          });
+        }
 
         // Record simulated position for dry run
         if (stateStore) {

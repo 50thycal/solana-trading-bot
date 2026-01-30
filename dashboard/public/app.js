@@ -11,6 +11,7 @@ const API_BASE = '';
 let currentTokenFilter = '';
 let pipelineStats = null;
 let recentTokens = [];
+let isDryRunMode = false;
 
 // DOM Elements
 const elements = {
@@ -54,6 +55,14 @@ const elements = {
   tokenModal: document.getElementById('token-modal'),
   tokenModalBody: document.getElementById('token-modal-body'),
   resetModal: document.getElementById('reset-modal'),
+
+  // Paper P&L (dry run mode)
+  paperPnlPanel: document.getElementById('paper-pnl-panel'),
+  paperPnlSummary: document.getElementById('paper-pnl-summary'),
+  paperTradesList: document.getElementById('paper-trades-list'),
+  paperTradeCount: document.getElementById('paper-trade-count'),
+  checkPaperPnlBtn: document.getElementById('check-paper-pnl-btn'),
+  clearPaperTradesBtn: document.getElementById('clear-paper-trades-btn'),
 };
 
 // ============================================================
@@ -305,6 +314,148 @@ async function updatePositions() {
 }
 
 // ============================================================
+// PAPER P&L (DRY RUN MODE)
+// ============================================================
+
+async function checkDryRunMode() {
+  const config = await fetchApi('/api/config');
+  if (config?.mode?.dryRun) {
+    isDryRunMode = true;
+    elements.paperPnlPanel.style.display = 'block';
+    await updatePaperTradeCount();
+  } else {
+    isDryRunMode = false;
+    elements.paperPnlPanel.style.display = 'none';
+  }
+}
+
+async function updatePaperTradeCount() {
+  if (!isDryRunMode) return;
+
+  const data = await fetchApi('/api/paper-trades');
+  if (data) {
+    const count = data.count || 0;
+    elements.paperTradeCount.textContent = `${count} trade${count !== 1 ? 's' : ''}`;
+  }
+}
+
+async function checkPaperPnL() {
+  elements.checkPaperPnlBtn.disabled = true;
+  elements.checkPaperPnlBtn.textContent = 'Checking...';
+  elements.paperPnlSummary.innerHTML = '<div class="loading">Fetching current prices...</div>';
+  elements.paperTradesList.innerHTML = '';
+
+  const summary = await postApi('/api/paper-trades/check-pnl');
+
+  if (summary && !summary.error) {
+    renderPaperPnLSummary(summary);
+    renderPaperTradesList(summary.trades);
+  } else {
+    elements.paperPnlSummary.innerHTML = `
+      <div class="error-state">Error: ${summary?.error || 'Unknown error'}</div>
+    `;
+  }
+
+  elements.checkPaperPnlBtn.disabled = false;
+  elements.checkPaperPnlBtn.textContent = 'Check P&L';
+}
+
+function renderPaperPnLSummary(summary) {
+  if (summary.totalTrades === 0) {
+    elements.paperPnlSummary.innerHTML = '<div class="empty-state">No paper trades recorded yet</div>';
+    return;
+  }
+
+  const pnlClass = (summary.totalPnlPercent || 0) >= 0 ? 'positive' : 'negative';
+  const pnlSign = (summary.totalPnlPercent || 0) >= 0 ? '+' : '';
+
+  elements.paperPnlSummary.innerHTML = `
+    <div class="pnl-summary-grid">
+      <div class="pnl-stat">
+        <div class="pnl-stat-label">Total Entry</div>
+        <div class="pnl-stat-value">${summary.totalEntrySol.toFixed(4)} SOL</div>
+      </div>
+      <div class="pnl-stat">
+        <div class="pnl-stat-label">Current Value</div>
+        <div class="pnl-stat-value">${summary.totalCurrentSol !== null ? summary.totalCurrentSol.toFixed(4) + ' SOL' : 'N/A'}</div>
+      </div>
+      <div class="pnl-stat">
+        <div class="pnl-stat-label">Paper P&L</div>
+        <div class="pnl-stat-value ${pnlClass}">
+          ${summary.totalPnlSol !== null ? `${pnlSign}${summary.totalPnlSol.toFixed(4)} SOL` : 'N/A'}
+          ${summary.totalPnlPercent !== null ? `(${pnlSign}${summary.totalPnlPercent.toFixed(2)}%)` : ''}
+        </div>
+      </div>
+      <div class="pnl-stat">
+        <div class="pnl-stat-label">Trades</div>
+        <div class="pnl-stat-value">${summary.activeTrades} active / ${summary.totalTrades} total</div>
+      </div>
+    </div>
+    <div class="pnl-timestamp">Last checked: ${new Date(summary.checkedAt).toLocaleTimeString()}</div>
+  `;
+}
+
+function renderPaperTradesList(trades) {
+  if (!trades || trades.length === 0) {
+    elements.paperTradesList.innerHTML = '';
+    return;
+  }
+
+  elements.paperTradesList.innerHTML = trades.map(trade => {
+    const pnlClass = (trade.pnlPercent || 0) >= 0 ? 'positive' : 'negative';
+    const pnlSign = (trade.pnlPercent || 0) >= 0 ? '+' : '';
+
+    let statusBadge = '';
+    if (trade.status === 'graduated') {
+      statusBadge = '<span class="status-badge graduated">Graduated</span>';
+    } else if (trade.status === 'error') {
+      statusBadge = '<span class="status-badge error">Error</span>';
+    }
+
+    const name = escapeHtml(trade.name || 'Unknown');
+    const symbol = trade.symbol ? escapeHtml(`($${trade.symbol})`) : '';
+    const mintShort = shortenAddress(trade.mint);
+    const timeAgo = formatTimeAgo(trade.entryTimestamp);
+
+    return `
+      <div class="paper-trade-item ${trade.status}">
+        <div class="paper-trade-info">
+          <div class="paper-trade-name">${name} <span class="symbol">${symbol}</span></div>
+          <div class="paper-trade-meta">
+            <span class="paper-trade-mint" onclick="copyToClipboard('${trade.mint}', this)" title="Click to copy">${mintShort}</span>
+            <span class="paper-trade-time">${timeAgo}</span>
+          </div>
+        </div>
+        <div class="paper-trade-pnl">
+          ${statusBadge}
+          ${trade.pnlPercent !== null ? `
+            <div class="pnl-value ${pnlClass}">${pnlSign}${trade.pnlPercent.toFixed(2)}%</div>
+            <div class="pnl-sol">${pnlSign}${trade.pnlSol?.toFixed(4) || '0'} SOL</div>
+          ` : '<div class="pnl-na">N/A</div>'}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function clearPaperTrades() {
+  if (!confirm('Clear all paper trades? This cannot be undone.')) return;
+
+  elements.clearPaperTradesBtn.disabled = true;
+  const result = await postApi('/api/paper-trades/clear');
+
+  if (result && result.success) {
+    elements.paperPnlSummary.innerHTML = '<div class="empty-state">Paper trades cleared</div>';
+    elements.paperTradesList.innerHTML = '';
+    elements.paperTradeCount.textContent = '0 trades';
+  } else {
+    alert('Failed to clear paper trades: ' + (result?.error || 'Unknown error'));
+  }
+
+  elements.clearPaperTradesBtn.disabled = false;
+}
+
+// ============================================================
 // MODALS
 // ============================================================
 
@@ -465,6 +616,14 @@ elements.tokenFilter.addEventListener('change', (e) => {
 elements.resetStatsBtn.addEventListener('click', openResetModal);
 elements.confirmResetBtn.addEventListener('click', confirmResetStats);
 
+// Paper P&L event listeners
+if (elements.checkPaperPnlBtn) {
+  elements.checkPaperPnlBtn.addEventListener('click', checkPaperPnL);
+}
+if (elements.clearPaperTradesBtn) {
+  elements.clearPaperTradesBtn.addEventListener('click', clearPaperTrades);
+}
+
 // Close modals on Escape key
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
@@ -486,10 +645,12 @@ async function updateAll() {
     updateStatus(),
     updatePipelineStats(),
     updatePositions(),
+    updatePaperTradeCount(),
   ]);
 }
 
 // Initial load
+checkDryRunMode(); // Check if dry run mode, show/hide paper P&L panel
 updateAll();
 
 // Start polling
