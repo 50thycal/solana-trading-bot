@@ -1069,6 +1069,9 @@ const runListener = async () => {
           });
         }
       } else {
+        // Get isToken2022 from pipeline context (detected in cheap-gates stage)
+        const isToken2022 = context.cheapGates?.mintInfo.isToken2022 ?? false;
+
         const buyResult = await buyOnPumpFun({
           connection,
           wallet,
@@ -1078,6 +1081,7 @@ const runListener = async () => {
           slippageBps: BUY_SLIPPAGE * 100,
           computeUnitLimit: COMPUTE_UNIT_LIMIT,
           computeUnitPrice: COMPUTE_UNIT_PRICE,
+          isToken2022,
         });
 
         if (buyResult.success) {
@@ -1151,6 +1155,7 @@ const runListener = async () => {
               tokenAmount: buyResult.tokensReceived || 0,
               entryTimestamp,
               buySignature: buyResult.signature || '',
+              isToken2022,
             });
           }
 

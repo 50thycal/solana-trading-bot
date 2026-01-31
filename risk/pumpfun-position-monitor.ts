@@ -1,6 +1,12 @@
 import { Connection, Keypair, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { EventEmitter } from 'events';
-import { getAssociatedTokenAddressSync, getAccount } from '@solana/spl-token';
+import {
+  getAssociatedTokenAddressSync,
+  getAccount,
+  TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+} from '@solana/spl-token';
 import {
   logger,
   getBondingCurveState,
@@ -27,6 +33,7 @@ export interface PumpFunPosition {
   tokenAmount: number;
   entryTimestamp: number;
   buySignature: string;
+  isToken2022?: boolean;
 }
 
 /**
@@ -178,12 +185,21 @@ export class PumpFunPositionMonitor extends EventEmitter {
     const mint = new PublicKey(position.tokenMint);
     const bondingCurve = new PublicKey(position.bondingCurve);
 
+    // Determine token program ID based on token type
+    const tokenProgramId = position.isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+
     // First check if we still have tokens
-    const tokenAta = getAssociatedTokenAddressSync(mint, this.wallet.publicKey);
+    const tokenAta = getAssociatedTokenAddressSync(
+      mint,
+      this.wallet.publicKey,
+      false,
+      tokenProgramId,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
     let actualTokenAmount: number;
 
     try {
-      const tokenAccount = await getAccount(this.connection, tokenAta, 'confirmed');
+      const tokenAccount = await getAccount(this.connection, tokenAta, 'confirmed', tokenProgramId);
       actualTokenAmount = Number(tokenAccount.amount);
 
       if (actualTokenAmount === 0) {
@@ -286,6 +302,9 @@ export class PumpFunPositionMonitor extends EventEmitter {
     const mint = new PublicKey(position.tokenMint);
     const bondingCurve = new PublicKey(position.bondingCurve);
 
+    // Determine token program ID based on token type
+    const tokenProgramId = position.isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+
     // Emit trigger event before executing
     const triggerEvent: PumpFunTriggerEvent = {
       type: triggerType,
@@ -297,11 +316,17 @@ export class PumpFunPositionMonitor extends EventEmitter {
     this.emit('trigger', triggerEvent);
 
     // Get actual token balance
-    const tokenAta = getAssociatedTokenAddressSync(mint, this.wallet.publicKey);
+    const tokenAta = getAssociatedTokenAddressSync(
+      mint,
+      this.wallet.publicKey,
+      false,
+      tokenProgramId,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
     let actualTokenAmount: number;
 
     try {
-      const tokenAccount = await getAccount(this.connection, tokenAta, 'confirmed');
+      const tokenAccount = await getAccount(this.connection, tokenAta, 'confirmed', tokenProgramId);
       actualTokenAmount = Number(tokenAccount.amount);
     } catch {
       logger.warn({ mint: position.tokenMint }, '[pump.fun] Could not get token balance for sell');
@@ -345,6 +370,7 @@ export class PumpFunPositionMonitor extends EventEmitter {
       slippageBps: SELL_SLIPPAGE * 100,
       computeUnitLimit: COMPUTE_UNIT_LIMIT,
       computeUnitPrice: COMPUTE_UNIT_PRICE,
+      isToken2022: position.isToken2022,
     });
 
     if (sellResult.success) {
