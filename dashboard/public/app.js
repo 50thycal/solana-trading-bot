@@ -31,11 +31,13 @@ const elements = {
   funnelDetected: document.getElementById('funnel-detected'),
   funnelCheapGates: document.getElementById('funnel-cheap-gates'),
   funnelDeepFilters: document.getElementById('funnel-deep-filters'),
+  funnelMomentumGate: document.getElementById('funnel-momentum-gate'),
   funnelBought: document.getElementById('funnel-bought'),
 
   // Gate stats
   cheapGatesStats: document.getElementById('cheap-gates-stats'),
   deepFiltersStats: document.getElementById('deep-filters-stats'),
+  momentumGateStats: document.getElementById('momentum-gate-stats'),
 
   // Token list
   tokenList: document.getElementById('token-list'),
@@ -166,6 +168,7 @@ function updateFunnel(data) {
   // Tokens that passed cheap gates = tokens that reached deep filters + bought
   const cheapGates = data.gateStats?.cheapGates || [];
   const deepFilters = data.gateStats?.deepFilters || [];
+  const momentumGate = data.gateStats?.momentumGate || [];
 
   // Get the last cheap gate passed count (those that made it through all cheap gates)
   const lastCheapGate = cheapGates[cheapGates.length - 1];
@@ -175,10 +178,15 @@ function updateFunnel(data) {
   const lastDeepFilter = deepFilters[deepFilters.length - 1];
   const passedDeepFilters = lastDeepFilter ? lastDeepFilter.passed : 0;
 
+  // Get the momentum gate passed count
+  const lastMomentumGate = momentumGate[momentumGate.length - 1];
+  const passedMomentumGate = lastMomentumGate ? lastMomentumGate.passed : 0;
+
   // Update funnel values
   elements.funnelDetected.querySelector('.funnel-value').textContent = detected;
   elements.funnelCheapGates.querySelector('.funnel-value').textContent = passedCheapGates;
   elements.funnelDeepFilters.querySelector('.funnel-value').textContent = passedDeepFilters;
+  elements.funnelMomentumGate.querySelector('.funnel-value').textContent = passedMomentumGate;
   elements.funnelBought.querySelector('.funnel-value').textContent = bought;
 }
 
@@ -197,6 +205,13 @@ function updateGateStats(gateStats) {
     elements.deepFiltersStats.innerHTML = gateStats.deepFilters.map(renderGateStat).join('');
   } else {
     elements.deepFiltersStats.innerHTML = '<div class="empty-state">No data yet</div>';
+  }
+
+  // Momentum gate
+  if (gateStats.momentumGate && gateStats.momentumGate.length > 0) {
+    elements.momentumGateStats.innerHTML = gateStats.momentumGate.map(renderGateStat).join('');
+  } else {
+    elements.momentumGateStats.innerHTML = '<div class="empty-state">No data yet</div>';
   }
 }
 

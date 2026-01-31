@@ -74,6 +74,11 @@
           <div class="funnel-value">0</div>
         </div>
         <div class="funnel-arrow">→</div>
+        <div class="funnel-stage" id="funnel-momentum-gate">
+          <div class="funnel-label">Momentum Gate</div>
+          <div class="funnel-value">0</div>
+        </div>
+        <div class="funnel-arrow">→</div>
         <div class="funnel-stage funnel-stage-success" id="funnel-bought">
           <div class="funnel-label">Bought</div>
           <div class="funnel-value">0</div>
@@ -125,6 +130,17 @@
             <span class="panel-subtitle">On-chain validation</span>
           </div>
           <div class="gate-stats-list" id="deep-filters-stats">
+            <div class="loading">Loading stats...</div>
+          </div>
+        </section>
+
+        <!-- Momentum Gate Stats -->
+        <section class="panel gate-stats-panel">
+          <div class="panel-header">
+            <h2>Momentum Gate</h2>
+            <span class="panel-subtitle">Buy activity validation</span>
+          </div>
+          <div class="gate-stats-list" id="momentum-gate-stats">
             <div class="loading">Loading stats...</div>
           </div>
         </section>
