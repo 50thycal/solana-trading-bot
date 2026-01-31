@@ -10,6 +10,7 @@ import {
 } from '@solana/web3.js';
 import {
   TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
@@ -71,6 +72,7 @@ export interface PumpFunBuyParams {
   slippageBps: number;
   computeUnitLimit?: number;
   computeUnitPrice?: number;
+  isToken2022?: boolean;
 }
 
 /**
@@ -85,6 +87,7 @@ export interface PumpFunSellParams {
   slippageBps: number;
   computeUnitLimit?: number;
   computeUnitPrice?: number;
+  isToken2022?: boolean;
 }
 
 /**
@@ -121,9 +124,10 @@ export function deriveBondingCurve(mint: PublicKey): PublicKey {
  */
 export function deriveAssociatedBondingCurve(
   bondingCurve: PublicKey,
-  mint: PublicKey
+  mint: PublicKey,
+  tokenProgramId: PublicKey = TOKEN_PROGRAM_ID
 ): PublicKey {
-  return getAssociatedTokenAddressSync(mint, bondingCurve, true);
+  return getAssociatedTokenAddressSync(mint, bondingCurve, true, tokenProgramId, ASSOCIATED_TOKEN_PROGRAM_ID);
 }
 
 /**
@@ -292,7 +296,8 @@ function buildBuyInstruction(
   userTokenAccount: PublicKey,
   user: PublicKey,
   amountLamports: BN,
-  maxTokenAmount: BN
+  maxTokenAmount: BN,
+  tokenProgramId: PublicKey = TOKEN_PROGRAM_ID
 ): TransactionInstruction {
   // Buy instruction discriminator (first 8 bytes of sha256("global:buy"))
   const discriminator = Buffer.from([102, 6, 61, 18, 1, 218, 235, 234]);
@@ -312,7 +317,7 @@ function buildBuyInstruction(
     { pubkey: userTokenAccount, isSigner: false, isWritable: true },
     { pubkey: user, isSigner: true, isWritable: true },
     { pubkey: SYSTEM_PROGRAM, isSigner: false, isWritable: false },
-    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     { pubkey: PUMP_FUN_EVENT_AUTHORITY, isSigner: false, isWritable: false },
     { pubkey: PUMP_FUN_PROGRAM_ID, isSigner: false, isWritable: false },
   ];
@@ -348,7 +353,8 @@ function buildSellInstruction(
   userTokenAccount: PublicKey,
   user: PublicKey,
   tokenAmount: BN,
-  minSolOutput: BN
+  minSolOutput: BN,
+  tokenProgramId: PublicKey = TOKEN_PROGRAM_ID
 ): TransactionInstruction {
   // Sell instruction discriminator (first 8 bytes of sha256("global:sell"))
   const discriminator = Buffer.from([51, 230, 133, 164, 1, 127, 131, 173]);
@@ -369,7 +375,7 @@ function buildSellInstruction(
     { pubkey: user, isSigner: true, isWritable: true },
     { pubkey: SYSTEM_PROGRAM, isSigner: false, isWritable: false },
     { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     { pubkey: PUMP_FUN_EVENT_AUTHORITY, isSigner: false, isWritable: false },
     { pubkey: PUMP_FUN_PROGRAM_ID, isSigner: false, isWritable: false },
   ];
@@ -397,7 +403,11 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     slippageBps,
     computeUnitLimit = 100000,
     computeUnitPrice = 100000,
+    isToken2022 = false,
   } = params;
+
+  // Determine token program ID based on token type
+  const tokenProgramId = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
 
   try {
     // Get bonding curve state
@@ -432,13 +442,21 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
         expectedTokens: expectedTokens.toString(),
         minTokensOut: minTokensOut.toString(),
         slippageBps,
+        isToken2022,
+        tokenProgramId: tokenProgramId.toString(),
       },
       'Preparing pump.fun buy'
     );
 
-    // Get or create user token account
-    const userTokenAccount = getAssociatedTokenAddressSync(mint, wallet.publicKey);
-    const associatedBondingCurve = deriveAssociatedBondingCurve(bondingCurve, mint);
+    // Get or create user token account (using correct token program)
+    const userTokenAccount = getAssociatedTokenAddressSync(
+      mint,
+      wallet.publicKey,
+      false,
+      tokenProgramId,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+    const associatedBondingCurve = deriveAssociatedBondingCurve(bondingCurve, mint, tokenProgramId);
 
     // Build transaction
     const transaction = new Transaction();
@@ -459,7 +477,9 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
           wallet.publicKey,
           userTokenAccount,
           wallet.publicKey,
-          mint
+          mint,
+          tokenProgramId,
+          ASSOCIATED_TOKEN_PROGRAM_ID
         )
       );
     }
@@ -473,7 +493,8 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
         userTokenAccount,
         wallet.publicKey,
         amountLamports,
-        minTokensOut
+        minTokensOut,
+        tokenProgramId
       )
     );
 
@@ -534,7 +555,11 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
     slippageBps,
     computeUnitLimit = 100000,
     computeUnitPrice = 100000,
+    isToken2022 = false,
   } = params;
+
+  // Determine token program ID based on token type
+  const tokenProgramId = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
 
   try {
     // Get bonding curve state
@@ -561,12 +586,20 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
         expectedSol: expectedSol.toString(),
         minSolOut: minSolOut.toString(),
         slippageBps,
+        isToken2022,
+        tokenProgramId: tokenProgramId.toString(),
       },
       'Preparing pump.fun sell'
     );
 
-    const userTokenAccount = getAssociatedTokenAddressSync(mint, wallet.publicKey);
-    const associatedBondingCurve = deriveAssociatedBondingCurve(bondingCurve, mint);
+    const userTokenAccount = getAssociatedTokenAddressSync(
+      mint,
+      wallet.publicKey,
+      false,
+      tokenProgramId,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+    const associatedBondingCurve = deriveAssociatedBondingCurve(bondingCurve, mint, tokenProgramId);
 
     // Build transaction
     const transaction = new Transaction();
@@ -588,7 +621,8 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
         userTokenAccount,
         wallet.publicKey,
         tokenAmountBN,
-        minSolOut
+        minSolOut,
+        tokenProgramId
       )
     );
 
