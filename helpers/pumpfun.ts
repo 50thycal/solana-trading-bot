@@ -39,6 +39,12 @@ export const PUMP_FUN_FEE_RECIPIENT = new PublicKey('CebN5WGQ4jvEPvsVU4EoHEpgzq1
 export const PUMP_FUN_EVENT_AUTHORITY = new PublicKey('Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1');
 
 /**
+ * pump.fun Fee Program ID
+ * Used for fee configuration and volume tracking
+ */
+export const PUMP_FUN_FEE_PROGRAM_ID = new PublicKey('pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ');
+
+/**
  * System Program ID
  */
 const SYSTEM_PROGRAM = SystemProgram.programId;
@@ -58,6 +64,7 @@ export interface BondingCurveState {
   realSolReserves: BN;
   tokenTotalSupply: BN;
   complete: boolean;
+  creator: PublicKey;
 }
 
 /**
@@ -131,9 +138,68 @@ export function deriveAssociatedBondingCurve(
 }
 
 /**
+ * Derive the creator vault PDA
+ * Seeds: ["creator-vault", creator]
+ *
+ * @param creator - The token creator wallet
+ * @returns The creator vault PDA
+ */
+export function deriveCreatorVault(creator: PublicKey): PublicKey {
+  const [creatorVault] = PublicKey.findProgramAddressSync(
+    [Buffer.from('creator-vault'), creator.toBuffer()],
+    PUMP_FUN_PROGRAM_ID
+  );
+  return creatorVault;
+}
+
+/**
+ * Derive the global volume accumulator PDA
+ * Seeds: ["global_volume_accumulator"]
+ *
+ * @returns The global volume accumulator PDA
+ */
+export function deriveGlobalVolumeAccumulator(): PublicKey {
+  const [globalVolumeAccumulator] = PublicKey.findProgramAddressSync(
+    [Buffer.from('global_volume_accumulator')],
+    PUMP_FUN_PROGRAM_ID
+  );
+  return globalVolumeAccumulator;
+}
+
+/**
+ * Derive the user volume accumulator PDA
+ * Seeds: ["user_volume_accumulator", user]
+ *
+ * @param user - The user wallet
+ * @returns The user volume accumulator PDA
+ */
+export function deriveUserVolumeAccumulator(user: PublicKey): PublicKey {
+  const [userVolumeAccumulator] = PublicKey.findProgramAddressSync(
+    [Buffer.from('user_volume_accumulator'), user.toBuffer()],
+    PUMP_FUN_PROGRAM_ID
+  );
+  return userVolumeAccumulator;
+}
+
+/**
+ * Derive the fee config PDA
+ * Seeds: ["fee_config", pump_program_id]
+ * Owned by: Fee Program
+ *
+ * @returns The fee config PDA
+ */
+export function deriveFeeConfig(): PublicKey {
+  const [feeConfig] = PublicKey.findProgramAddressSync(
+    [Buffer.from('fee_config'), PUMP_FUN_PROGRAM_ID.toBuffer()],
+    PUMP_FUN_FEE_PROGRAM_ID
+  );
+  return feeConfig;
+}
+
+/**
  * Decode bonding curve state from account data
  *
- * Bonding curve account layout (approx):
+ * Bonding curve account layout:
  * - 8 bytes: discriminator
  * - 8 bytes: virtualTokenReserves (u64)
  * - 8 bytes: virtualSolReserves (u64)
@@ -141,10 +207,13 @@ export function deriveAssociatedBondingCurve(
  * - 8 bytes: realSolReserves (u64)
  * - 8 bytes: tokenTotalSupply (u64)
  * - 1 byte: complete (bool)
+ * - 32 bytes: creator (Pubkey)
+ *
+ * Total: 8 + 40 + 1 + 32 = 81 bytes minimum
  */
 export function decodeBondingCurveState(data: Buffer): BondingCurveState | null {
   try {
-    if (data.length < 49) {
+    if (data.length < 81) {
       logger.debug({ dataLength: data.length }, 'Bonding curve data too short');
       return null;
     }
@@ -158,6 +227,7 @@ export function decodeBondingCurveState(data: Buffer): BondingCurveState | null 
     const realSolReserves = new BN(data.slice(offset + 24, offset + 32), 'le');
     const tokenTotalSupply = new BN(data.slice(offset + 32, offset + 40), 'le');
     const complete = data[offset + 40] === 1;
+    const creator = new PublicKey(data.slice(offset + 41, offset + 41 + 32));
 
     return {
       virtualTokenReserves,
@@ -166,6 +236,7 @@ export function decodeBondingCurveState(data: Buffer): BondingCurveState | null 
       realSolReserves,
       tokenTotalSupply,
       complete,
+      creator,
     };
   } catch (error) {
     logger.debug({ error }, 'Failed to decode bonding curve state');
@@ -275,19 +346,23 @@ export function calculateMarketCapSol(state: BondingCurveState): number {
 /**
  * Build the buy instruction for pump.fun
  *
- * pump.fun Buy instruction accounts:
+ * pump.fun Buy instruction accounts (16 total):
  * 0: global
- * 1: feeRecipient
+ * 1: fee_recipient
  * 2: mint
- * 3: bondingCurve
- * 4: associatedBondingCurve
- * 5: associatedUser (user's token account)
+ * 3: bonding_curve
+ * 4: associated_bonding_curve
+ * 5: associated_user (user's token account)
  * 6: user
- * 7: systemProgram
- * 8: tokenProgram
- * 9: rent (deprecated but may still be needed)
- * 10: eventAuthority
+ * 7: system_program
+ * 8: token_program
+ * 9: creator_vault (mutable)
+ * 10: event_authority
  * 11: program
+ * 12: global_volume_accumulator (NOT mutable)
+ * 13: user_volume_accumulator (mutable)
+ * 14: fee_config (NOT mutable)
+ * 15: fee_program (NOT mutable)
  */
 function buildBuyInstruction(
   mint: PublicKey,
@@ -297,7 +372,11 @@ function buildBuyInstruction(
   user: PublicKey,
   amountLamports: BN,
   maxTokenAmount: BN,
-  tokenProgramId: PublicKey = TOKEN_PROGRAM_ID
+  tokenProgramId: PublicKey,
+  creatorVault: PublicKey,
+  globalVolumeAccumulator: PublicKey,
+  userVolumeAccumulator: PublicKey,
+  feeConfig: PublicKey,
 ): TransactionInstruction {
   // Buy instruction discriminator (first 8 bytes of sha256("global:buy"))
   const discriminator = Buffer.from([102, 6, 61, 18, 1, 218, 235, 234]);
@@ -309,17 +388,38 @@ function buildBuyInstruction(
   maxTokenAmount.toArrayLike(Buffer, 'le', 8).copy(data, 16);
 
   const keys = [
+    // 0: global
     { pubkey: PUMP_FUN_GLOBAL, isSigner: false, isWritable: false },
+    // 1: fee_recipient
     { pubkey: PUMP_FUN_FEE_RECIPIENT, isSigner: false, isWritable: true },
+    // 2: mint
     { pubkey: mint, isSigner: false, isWritable: false },
+    // 3: bonding_curve
     { pubkey: bondingCurve, isSigner: false, isWritable: true },
+    // 4: associated_bonding_curve
     { pubkey: associatedBondingCurve, isSigner: false, isWritable: true },
+    // 5: associated_user (user's token account)
     { pubkey: userTokenAccount, isSigner: false, isWritable: true },
+    // 6: user
     { pubkey: user, isSigner: true, isWritable: true },
+    // 7: system_program
     { pubkey: SYSTEM_PROGRAM, isSigner: false, isWritable: false },
+    // 8: token_program
     { pubkey: tokenProgramId, isSigner: false, isWritable: false },
+    // 9: creator_vault (mutable)
+    { pubkey: creatorVault, isSigner: false, isWritable: true },
+    // 10: event_authority
     { pubkey: PUMP_FUN_EVENT_AUTHORITY, isSigner: false, isWritable: false },
+    // 11: program
     { pubkey: PUMP_FUN_PROGRAM_ID, isSigner: false, isWritable: false },
+    // 12: global_volume_accumulator (NOT mutable)
+    { pubkey: globalVolumeAccumulator, isSigner: false, isWritable: false },
+    // 13: user_volume_accumulator (mutable)
+    { pubkey: userVolumeAccumulator, isSigner: false, isWritable: true },
+    // 14: fee_config (NOT mutable)
+    { pubkey: feeConfig, isSigner: false, isWritable: false },
+    // 15: fee_program (NOT mutable)
+    { pubkey: PUMP_FUN_FEE_PROGRAM_ID, isSigner: false, isWritable: false },
   ];
 
   return new TransactionInstruction({
@@ -427,6 +527,9 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       };
     }
 
+    // Extract creator from bonding curve state for PDA derivation
+    const creator = state.creator;
+
     // Calculate expected tokens out
     const amountLamports = new BN(Math.floor(amountSol * LAMPORTS_PER_SOL));
     const expectedTokens = calculateBuyTokensOut(state, amountLamports);
@@ -434,19 +537,6 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     // Apply slippage - minimum tokens we'll accept
     const slippageMultiplier = (10000 - slippageBps) / 10000;
     const minTokensOut = new BN(Math.floor(expectedTokens.toNumber() * slippageMultiplier));
-
-    logger.debug(
-      {
-        mint: mint.toString(),
-        amountSol,
-        expectedTokens: expectedTokens.toString(),
-        minTokensOut: minTokensOut.toString(),
-        slippageBps,
-        isToken2022,
-        tokenProgramId: tokenProgramId.toString(),
-      },
-      'Preparing pump.fun buy'
-    );
 
     // Get or create user token account (using correct token program)
     const userTokenAccount = getAssociatedTokenAddressSync(
@@ -457,6 +547,30 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
     const associatedBondingCurve = deriveAssociatedBondingCurve(bondingCurve, mint, tokenProgramId);
+
+    // Derive new PDAs for buy instruction
+    const creatorVault = deriveCreatorVault(creator);
+    const globalVolumeAccumulator = deriveGlobalVolumeAccumulator();
+    const userVolumeAccumulator = deriveUserVolumeAccumulator(wallet.publicKey);
+    const feeConfig = deriveFeeConfig();
+
+    logger.debug(
+      {
+        mint: mint.toString(),
+        amountSol,
+        expectedTokens: expectedTokens.toString(),
+        minTokensOut: minTokensOut.toString(),
+        slippageBps,
+        isToken2022,
+        tokenProgramId: tokenProgramId.toString(),
+        creator: creator.toString(),
+        creatorVault: creatorVault.toString(),
+        globalVolumeAccumulator: globalVolumeAccumulator.toString(),
+        userVolumeAccumulator: userVolumeAccumulator.toString(),
+        feeConfig: feeConfig.toString(),
+      },
+      'Preparing pump.fun buy'
+    );
 
     // Build transaction
     const transaction = new Transaction();
@@ -494,7 +608,11 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
         wallet.publicKey,
         amountLamports,
         minTokensOut,
-        tokenProgramId
+        tokenProgramId,
+        creatorVault,
+        globalVolumeAccumulator,
+        userVolumeAccumulator,
+        feeConfig,
       )
     );
 
