@@ -111,6 +111,13 @@ export interface ValidatedConfig {
   pumpfunEnableMinSolFilter: boolean;
   pumpfunEnableMaxSolFilter: boolean;
   pumpfunMinScoreRequired: number;
+
+  // Momentum Gate
+  momentumGateEnabled: boolean;
+  momentumInitialDelayMs: number;
+  momentumMinTotalBuys: number;
+  momentumRecheckIntervalMs: number;
+  momentumMaxChecks: number;
 }
 
 interface ValidationError {
@@ -404,6 +411,31 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'PUMPFUN_MIN_SCORE_REQUIRED', message: 'PUMPFUN_MIN_SCORE_REQUIRED must be between 0 and 100' });
   }
 
+  // === MOMENTUM GATE (Pipeline Stage 4) ===
+  // Validates buy momentum before allowing purchase
+
+  const momentumGateEnabled = requireBoolean('MOMENTUM_GATE_ENABLED', true);
+
+  const momentumInitialDelayMs = requireNumber('MOMENTUM_INITIAL_DELAY_MS', 100);
+  if (momentumInitialDelayMs < 0) {
+    errors.push({ variable: 'MOMENTUM_INITIAL_DELAY_MS', message: 'MOMENTUM_INITIAL_DELAY_MS cannot be negative' });
+  }
+
+  const momentumMinTotalBuys = requireNumber('MOMENTUM_MIN_TOTAL_BUYS', 10);
+  if (momentumMinTotalBuys < 1) {
+    errors.push({ variable: 'MOMENTUM_MIN_TOTAL_BUYS', message: 'MOMENTUM_MIN_TOTAL_BUYS must be at least 1' });
+  }
+
+  const momentumRecheckIntervalMs = requireNumber('MOMENTUM_RECHECK_INTERVAL_MS', 100);
+  if (momentumRecheckIntervalMs < 0) {
+    errors.push({ variable: 'MOMENTUM_RECHECK_INTERVAL_MS', message: 'MOMENTUM_RECHECK_INTERVAL_MS cannot be negative' });
+  }
+
+  const momentumMaxChecks = requireNumber('MOMENTUM_MAX_CHECKS', 5);
+  if (momentumMaxChecks < 1) {
+    errors.push({ variable: 'MOMENTUM_MAX_CHECKS', message: 'MOMENTUM_MAX_CHECKS must be at least 1' });
+  }
+
   // Validate private key format (base58)
   if (privateKey) {
     try {
@@ -513,6 +545,11 @@ export function validateConfig(): ValidatedConfig {
     pumpfunEnableMinSolFilter,
     pumpfunEnableMaxSolFilter,
     pumpfunMinScoreRequired,
+    momentumGateEnabled,
+    momentumInitialDelayMs,
+    momentumMinTotalBuys,
+    momentumRecheckIntervalMs,
+    momentumMaxChecks,
   };
 
   // Log dry run mode warning

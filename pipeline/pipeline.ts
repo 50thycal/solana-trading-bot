@@ -18,9 +18,11 @@ import {
   StageResult,
   CheapGatesData,
   DeepFiltersData,
+  MomentumGateData,
 } from './types';
 import { CheapGatesStage, CheapGatesConfig } from './cheap-gates';
 import { DeepFiltersStage, DeepFiltersConfig } from './deep-filters';
+import { MomentumGateStage, MomentumGateConfig } from './momentum-gate';
 import { logger } from '../helpers';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -58,6 +60,9 @@ export interface PipelineConfig {
   /** Deep filters configuration */
   deepFilters: Partial<DeepFiltersConfig>;
 
+  /** Momentum gate configuration */
+  momentumGate: Partial<MomentumGateConfig>;
+
   /** Enable verbose logging */
   verbose: boolean;
 }
@@ -65,6 +70,7 @@ export interface PipelineConfig {
 const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   cheapGates: {},
   deepFilters: {},
+  momentumGate: {},
   verbose: false,
 };
 
@@ -79,7 +85,8 @@ const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
  * 1. Detection (external - produces DetectionEvent)
  * 2. Cheap Gates (dedupe, blacklist, exposure, mint info)
  * 3. Deep Filters (bonding curve state, SOL filters, scoring)
- * 4. Execute (external - buys the token)
+ * 4. Momentum Gate (buy count validation with retry-based polling)
+ * 5. Execute (external - buys the token)
  */
 export class PumpFunPipeline {
   private connection: Connection;
@@ -88,6 +95,7 @@ export class PumpFunPipeline {
 
   private cheapGatesStage: CheapGatesStage;
   private deepFiltersStage: DeepFiltersStage;
+  private momentumGateStage: MomentumGateStage;
 
   constructor(
     connection: Connection,
@@ -101,12 +109,14 @@ export class PumpFunPipeline {
     // Initialize stages
     this.cheapGatesStage = new CheapGatesStage(connection, this.config.cheapGates);
     this.deepFiltersStage = new DeepFiltersStage(connection, this.config.deepFilters);
+    this.momentumGateStage = new MomentumGateStage(connection, this.config.momentumGate);
 
     logger.info(
       {
-        stages: ['cheap-gates', 'deep-filters'],
+        stages: ['cheap-gates', 'deep-filters', 'momentum-gate'],
         cheapGatesConfig: this.config.cheapGates,
         deepFiltersConfig: this.config.deepFilters,
+        momentumGateConfig: this.config.momentumGate,
       },
       '[pipeline] Initialized'
     );
@@ -176,6 +186,25 @@ export class PumpFunPipeline {
     context.deepFilters = deepFiltersResult.data as DeepFiltersData;
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // STAGE 4: Momentum Gate
+    // ═══════════════════════════════════════════════════════════════════════════
+    const momentumGateResult = await this.momentumGateStage.execute(context);
+    stageResults.push(momentumGateResult);
+
+    if (!momentumGateResult.pass) {
+      context.rejection = {
+        stage: momentumGateResult.stage,
+        reason: momentumGateResult.reason,
+        timestamp: Date.now(),
+      };
+
+      return this.buildResult(false, context, stageResults, pipelineStart, momentumGateResult);
+    }
+
+    // Add momentum gate data to context
+    context.momentumGate = momentumGateResult.data as MomentumGateData;
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // ALL STAGES PASSED
     // ═══════════════════════════════════════════════════════════════════════════
     const totalDuration = Date.now() - pipelineStart;
@@ -190,6 +219,13 @@ export class PumpFunPipeline {
           durationMs: s.durationMs,
         })),
         score: context.deepFilters?.filterResults.score,
+        momentum: context.momentumGate
+          ? {
+              buyCount: context.momentumGate.buyCount,
+              sellCount: context.momentumGate.sellCount,
+              checksPerformed: context.momentumGate.checksPerformed,
+            }
+          : undefined,
       },
       '[pipeline] All stages passed - ready to execute'
     );

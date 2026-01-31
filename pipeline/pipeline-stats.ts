@@ -40,6 +40,7 @@ export interface PipelineStatsSnapshot {
   gateStats: {
     cheapGates: GateStats[];
     deepFilters: GateStats[];
+    momentumGate: GateStats[];
   };
 
   /** Top rejection reasons with counts */
@@ -86,6 +87,11 @@ const DEEP_FILTERS = [
   { name: 'max-sol', displayName: 'Max SOL in Curve' },
 ];
 
+/** Momentum gate (Stage 4) */
+const MOMENTUM_GATE = [
+  { name: 'momentum', displayName: 'Momentum Gate' },
+];
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // PIPELINE STATS CLASS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -101,6 +107,7 @@ export class PipelineStats {
   /** Gate pass/fail counters */
   private cheapGateStats: Map<string, { passed: number; failed: number }>;
   private deepFilterStats: Map<string, { passed: number; failed: number }>;
+  private momentumGateStats: Map<string, { passed: number; failed: number }>;
 
   /** Rejection reason counters */
   private rejectionReasons: Map<string, number>;
@@ -116,6 +123,7 @@ export class PipelineStats {
     this.startedAt = Date.now();
     this.cheapGateStats = new Map();
     this.deepFilterStats = new Map();
+    this.momentumGateStats = new Map();
     this.rejectionReasons = new Map();
 
     // Initialize all gates with zero counts
@@ -124,6 +132,9 @@ export class PipelineStats {
     }
     for (const filter of DEEP_FILTERS) {
       this.deepFilterStats.set(filter.name, { passed: 0, failed: 0 });
+    }
+    for (const gate of MOMENTUM_GATE) {
+      this.momentumGateStats.set(gate.name, { passed: 0, failed: 0 });
     }
 
     logger.info('[pipeline-stats] Initialized');
@@ -181,6 +192,12 @@ export class PipelineStats {
       const stats = this.deepFilterStats.get(filter.name)!;
       stats.passed++;
     }
+
+    // Momentum gate passed
+    for (const gate of MOMENTUM_GATE) {
+      const stats = this.momentumGateStats.get(gate.name)!;
+      stats.passed++;
+    }
   }
 
   /**
@@ -203,6 +220,19 @@ export class PipelineStats {
         stats.passed++;
       }
       this.recordDeepFiltersRejection(reason);
+    } else if (rejectedAt === 'momentum-gate') {
+      // All cheap gates passed
+      for (const gate of CHEAP_GATES) {
+        const stats = this.cheapGateStats.get(gate.name)!;
+        stats.passed++;
+      }
+      // All deep filters passed
+      for (const filter of DEEP_FILTERS) {
+        const stats = this.deepFilterStats.get(filter.name)!;
+        stats.passed++;
+      }
+      // Momentum gate failed
+      this.recordMomentumGateRejection(reason);
     }
   }
 
@@ -345,6 +375,15 @@ export class PipelineStats {
   }
 
   /**
+   * Record momentum gate rejection
+   */
+  private recordMomentumGateRejection(reason: string): void {
+    // Momentum gate only has one check, so any rejection means it failed
+    const stats = this.momentumGateStats.get('momentum')!;
+    stats.failed++;
+  }
+
+  /**
    * Get current stats snapshot
    */
   getSnapshot(): PipelineStatsSnapshot {
@@ -365,6 +404,17 @@ export class PipelineStats {
       return {
         name: filter.name,
         displayName: filter.displayName,
+        passed: stats.passed,
+        failed: stats.failed,
+        totalChecked: stats.passed + stats.failed,
+      };
+    });
+
+    const momentumGateArray: GateStats[] = MOMENTUM_GATE.map((gate) => {
+      const stats = this.momentumGateStats.get(gate.name)!;
+      return {
+        name: gate.name,
+        displayName: gate.displayName,
         passed: stats.passed,
         failed: stats.failed,
         totalChecked: stats.passed + stats.failed,
@@ -392,6 +442,7 @@ export class PipelineStats {
       gateStats: {
         cheapGates: cheapGatesArray,
         deepFilters: deepFiltersArray,
+        momentumGate: momentumGateArray,
       },
       topRejectionReasons,
       avgPipelineDurationMs,
@@ -419,6 +470,9 @@ export class PipelineStats {
     }
     for (const filter of DEEP_FILTERS) {
       this.deepFilterStats.set(filter.name, { passed: 0, failed: 0 });
+    }
+    for (const gate of MOMENTUM_GATE) {
+      this.momentumGateStats.set(gate.name, { passed: 0, failed: 0 });
     }
 
     logger.info('[pipeline-stats] Stats reset');
