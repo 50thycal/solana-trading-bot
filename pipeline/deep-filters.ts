@@ -11,7 +11,7 @@
  * - Future: holder distribution, trading velocity, etc.
  */
 
-import { Connection } from '@solana/web3.js';
+import { Connection, PublicKey } from '@solana/web3.js';
 import {
   PipelineContext,
   StageResult,
@@ -113,6 +113,7 @@ export class DeepFiltersStage implements PipelineStage<PipelineContext, DeepFilt
         realSolReserves: new BN(10000000000),
         tokenTotalSupply: new BN(1000000000),
         complete: false,
+        creator: detection.creator || PublicKey.default,
       };
     }
 
