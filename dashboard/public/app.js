@@ -425,14 +425,14 @@ Status: ${trade.status.toUpperCase()}${trade.closedReason ? ` (${trade.closedRea
 
 Entry Time: ${entryTime}
 Entry Price: ${trade.entryPricePerToken?.toExponential(4) || 'N/A'} SOL/token
-Hypothetical SOL Spent: ${trade.hypotheticalSolSpent?.toFixed(4) || 'N/A'} SOL
-Hypothetical Tokens: ${trade.hypotheticalTokensReceived?.toLocaleString() || 'N/A'}
+Hypothetical SOL Spent: ${trade.entrySol?.toFixed(4) || 'N/A'} SOL
+Hypothetical Tokens: ${trade.hypotheticalTokens?.toLocaleString() || 'N/A'}
 `;
 
     if (trade.closedTimestamp) {
       logText += `Closed Time: ${closedTime}
 Hold Duration: ${holdDuration}
-Exit Price: ${trade.exitPricePerToken?.toExponential(4) || 'N/A'} SOL/token
+Exit Price: ${trade.currentPricePerToken?.toExponential(4) || 'N/A'} SOL/token
 `;
     } else {
       logText += `Current Hold Duration: ${holdDuration}

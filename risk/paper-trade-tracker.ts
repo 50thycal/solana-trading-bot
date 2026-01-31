@@ -82,6 +82,8 @@ export interface PaperPnLResult {
   // For closed trades
   closedTimestamp?: number;
   closedReason?: PaperCloseReason;
+  // Pipeline timing (for AI analysis)
+  pipelineDurationMs: number;
 }
 
 export interface PaperPnLSummary {
@@ -483,6 +485,7 @@ export class PaperTradeTracker {
         entryTimestamp: trade.entryTimestamp,
         closedTimestamp: trade.closedTimestamp,
         closedReason: trade.closedReason,
+        pipelineDurationMs: trade.pipelineDurationMs,
       });
     }
 
@@ -522,6 +525,7 @@ export class PaperTradeTracker {
             status: 'error',
             errorMessage: 'Bonding curve not found',
             entryTimestamp: trade.entryTimestamp,
+            pipelineDurationMs: trade.pipelineDurationMs,
           });
           errorTrades++;
           continue;
@@ -545,6 +549,7 @@ export class PaperTradeTracker {
             status: 'error',
             errorMessage: 'Failed to decode bonding curve',
             entryTimestamp: trade.entryTimestamp,
+            pipelineDurationMs: trade.pipelineDurationMs,
           });
           errorTrades++;
           continue;
@@ -565,6 +570,7 @@ export class PaperTradeTracker {
             pnlPercent: null,
             status: 'graduated',
             entryTimestamp: trade.entryTimestamp,
+            pipelineDurationMs: trade.pipelineDurationMs,
           });
           graduatedCount++;
           continue;
@@ -600,6 +606,7 @@ export class PaperTradeTracker {
           pnlPercent,
           status: 'active',
           entryTimestamp: trade.entryTimestamp,
+          pipelineDurationMs: trade.pipelineDurationMs,
         });
       }
     }
