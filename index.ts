@@ -525,6 +525,13 @@ const runListener = async () => {
         skipBondingCurveCheck: false,
         skipFilters: false,
       },
+      momentumGate: {
+        enabled: config.momentumGateEnabled,
+        initialDelayMs: config.momentumInitialDelayMs,
+        minTotalBuys: config.momentumMinTotalBuys,
+        recheckIntervalMs: config.momentumRecheckIntervalMs,
+        maxChecks: config.momentumMaxChecks,
+      },
       verbose: LOG_LEVEL === 'debug' || LOG_LEVEL === 'trace',
     });
     logger.info('[pipeline] pump.fun processing pipeline initialized');
