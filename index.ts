@@ -1097,10 +1097,36 @@ const runListener = async () => {
               mint: baseMintStr,
               signature: buyResult.signature,
               tokensReceived: buyResult.tokensReceived,
+              expectedTokens: buyResult.expectedTokens,
               amountSol: tradeAmount,
+              verified: buyResult.actualVerified,
             },
             '[pump.fun] Buy successful'
           );
+
+          // Log verification details and slippage
+          if (buyResult.actualVerified && buyResult.slippagePercent !== undefined) {
+            const slippageSign = buyResult.slippagePercent >= 0 ? '+' : '';
+            logger.info(
+              {
+                mint: baseMintStr,
+                expectedTokens: buyResult.expectedTokens,
+                actualTokens: buyResult.tokensReceived,
+                slippagePercent: `${slippageSign}${buyResult.slippagePercent.toFixed(2)}%`,
+                verificationMethod: buyResult.verificationMethod,
+              },
+              '[pump.fun] Trade verification complete'
+            );
+          } else if (!buyResult.actualVerified) {
+            logger.warn(
+              {
+                mint: baseMintStr,
+                tokensReceived: buyResult.tokensReceived,
+                verificationMethod: buyResult.verificationMethod,
+              },
+              '[pump.fun] Trade verification failed - using expected tokens'
+            );
+          }
 
           // ════════════════════════════════════════════════════════════════════
           // RECORD POSITION
