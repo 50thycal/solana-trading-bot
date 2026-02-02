@@ -381,16 +381,51 @@ export class PumpFunPositionMonitor extends EventEmitter {
     });
 
     if (sellResult.success) {
+      // Use actual verified SOL received, fall back to calculated value
+      const actualSolReceived = sellResult.solReceived ?? currentValueSol;
+      const expectedSol = sellResult.expectedSol ?? currentValueSol;
+
+      // Recalculate PnL based on actual SOL received
+      const actualPnlSol = actualSolReceived - position.entryAmountSol;
+      const actualPnlPercent = (actualPnlSol / position.entryAmountSol) * 100;
+
+      // Log slippage if verification succeeded
+      if (sellResult.actualVerified && sellResult.slippagePercent !== undefined) {
+        const slippageSign = sellResult.slippagePercent >= 0 ? '+' : '';
+        logger.info(
+          {
+            mint: position.tokenMint,
+            expectedSol: expectedSol.toFixed(6),
+            actualSol: actualSolReceived.toFixed(6),
+            slippagePercent: `${slippageSign}${sellResult.slippagePercent.toFixed(2)}%`,
+            verificationMethod: sellResult.verificationMethod,
+          },
+          '[pump.fun] Sell verification complete'
+        );
+      } else if (!sellResult.actualVerified) {
+        logger.warn(
+          {
+            mint: position.tokenMint,
+            solReceived: actualSolReceived,
+            verificationMethod: sellResult.verificationMethod,
+          },
+          '[pump.fun] Sell verification failed - using expected SOL'
+        );
+      }
+
       logger.info(
         {
           mint: position.tokenMint,
           signature: sellResult.signature,
-          solReceived: sellResult.solReceived,
-          pnlPercent: pnlPercent.toFixed(2) + '%',
+          solReceived: actualSolReceived.toFixed(6),
+          pnlPercent: actualPnlPercent.toFixed(2) + '%',
+          verified: sellResult.actualVerified,
         },
         '[pump.fun] Sell successful',
       );
-      this.finalizeSell(position, sellResult.signature || '', currentValueSol, pnlPercent, reason);
+
+      // Use ACTUAL SOL received for PnL calculation (CRITICAL FIX)
+      this.finalizeSell(position, sellResult.signature || '', actualSolReceived, actualPnlPercent, reason);
     } else {
       logger.error(
         { mint: position.tokenMint, error: sellResult.error },
