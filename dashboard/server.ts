@@ -11,7 +11,7 @@ import path from 'path';
 import { URL } from 'url';
 import { logger } from '../helpers';
 import { getStateStore } from '../persistence';
-import { getPnlTracker, getExposureManager, getPositionMonitor } from '../risk';
+import { getPnlTracker, getExposureManager, getPositionMonitor, getPumpFunPositionMonitor } from '../risk';
 import { PoolAction, PoolType } from '../persistence/models';
 import { getPipelineStats, resetPipelineStats } from '../pipeline';
 import { getPaperTradeTracker } from '../risk';
@@ -412,14 +412,21 @@ export class DashboardServer {
     const pnlTracker = getPnlTracker();
     const exposureManager = getExposureManager();
     const positionMonitor = getPositionMonitor();
+    const pumpFunMonitor = getPumpFunPositionMonitor();
 
     const uptimeSeconds = Math.floor((Date.now() - this.startTime.getTime()) / 1000);
     const pnlSummary = pnlTracker?.getSessionSummary();
     const exposureStats = exposureManager?.getStats();
     const monitorStats = positionMonitor?.getStats();
+    const pumpFunMonitorStats = pumpFunMonitor?.getStats();
 
     // Fetch actual wallet balance from chain
     const walletBalance = exposureManager ? await exposureManager.getWalletBalance() : null;
+
+    // Calculate combined unrealized PnL (Raydium + pump.fun)
+    const raydiumUnrealizedPnl = monitorStats?.unrealizedPnl || 0;
+    const pumpFunUnrealizedPnl = pumpFunMonitorStats?.unrealizedPnl || 0;
+    const totalUnrealizedPnl = raydiumUnrealizedPnl + pumpFunUnrealizedPnl;
 
     return {
       status: this.isWebSocketConnected ? 'running' : 'disconnected',
@@ -444,13 +451,13 @@ export class DashboardServer {
         : null,
       positions: {
         open: stateStore?.getOpenPositions().length || 0,
-        monitored: monitorStats?.positionCount || 0,
+        monitored: (monitorStats?.positionCount || 0) + (pumpFunMonitorStats?.positionCount || 0),
       },
       pnl: pnlSummary
         ? {
             realized: pnlSummary.realizedPnlSol,
-            unrealized: monitorStats?.unrealizedPnl || 0,
-            total: pnlSummary.realizedPnlSol + (monitorStats?.unrealizedPnl || 0),
+            unrealized: totalUnrealizedPnl,
+            total: pnlSummary.realizedPnlSol + totalUnrealizedPnl,
           }
         : null,
       timestamp: new Date().toISOString(),
@@ -559,6 +566,7 @@ export class DashboardServer {
     const pnlTracker = getPnlTracker();
     const stateStore = getStateStore();
     const positionMonitor = getPositionMonitor();
+    const pumpFunMonitor = getPumpFunPositionMonitor();
 
     if (!pnlTracker) {
       return { error: 'P&L tracker not initialized' };
@@ -567,16 +575,33 @@ export class DashboardServer {
     const summary = pnlTracker.getSessionSummary();
     const tradeStats = stateStore?.getTradeStats();
     const monitorStats = positionMonitor?.getStats();
+    const pumpFunMonitorStats = pumpFunMonitor?.getStats();
+
+    // Calculate unrealized PnL by source
+    const raydiumUnrealizedPnl = monitorStats?.unrealizedPnl || 0;
+    const pumpFunUnrealizedPnl = pumpFunMonitorStats?.unrealizedPnl || 0;
+    const totalUnrealizedPnl = raydiumUnrealizedPnl + pumpFunUnrealizedPnl;
 
     return {
       realized: summary.realizedPnlSol,
-      unrealized: monitorStats?.unrealizedPnl || 0,
-      total: summary.realizedPnlSol + (monitorStats?.unrealizedPnl || 0),
+      unrealized: totalUnrealizedPnl,
+      total: summary.realizedPnlSol + totalUnrealizedPnl,
       winRate: summary.winRate,
       totalTrades: summary.totalTrades,
       winningTrades: summary.totalSells, // Approximation
       losingTrades: 0, // Would need more detailed tracking
       dbStats: tradeStats,
+      // Breakdown by source
+      breakdown: {
+        raydium: {
+          unrealized: raydiumUnrealizedPnl,
+          positions: monitorStats?.positionCount || 0,
+        },
+        pumpfun: {
+          unrealized: pumpFunUnrealizedPnl,
+          positions: pumpFunMonitorStats?.positionCount || 0,
+        },
+      },
     };
   }
 
