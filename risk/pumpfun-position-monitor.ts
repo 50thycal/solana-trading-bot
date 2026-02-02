@@ -34,6 +34,9 @@ export interface PumpFunPosition {
   entryTimestamp: number;
   buySignature: string;
   isToken2022?: boolean;
+  // For unrealized PnL tracking
+  lastCurrentValueSol?: number;
+  lastCheckTimestamp?: number;
 }
 
 /**
@@ -245,6 +248,10 @@ export class PumpFunPositionMonitor extends EventEmitter {
     const pnlSol = currentValueSol - position.entryAmountSol;
     const pnlPercent = (pnlSol / position.entryAmountSol) * 100;
 
+    // Store current value for unrealized PnL tracking
+    position.lastCurrentValueSol = currentValueSol;
+    position.lastCheckTimestamp = Date.now();
+
     logger.debug(
       {
         mint: position.tokenMint,
@@ -447,6 +454,40 @@ export class PumpFunPositionMonitor extends EventEmitter {
       },
       '[pump.fun] Position closed',
     );
+  }
+
+  /**
+   * Get monitor statistics including unrealized P&L
+   */
+  getStats(): {
+    isRunning: boolean;
+    positionCount: number;
+    totalEntryValue: number;
+    totalCurrentValue: number;
+    unrealizedPnl: number;
+    unrealizedPnlPercent: number;
+  } {
+    let totalEntryValue = 0;
+    let totalCurrentValue = 0;
+
+    for (const position of this.positions.values()) {
+      totalEntryValue += position.entryAmountSol;
+      // Use lastCurrentValueSol if available, otherwise fall back to entry value
+      totalCurrentValue += position.lastCurrentValueSol ?? position.entryAmountSol;
+    }
+
+    const unrealizedPnl = totalCurrentValue - totalEntryValue;
+    const unrealizedPnlPercent =
+      totalEntryValue > 0 ? (unrealizedPnl / totalEntryValue) * 100 : 0;
+
+    return {
+      isRunning: this.isRunning,
+      positionCount: this.positions.size,
+      totalEntryValue,
+      totalCurrentValue,
+      unrealizedPnl,
+      unrealizedPnlPercent,
+    };
   }
 }
 
