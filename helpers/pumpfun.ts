@@ -17,6 +17,13 @@ import {
 } from '@solana/spl-token';
 import BN from 'bn.js';
 import { logger } from './logger';
+import {
+  verifyBuyTransaction,
+  verifySellTransaction,
+  getPreTxTokenBalance,
+  getPreTxSolBalance,
+  VerificationMethod,
+} from './tx-verifier';
 
 /**
  * pump.fun Program ID
@@ -104,8 +111,19 @@ export interface PumpFunTxResult {
   success: boolean;
   signature?: string;
   error?: string;
-  tokensReceived?: number;
-  solReceived?: number;
+
+  // Token amounts (for buys)
+  tokensReceived?: number;      // Actual verified (or expected as fallback)
+  expectedTokens?: number;      // Always the calculated expected amount
+
+  // SOL amounts (for sells) - all in SOL, not lamports
+  solReceived?: number;         // Actual verified (or expected as fallback)
+  expectedSol?: number;         // Always the calculated expected amount
+
+  // Verification metadata
+  actualVerified: boolean;      // Whether the amount was verified post-tx
+  verificationMethod?: VerificationMethod;  // How verification was performed
+  slippagePercent?: number;     // Actual slippage vs expected
 }
 
 /**
@@ -516,6 +534,7 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       return {
         success: false,
         error: 'Failed to get bonding curve state',
+        actualVerified: false,
       };
     }
 
@@ -524,6 +543,7 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       return {
         success: false,
         error: 'Token has graduated from bonding curve',
+        actualVerified: false,
       };
     }
 
@@ -622,6 +642,14 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     transaction.feePayer = wallet.publicKey;
     transaction.sign(wallet);
 
+    // Capture pre-tx token balance for verification
+    const preTokenBalance = await getPreTxTokenBalance(
+      connection,
+      wallet.publicKey,
+      mint,
+      tokenProgramId,
+    );
+
     // Send and confirm
     const signature = await connection.sendRawTransaction(transaction.serialize(), {
       skipPreflight: false,
@@ -633,12 +661,30 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       'confirmed'
     );
 
+    // Verify actual tokens received
+    const verification = await verifyBuyTransaction({
+      connection,
+      signature,
+      wallet: wallet.publicKey,
+      mint,
+      expectedTokens: expectedTokens.toNumber(),
+      tokenProgramId,
+      preBalance: preTokenBalance,
+    });
+
+    // Use actual tokens if verification succeeded, otherwise fall back to expected
+    const actualTokensReceived = verification.actualTokensReceived ?? expectedTokens.toNumber();
+
     logger.info(
       {
         mint: mint.toString(),
         signature,
         amountSol,
         expectedTokens: expectedTokens.toString(),
+        actualTokens: actualTokensReceived,
+        verified: verification.success,
+        verificationMethod: verification.verificationMethod,
+        slippagePercent: verification.tokenSlippagePercent?.toFixed(2),
       },
       'pump.fun buy successful'
     );
@@ -646,13 +692,18 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     return {
       success: true,
       signature,
-      tokensReceived: expectedTokens.toNumber(),
+      tokensReceived: actualTokensReceived,
+      expectedTokens: expectedTokens.toNumber(),
+      actualVerified: verification.success,
+      verificationMethod: verification.verificationMethod,
+      slippagePercent: verification.tokenSlippagePercent,
     };
   } catch (error) {
     logger.error({ error, mint: mint.toString() }, 'pump.fun buy failed');
     return {
       success: false,
       error: String(error),
+      actualVerified: false,
     };
   }
 }
@@ -686,6 +737,7 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
       return {
         success: false,
         error: 'Failed to get bonding curve state',
+        actualVerified: false,
       };
     }
 
@@ -750,6 +802,9 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
     transaction.feePayer = wallet.publicKey;
     transaction.sign(wallet);
 
+    // Capture pre-tx SOL balance for verification
+    const preSolBalance = await getPreTxSolBalance(connection, wallet.publicKey);
+
     // Send and confirm
     const signature = await connection.sendRawTransaction(transaction.serialize(), {
       skipPreflight: false,
@@ -761,12 +816,33 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
       'confirmed'
     );
 
+    // Verify actual SOL received
+    // Note: expectedSol is in lamports (from calculateSellSolOut), but verifySellTransaction
+    // expects and returns SOL. Convert here for consistency.
+    const expectedSolInSol = expectedSol.toNumber() / LAMPORTS_PER_SOL;
+
+    const verification = await verifySellTransaction({
+      connection,
+      signature,
+      wallet: wallet.publicKey,
+      expectedSol: expectedSolInSol,
+      preBalance: preSolBalance,
+    });
+
+    // Use actual SOL if verification succeeded, otherwise fall back to expected
+    // verification.actualSolReceived is already in SOL (not lamports)
+    const actualSolReceived = verification.actualSolReceived ?? expectedSolInSol;
+
     logger.info(
       {
         mint: mint.toString(),
         signature,
         tokenAmount,
-        expectedSol: expectedSol.toString(),
+        expectedSol: expectedSolInSol.toFixed(6),
+        actualSol: actualSolReceived.toFixed(6),
+        verified: verification.success,
+        verificationMethod: verification.verificationMethod,
+        slippagePercent: verification.solSlippagePercent?.toFixed(2),
       },
       'pump.fun sell successful'
     );
@@ -774,13 +850,18 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
     return {
       success: true,
       signature,
-      solReceived: expectedSol.toNumber(),
+      solReceived: actualSolReceived,
+      expectedSol: expectedSolInSol,
+      actualVerified: verification.success,
+      verificationMethod: verification.verificationMethod,
+      slippagePercent: verification.solSlippagePercent,
     };
   } catch (error) {
     logger.error({ error, mint: mint.toString() }, 'pump.fun sell failed');
     return {
       success: false,
       error: String(error),
+      actualVerified: false,
     };
   }
 }
