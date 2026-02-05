@@ -30,9 +30,11 @@ export type BlacklistType = 'token' | 'creator';
 export type PoolAction = 'bought' | 'filtered' | 'blacklisted' | 'skipped' | 'error' | 'buy_attempted' | 'buy_failed';
 
 /**
- * Pool type - AmmV4 (Raydium legacy), CPMM (Raydium new), DLMM (Meteora), pumpfun (bonding curve)
+ * Pool type identifier.
+ * 'pumpfun' is the only actively used type. Legacy values ('AmmV4', 'CPMM', 'DLMM')
+ * are retained for backward compatibility with historical database records.
  */
-export type PoolType = 'AmmV4' | 'CPMM' | 'DLMM' | 'pumpfun';
+export type PoolType = 'pumpfun' | 'AmmV4' | 'CPMM' | 'DLMM';
 
 /**
  * Persisted position record
@@ -212,7 +214,6 @@ export interface PoolDetectionRecord {
   detectedAt: number;
   action: PoolAction;
 
-  // Pool type (AmmV4 or CPMM)
   poolType: PoolType;
 
   // Detailed filter results stored as JSON
@@ -236,7 +237,7 @@ export interface RecordPoolDetectionInput {
   poolId: string;
   tokenMint: string;
   action: PoolAction;
-  poolType?: PoolType;  // Defaults to 'AmmV4' for backwards compatibility
+  poolType?: PoolType;  // Defaults to 'pumpfun'
   filterResults: StoredFilterResult[];
   riskCheckPassed?: boolean;
   riskCheckReason?: string;
@@ -266,10 +267,6 @@ export interface PoolDetectionStats {
   totalSkipped: number;
   totalBlacklisted: number;
   filterRejectionCounts: Record<string, number>;
-  // Pool type breakdown
-  byPoolType: {
-    AmmV4: { total: number; bought: number };
-    CPMM: { total: number; bought: number };
-    DLMM: { total: number; bought: number };
-  };
+  // Pool type breakdown (dynamic — includes all pool types found in data)
+  byPoolType: Record<string, { total: number; bought: number }>;
 }

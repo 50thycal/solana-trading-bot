@@ -838,7 +838,7 @@ export class StateStore {
       tokenMint: input.tokenMint,
       detectedAt: now,
       action: input.action,
-      poolType: input.poolType ?? 'AmmV4',
+      poolType: input.poolType ?? 'pumpfun',
       filterResults: input.filterResults,
       riskCheckPassed: input.riskCheckPassed ?? true,
       riskCheckReason: input.riskCheckReason,
@@ -981,17 +981,11 @@ export class StateStore {
       GROUP BY pool_type
     `).all() as { pool_type: string; total: number; bought: number }[];
 
-    const byPoolType = {
-      AmmV4: { total: 0, bought: 0 },
-      CPMM: { total: 0, bought: 0 },
-      DLMM: { total: 0, bought: 0 },
-    };
+    const byPoolType: Record<string, { total: number; bought: number }> = {};
 
     for (const row of poolTypeStats) {
-      const poolType = row.pool_type || 'AmmV4';
-      if (poolType === 'AmmV4' || poolType === 'CPMM' || poolType === 'DLMM') {
-        byPoolType[poolType] = { total: row.total || 0, bought: row.bought || 0 };
-      }
+      const poolType = row.pool_type || 'pumpfun';
+      byPoolType[poolType] = { total: row.total || 0, bought: row.bought || 0 };
     }
 
     // Get filter rejection counts by analyzing filter_results JSON
@@ -1057,7 +1051,7 @@ export class StateStore {
       tokenMint: row.token_mint,
       detectedAt: row.detected_at,
       action: row.action as PoolAction,
-      poolType: (row.pool_type as PoolType) || 'AmmV4',
+      poolType: (row.pool_type as PoolType) || 'pumpfun',
       filterResults,
       riskCheckPassed: row.risk_check_passed === 1,
       riskCheckReason: row.risk_check_reason ?? undefined,

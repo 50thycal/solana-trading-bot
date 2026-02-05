@@ -56,12 +56,6 @@ export interface ValidatedConfig {
   useSnipeList: boolean;
   snipeListRefreshInterval: number;
 
-  // Bot
-  preLoadExistingMarkets: boolean;
-  cacheNewMarkets: boolean;
-  enableCpmm: boolean;
-  enableDlmm: boolean;
-
   // Risk Controls (Phase 2)
   maxTotalExposureSol: number;
   maxTradesPerHour: number;
@@ -313,12 +307,6 @@ export function validateConfig(): ValidatedConfig {
   const useSnipeList = requireBoolean('USE_SNIPE_LIST', false);
   const snipeListRefreshInterval = requireNumber('SNIPE_LIST_REFRESH_INTERVAL', 30000);
 
-  // === BOT ===
-  const preLoadExistingMarkets = requireBoolean('PRE_LOAD_EXISTING_MARKETS', false);
-  const cacheNewMarkets = requireBoolean('CACHE_NEW_MARKETS', false);
-  const enableCpmm = requireBoolean('ENABLE_CPMM', true); // Enable CPMM pools by default
-  const enableDlmm = requireBoolean('ENABLE_DLMM', true); // Enable Meteora DLMM pools by default
-
   // === RISK CONTROLS (Phase 2) ===
   const maxTotalExposureSol = requireNumber('MAX_TOTAL_EXPOSURE_SOL', 0.5);
   if (maxTotalExposureSol <= 0) {
@@ -388,7 +376,7 @@ export function validateConfig(): ValidatedConfig {
   }
 
   // === FOCUSED MODE (Scope Reduction) ===
-  // When true, ONLY pump.fun detection runs. All other detection (Raydium, Meteora, Helius) is disabled.
+  // When true, ONLY pump.fun detection runs. All other detection systems are disabled.
   // This simplifies the bot to a single pipeline for focused iteration.
   const pumpFunOnlyMode = requireBoolean('PUMP_FUN_ONLY_MODE', true);
 
@@ -511,10 +499,6 @@ export function validateConfig(): ValidatedConfig {
     consecutiveFilterMatches,
     useSnipeList,
     snipeListRefreshInterval,
-    preLoadExistingMarkets,
-    cacheNewMarkets,
-    enableCpmm,
-    enableDlmm,
     maxTotalExposureSol,
     maxTradesPerHour,
     minWalletBufferSol,

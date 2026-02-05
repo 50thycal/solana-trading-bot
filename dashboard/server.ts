@@ -16,7 +16,6 @@ import { PoolAction, PoolType } from '../persistence/models';
 import { getPipelineStats, resetPipelineStats } from '../pipeline';
 import { getPaperTradeTracker } from '../risk';
 
-// Test trade module removed (was Raydium-specific)
 const executeTestTrade: ((options: { poolId: string; dryRun: boolean; amount?: number }) => Promise<any>) | null = null;
 
 /**

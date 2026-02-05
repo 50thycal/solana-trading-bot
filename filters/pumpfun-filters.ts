@@ -2,8 +2,8 @@
  * pump.fun Token Filters
  *
  * A filter system specifically designed for pump.fun bonding curve tokens.
- * Unlike Raydium LP pool filters, these evaluate bonding curve state
- * and token characteristics to identify quality opportunities.
+ * Evaluates bonding curve state and token characteristics to identify
+ * quality opportunities.
  *
  * Design: Supports both blocking (pass/fail) and scoring (rank tokens).
  */
