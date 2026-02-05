@@ -1,7 +1,4 @@
 import { PublicKey } from '@solana/web3.js';
-import { LiquidityStateV4 } from '@raydium-io/raydium-sdk';
-import { CpmmPoolState } from '../helpers/cpmm';
-import { DlmmPoolState } from '../helpers/dlmm';
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Core Types
@@ -10,7 +7,7 @@ import { DlmmPoolState } from '../helpers/dlmm';
 /**
  * Source platform for a detected token/pool
  */
-export type TokenSource = 'pumpfun' | 'raydium-ammv4' | 'raydium-cpmm' | 'meteora-dlmm';
+export type TokenSource = 'pumpfun';
 
 /**
  * How the token's age was verified
@@ -18,13 +15,9 @@ export type TokenSource = 'pumpfun' | 'raydium-ammv4' | 'raydium-cpmm' | 'meteor
 export type VerificationSource = 'mint-cache' | 'dexscreener' | 'on-chain' | 'not-indexed' | 'none';
 
 /**
- * Pool state types - discriminated union for type safety
+ * Pool state types - pump.fun bonding curve
  */
-export type PoolState =
-  | { type: 'ammv4'; state: LiquidityStateV4 }
-  | { type: 'cpmm'; state: CpmmPoolState }
-  | { type: 'dlmm'; state: DlmmPoolState }
-  | { type: 'pumpfun'; state: PumpFunState };
+export type PoolState = { type: 'pumpfun'; state: PumpFunState };
 
 /**
  * pump.fun bonding curve state
@@ -228,9 +221,6 @@ export interface PlatformStats {
  */
 export interface UnifiedDetectionStats {
   pumpfun: PlatformStats;
-  raydiumAmmv4: PlatformStats;
-  raydiumCpmm: PlatformStats;
-  meteoraDlmm: PlatformStats;
   mintCache: {
     size: number;
     heliusDetected: number;
@@ -315,9 +305,6 @@ export function createEmptyPlatformStats(): PlatformStats {
 export function createEmptyUnifiedStats(): UnifiedDetectionStats {
   return {
     pumpfun: createEmptyPlatformStats(),
-    raydiumAmmv4: createEmptyPlatformStats(),
-    raydiumCpmm: createEmptyPlatformStats(),
-    meteoraDlmm: createEmptyPlatformStats(),
     mintCache: {
       size: 0,
       heliusDetected: 0,
@@ -346,26 +333,8 @@ export function isPumpFunToken(token: DetectedToken): token is DetectedToken & {
 }
 
 /**
- * Type guard to check if a DetectedToken is from a DEX pool
- */
-export function isDexPoolToken(token: DetectedToken): token is DetectedToken & {
-  poolId: PublicKey;
-} {
-  return token.source !== 'pumpfun' && token.poolId !== undefined;
-}
-
-/**
  * Get a human-readable source name
  */
 export function getSourceDisplayName(source: TokenSource): string {
-  switch (source) {
-    case 'pumpfun':
-      return 'pump.fun';
-    case 'raydium-ammv4':
-      return 'Raydium AmmV4';
-    case 'raydium-cpmm':
-      return 'Raydium CPMM';
-    case 'meteora-dlmm':
-      return 'Meteora DLMM';
-  }
+  return 'pump.fun';
 }

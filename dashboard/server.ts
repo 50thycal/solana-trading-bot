@@ -11,20 +11,13 @@ import path from 'path';
 import { URL } from 'url';
 import { logger } from '../helpers';
 import { getStateStore } from '../persistence';
-import { getPnlTracker, getExposureManager, getPositionMonitor, getPumpFunPositionMonitor } from '../risk';
+import { getPnlTracker, getExposureManager, getPumpFunPositionMonitor } from '../risk';
 import { PoolAction, PoolType } from '../persistence/models';
 import { getPipelineStats, resetPipelineStats } from '../pipeline';
 import { getPaperTradeTracker } from '../risk';
 
-// Dynamic import for test-trade to avoid crash if file doesn't exist
-let executeTestTrade: ((options: { poolId: string; dryRun: boolean; amount?: number }) => Promise<any>) | null = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const testTradeModule = require('../scripts/test-trade');
-  executeTestTrade = testTradeModule.executeTestTrade;
-} catch {
-  logger.warn('Test trade module not found - test trade feature will be disabled');
-}
+// Test trade module removed (was Raydium-specific)
+const executeTestTrade: ((options: { poolId: string; dryRun: boolean; amount?: number }) => Promise<any>) | null = null;
 
 /**
  * Dashboard server configuration
@@ -411,22 +404,18 @@ export class DashboardServer {
     const stateStore = getStateStore();
     const pnlTracker = getPnlTracker();
     const exposureManager = getExposureManager();
-    const positionMonitor = getPositionMonitor();
     const pumpFunMonitor = getPumpFunPositionMonitor();
 
     const uptimeSeconds = Math.floor((Date.now() - this.startTime.getTime()) / 1000);
     const pnlSummary = pnlTracker?.getSessionSummary();
     const exposureStats = exposureManager?.getStats();
-    const monitorStats = positionMonitor?.getStats();
     const pumpFunMonitorStats = pumpFunMonitor?.getStats();
 
     // Fetch actual wallet balance from chain
     const walletBalance = exposureManager ? await exposureManager.getWalletBalance() : null;
 
-    // Calculate combined unrealized PnL (Raydium + pump.fun)
-    const raydiumUnrealizedPnl = monitorStats?.unrealizedPnl || 0;
-    const pumpFunUnrealizedPnl = pumpFunMonitorStats?.unrealizedPnl || 0;
-    const totalUnrealizedPnl = raydiumUnrealizedPnl + pumpFunUnrealizedPnl;
+    // Calculate unrealized PnL from pump.fun positions
+    const totalUnrealizedPnl = pumpFunMonitorStats?.unrealizedPnl || 0;
 
     return {
       status: this.isWebSocketConnected ? 'running' : 'disconnected',
@@ -451,7 +440,7 @@ export class DashboardServer {
         : null,
       positions: {
         open: stateStore?.getOpenPositions().length || 0,
-        monitored: (monitorStats?.positionCount || 0) + (pumpFunMonitorStats?.positionCount || 0),
+        monitored: pumpFunMonitorStats?.positionCount || 0,
       },
       pnl: pnlSummary
         ? {
@@ -517,25 +506,28 @@ export class DashboardServer {
    */
   private getApiPositions() {
     const stateStore = getStateStore();
-    const positionMonitor = getPositionMonitor();
+    const pumpFunMonitor = getPumpFunPositionMonitor();
 
     if (!stateStore) {
       return { positions: [], error: 'State store not initialized' };
     }
 
+    // Get pump.fun monitored positions for enrichment
+    const pumpFunPositions = pumpFunMonitor?.getPositions() || [];
+    const pumpFunPosMap = new Map(pumpFunPositions.map(p => [p.tokenMint, p]));
+
     const positions = stateStore.getOpenPositions().map((pos) => {
-      const monitoredPos = positionMonitor?.getPosition(pos.tokenMint);
-      // Calculate P&L percent if we have monitoring data
+      const monitoredPos = pumpFunPosMap.get(pos.tokenMint);
       let currentPnlPercent: number | undefined;
-      if (monitoredPos) {
-        const pnlSol = monitoredPos.lastPriceSol - monitoredPos.entryAmountSol;
+      if (monitoredPos && monitoredPos.lastCurrentValueSol !== undefined) {
+        const pnlSol = monitoredPos.lastCurrentValueSol - monitoredPos.entryAmountSol;
         currentPnlPercent = monitoredPos.entryAmountSol > 0
           ? (pnlSol / monitoredPos.entryAmountSol) * 100
           : 0;
       }
       return {
         ...pos,
-        currentPriceSol: monitoredPos?.lastPriceSol,
+        currentPriceSol: monitoredPos?.lastCurrentValueSol,
         currentPnlPercent,
         isMonitored: !!monitoredPos,
       };
@@ -565,7 +557,6 @@ export class DashboardServer {
   private getApiPnl() {
     const pnlTracker = getPnlTracker();
     const stateStore = getStateStore();
-    const positionMonitor = getPositionMonitor();
     const pumpFunMonitor = getPumpFunPositionMonitor();
 
     if (!pnlTracker) {
@@ -574,31 +565,22 @@ export class DashboardServer {
 
     const summary = pnlTracker.getSessionSummary();
     const tradeStats = stateStore?.getTradeStats();
-    const monitorStats = positionMonitor?.getStats();
     const pumpFunMonitorStats = pumpFunMonitor?.getStats();
 
-    // Calculate unrealized PnL by source
-    const raydiumUnrealizedPnl = monitorStats?.unrealizedPnl || 0;
-    const pumpFunUnrealizedPnl = pumpFunMonitorStats?.unrealizedPnl || 0;
-    const totalUnrealizedPnl = raydiumUnrealizedPnl + pumpFunUnrealizedPnl;
+    const unrealizedPnl = pumpFunMonitorStats?.unrealizedPnl || 0;
 
     return {
       realized: summary.realizedPnlSol,
-      unrealized: totalUnrealizedPnl,
-      total: summary.realizedPnlSol + totalUnrealizedPnl,
+      unrealized: unrealizedPnl,
+      total: summary.realizedPnlSol + unrealizedPnl,
       winRate: summary.winRate,
       totalTrades: summary.totalTrades,
-      winningTrades: summary.totalSells, // Approximation
-      losingTrades: 0, // Would need more detailed tracking
+      winningTrades: summary.totalSells,
+      losingTrades: 0,
       dbStats: tradeStats,
-      // Breakdown by source
       breakdown: {
-        raydium: {
-          unrealized: raydiumUnrealizedPnl,
-          positions: monitorStats?.positionCount || 0,
-        },
         pumpfun: {
-          unrealized: pumpFunUnrealizedPnl,
+          unrealized: unrealizedPnl,
           positions: pumpFunMonitorStats?.positionCount || 0,
         },
       },

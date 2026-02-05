@@ -10,6 +10,7 @@ import {
 import {
   logger,
   getBondingCurveState,
+  decodeBondingCurveState,
   deriveBondingCurve,
   calculateSellSolOut,
   sellOnPumpFun,
@@ -160,75 +161,74 @@ export class PumpFunPositionMonitor extends EventEmitter {
   }
 
   /**
-   * Check all positions and trigger sells if conditions met
+   * Check all positions using batched RPC calls
+   * Uses getMultipleAccountsInfo to fetch all bonding curve states in ONE call
    */
   private async checkPositions(): Promise<void> {
     if (this.positions.size === 0) {
       return;
     }
 
-    logger.debug({ count: this.positions.size }, '[pump.fun] Checking positions');
+    const positionList = Array.from(this.positions.values());
+    logger.debug({ count: positionList.length }, '[pump.fun] Checking positions (batched)');
 
-    for (const [tokenMint, position] of this.positions) {
-      try {
-        await this.checkPosition(position);
-      } catch (error) {
-        logger.error(
-          { error, mint: tokenMint },
-          '[pump.fun] Error checking position',
-        );
+    try {
+      // ═══════════════ BATCH FETCH BONDING CURVE STATES ═══════════════
+      // Single RPC call for ALL positions instead of N individual calls
+      const bondingCurveKeys = positionList.map(p => new PublicKey(p.bondingCurve));
+      const accountInfos = await this.connection.getMultipleAccountsInfo(bondingCurveKeys, 'confirmed');
+
+      // Process each position with its corresponding account data
+      for (let i = 0; i < positionList.length; i++) {
+        const position = positionList[i];
+        const accountInfo = accountInfos[i];
+
+        try {
+          await this.evaluatePosition(position, accountInfo?.data || null);
+        } catch (error) {
+          logger.error(
+            { error, mint: position.tokenMint },
+            '[pump.fun] Error evaluating position',
+          );
+        }
       }
+    } catch (error) {
+      logger.error({ error }, '[pump.fun] Error fetching bonding curve states (batch)');
     }
   }
 
   /**
-   * Check a single position
+   * Evaluate a single position using pre-fetched bonding curve data
+   * No individual RPC calls - all data passed in from batch fetch
    */
-  private async checkPosition(position: PumpFunPosition): Promise<void> {
-    const mint = new PublicKey(position.tokenMint);
-    const bondingCurve = new PublicKey(position.bondingCurve);
-
-    // Determine token program ID based on token type
-    const tokenProgramId = position.isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
-
-    // First check if we still have tokens
-    const tokenAta = getAssociatedTokenAddressSync(
-      mint,
-      this.wallet.publicKey,
-      false,
-      tokenProgramId,
-      ASSOCIATED_TOKEN_PROGRAM_ID
-    );
-    let actualTokenAmount: number;
-
-    try {
-      const tokenAccount = await getAccount(this.connection, tokenAta, 'confirmed', tokenProgramId);
-      actualTokenAmount = Number(tokenAccount.amount);
-
-      if (actualTokenAmount === 0) {
-        // Position was sold externally or transferred
-        logger.info({ mint: position.tokenMint }, '[pump.fun] Position closed externally (no tokens)');
-        this.removePosition(position.tokenMint);
-
-        // Update state store
-        const stateStore = getStateStore();
-        if (stateStore) {
-          stateStore.closePosition(position.tokenMint, 'Tokens no longer in wallet');
-        }
+  private async evaluatePosition(
+    position: PumpFunPosition,
+    bondingCurveData: Buffer | null,
+  ): Promise<void> {
+    // Check max hold duration first (no RPC needed)
+    if (this.config.maxHoldDurationMs && this.config.maxHoldDurationMs > 0) {
+      const holdDuration = Date.now() - position.entryTimestamp;
+      if (holdDuration >= this.config.maxHoldDurationMs) {
+        const currentValueSol = position.lastCurrentValueSol ?? position.entryAmountSol;
+        const pnlPercent = ((currentValueSol - position.entryAmountSol) / position.entryAmountSol) * 100;
+        logger.info(
+          { mint: position.tokenMint, holdDurationMs: holdDuration },
+          '[pump.fun] Max hold duration triggered',
+        );
+        await this.executeSell(position, currentValueSol, pnlPercent, 'time_exit', `Time exit after ${Math.floor(holdDuration / 1000)}s`);
         return;
       }
-    } catch {
-      // Token account doesn't exist - position closed
-      logger.info({ mint: position.tokenMint }, '[pump.fun] Position closed (token account not found)');
-      this.removePosition(position.tokenMint);
+    }
+
+    // Decode bonding curve state from pre-fetched data
+    if (!bondingCurveData) {
+      logger.warn({ mint: position.tokenMint }, '[pump.fun] Could not get bonding curve state');
       return;
     }
 
-    // Get bonding curve state to calculate current value
-    const state = await getBondingCurveState(this.connection, bondingCurve);
-
+    const state = decodeBondingCurveState(bondingCurveData);
     if (!state) {
-      logger.warn({ mint: position.tokenMint }, '[pump.fun] Could not get bonding curve state');
+      logger.warn({ mint: position.tokenMint }, '[pump.fun] Could not decode bonding curve state');
       return;
     }
 
@@ -239,8 +239,15 @@ export class PumpFunPositionMonitor extends EventEmitter {
       return;
     }
 
+    // Use stored token amount from buy (avoids extra RPC call for balance check)
+    const tokenAmount = position.tokenAmount;
+    if (tokenAmount === 0) {
+      logger.warn({ mint: position.tokenMint }, '[pump.fun] Position has 0 tokens');
+      return;
+    }
+
     // Calculate current value
-    const tokenAmountBN = new BN(actualTokenAmount);
+    const tokenAmountBN = new BN(tokenAmount);
     const expectedSolOut = calculateSellSolOut(state, tokenAmountBN);
     const currentValueSol = expectedSolOut.toNumber() / LAMPORTS_PER_SOL;
 
@@ -258,6 +265,7 @@ export class PumpFunPositionMonitor extends EventEmitter {
         entryAmountSol: position.entryAmountSol,
         currentValueSol: currentValueSol.toFixed(4),
         pnlPercent: pnlPercent.toFixed(2) + '%',
+        holdTimeSec: Math.floor((Date.now() - position.entryTimestamp) / 1000),
       },
       '[pump.fun] Position check',
     );
@@ -280,19 +288,6 @@ export class PumpFunPositionMonitor extends EventEmitter {
       );
       await this.executeSell(position, currentValueSol, pnlPercent, 'stop_loss', `SL hit: ${pnlPercent.toFixed(2)}%`);
       return;
-    }
-
-    // Check max hold duration
-    if (this.config.maxHoldDurationMs && this.config.maxHoldDurationMs > 0) {
-      const holdDuration = Date.now() - position.entryTimestamp;
-      if (holdDuration >= this.config.maxHoldDurationMs) {
-        logger.info(
-          { mint: position.tokenMint, holdDurationMs: holdDuration },
-          '[pump.fun] Max hold duration triggered',
-        );
-        await this.executeSell(position, currentValueSol, pnlPercent, 'time_exit', `Time exit after ${Math.floor(holdDuration / 1000)}s`);
-        return;
-      }
     }
   }
 

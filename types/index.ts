@@ -2,9 +2,9 @@
  * Type definitions for the Solana Trading Bot
  *
  * Primary exports:
- * - DetectedToken: Unified interface for all detected tokens (pump.fun, Raydium, Meteora)
- * - TokenSource: Platform identifier ('pumpfun' | 'raydium-ammv4' | 'raydium-cpmm' | 'meteora-dlmm')
- * - PoolState: Discriminated union of pool states for type-safe handling
+ * - DetectedToken: Unified interface for detected pump.fun tokens
+ * - TokenSource: Platform identifier ('pumpfun')
+ * - PoolState: Bonding curve state for type-safe handling
  */
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -37,7 +37,6 @@ export {
   createEmptyPlatformStats,
   createEmptyUnifiedStats,
   isPumpFunToken,
-  isDexPoolToken,
   getSourceDisplayName,
 } from './detected-token';
 
@@ -46,17 +45,5 @@ export {
 // ══════════════════════════════════════════════════════════════════════════════
 
 export {
-  // Pool types
-  PoolType,
   TokenAgeResult,
-
-  // Helper functions
-  sourceToPoolType,
-  poolTypeToSource,
-
-  // Legacy types (deprecated but kept for backwards compatibility)
-  PoolTypeStats,
-  DetectionStats,
-  createEmptyPoolTypeStats,
-  createEmptyDetectionStats,
 } from './detected-pool';

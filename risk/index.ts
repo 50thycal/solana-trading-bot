@@ -21,15 +21,6 @@ export {
 } from './pnl-tracker';
 
 export {
-  PositionMonitor,
-  PositionMonitorConfig,
-  MonitoredPosition,
-  TriggerEvent,
-  initPositionMonitor,
-  getPositionMonitor,
-} from './position-monitor';
-
-export {
   PumpFunPositionMonitor,
   PumpFunMonitorConfig,
   PumpFunPosition,
