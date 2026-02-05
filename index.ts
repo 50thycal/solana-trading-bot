@@ -148,9 +148,7 @@ function printDetails(wallet: Keypair, bot: Bot) {
   logger.info('Mode: pump.fun ONLY');
 
   logger.info('- Bot -');
-  logger.info(
-    `Using ${TRANSACTION_EXECUTOR} executor: ${bot.isWarp || bot.isJito || (TRANSACTION_EXECUTOR === 'default' ? true : false)}`,
-  );
+  logger.info(`Using ${TRANSACTION_EXECUTOR} executor`);
   if (bot.isWarp || bot.isJito) {
     logger.info(`${TRANSACTION_EXECUTOR} fee: ${CUSTOM_FEE}`);
   } else {
@@ -615,7 +613,7 @@ const runListener = async () => {
     // ═══════════════ PIPELINE PROCESSING ═══════════════
     const detectionEvent: DetectionEvent = {
       signature: token.signature || `detection-${Date.now()}`,
-      slot: (token as unknown as { slot?: number }).slot || 0,
+      slot: 0,
       mint: token.mint,
       bondingCurve: token.bondingCurve!,
       associatedBondingCurve: token.associatedBondingCurve!,

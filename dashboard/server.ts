@@ -16,8 +16,6 @@ import { PoolAction, PoolType } from '../persistence/models';
 import { getPipelineStats, resetPipelineStats } from '../pipeline';
 import { getPaperTradeTracker } from '../risk';
 
-const executeTestTrade: ((options: { poolId: string; dryRun: boolean; amount?: number }) => Promise<any>) | null = null;
-
 /**
  * Dashboard server configuration
  */
@@ -286,10 +284,6 @@ export class DashboardServer {
       const body = await this.parseRequestBody(req);
 
       switch (pathname) {
-        case '/api/test-trade':
-          await this.handleTestTrade(body, res);
-          break;
-
         case '/api/pipeline-stats/reset':
           await this.handleResetPipelineStats(res);
           break;
@@ -331,69 +325,6 @@ export class DashboardServer {
       });
       req.on('error', reject);
     });
-  }
-
-  /**
-   * POST /api/test-trade - Execute a test trade
-   */
-  private async handleTestTrade(
-    body: { poolId?: string; dryRun?: boolean; amount?: number },
-    res: http.ServerResponse,
-  ): Promise<void> {
-    // Check if test trade module is available
-    if (!executeTestTrade) {
-      res.writeHead(503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        success: false,
-        message: 'Test trade feature is not available',
-        error: 'Test trade module not loaded',
-      }));
-      return;
-    }
-
-    const { poolId, dryRun = false, amount } = body;
-
-    if (!poolId) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Missing required field: poolId' }));
-      return;
-    }
-
-    // Validate poolId format (basic check for base58)
-    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(poolId)) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Invalid poolId format' }));
-      return;
-    }
-
-    // Validate amount if provided
-    if (amount !== undefined && (typeof amount !== 'number' || amount <= 0)) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Invalid amount: must be a positive number' }));
-      return;
-    }
-
-    logger.info({ poolId, dryRun, amount }, 'Test trade request received');
-
-    try {
-      const result = await executeTestTrade({
-        poolId,
-        dryRun,
-        amount,
-      });
-
-      res.writeHead(result.success ? 200 : 400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(result, null, 2));
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error({ error: errorMessage, poolId }, 'Test trade execution failed');
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        success: false,
-        message: 'Test trade execution failed',
-        error: errorMessage,
-      }));
-    }
   }
 
   /**

@@ -254,7 +254,7 @@ export class PaperTradeTracker {
           }
         }
         // Fallback: close with entry value (0% PnL) if no bonding curve data
-        this.closePaperTrade(trade, 'time_exit', null as any, trade.hypotheticalSolSpent, 0);
+        this.closePaperTrade(trade, 'time_exit', null, trade.hypotheticalSolSpent, 0);
         return;
       }
     }
@@ -312,17 +312,21 @@ export class PaperTradeTracker {
   private closePaperTrade(
     trade: PaperTrade,
     reason: PaperCloseReason,
-    state: BondingCurveState,
+    state: BondingCurveState | null,
     currentValueSol?: number,
     pnlPercent?: number
   ): void {
     const TOKEN_DECIMALS = 6;
 
-    // Calculate exit values if not provided
-    if (currentValueSol === undefined) {
+    // Calculate exit values if not provided (requires valid state)
+    if (currentValueSol === undefined && state) {
       const tokensBN = new BN(trade.hypotheticalTokensReceived);
       const solOutLamports = calculateSellSolOut(state, tokensBN);
       currentValueSol = solOutLamports.toNumber() / LAMPORTS_PER_SOL;
+    }
+    // Fallback if no state and no value provided
+    if (currentValueSol === undefined) {
+      currentValueSol = trade.hypotheticalSolSpent;
     }
 
     const pnlSol = currentValueSol - trade.hypotheticalSolSpent;
@@ -330,11 +334,12 @@ export class PaperTradeTracker {
       pnlPercent = (pnlSol / trade.hypotheticalSolSpent) * 100;
     }
 
-    // Calculate exit price
-    const exitPrice =
-      state.virtualSolReserves.toNumber() /
-      LAMPORTS_PER_SOL /
-      (state.virtualTokenReserves.toNumber() / Math.pow(10, TOKEN_DECIMALS));
+    // Calculate exit price from bonding curve state, or fall back to entry price
+    const exitPrice = state
+      ? state.virtualSolReserves.toNumber() /
+        LAMPORTS_PER_SOL /
+        (state.virtualTokenReserves.toNumber() / Math.pow(10, TOKEN_DECIMALS))
+      : trade.entryPricePerToken;
 
     // Update trade with closed state
     const closedTrade: PaperTrade = {
@@ -524,7 +529,7 @@ export class PaperTradeTracker {
       const bondingCurves = activeTradesList.map((t) => new PublicKey(t.bondingCurve));
 
       // Fetch all at once for efficiency
-      const accountInfos = await this.connection.getMultipleAccountsInfo(bondingCurves);
+      const accountInfos = await this.connection.getMultipleAccountsInfo(bondingCurves, 'confirmed');
 
       const TOKEN_DECIMALS = 6;
 
