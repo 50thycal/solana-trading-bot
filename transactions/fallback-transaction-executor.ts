@@ -13,7 +13,7 @@ export class FallbackTransactionExecutor implements TransactionExecutor {
   constructor(
     private readonly primary: TransactionExecutor,
     private readonly fallback: TransactionExecutor,
-    private readonly primaryName: string = 'primary',
+    public readonly primaryName: string = 'primary',
     private readonly fallbackName: string = 'fallback',
   ) {}
 

@@ -191,43 +191,80 @@ export class PaperTradeTracker {
   }
 
   /**
-   * Check all active positions for TP/SL triggers
+   * Check all active positions for TP/SL triggers using batched RPC
+   * Uses getMultipleAccountsInfo for a single RPC call instead of N individual calls
    */
   private async checkPositions(): Promise<void> {
     if (this.activeTrades.size === 0) {
       return;
     }
 
-    logger.debug({ count: this.activeTrades.size }, '[paper-trade] Checking positions');
+    const tradeList = Array.from(this.activeTrades.values());
+    logger.debug({ count: tradeList.length }, '[paper-trade] Checking positions (batched)');
 
-    for (const [mint, trade] of this.activeTrades) {
-      try {
-        await this.checkPosition(trade);
-      } catch (error) {
-        logger.error(
-          { error, mint },
-          '[paper-trade] Error checking position'
-        );
+    try {
+      // ═══════════════ BATCH FETCH BONDING CURVE STATES ═══════════════
+      // Single RPC call for ALL positions instead of N individual calls
+      const bondingCurveKeys = tradeList.map(t => new PublicKey(t.bondingCurve));
+      const accountInfos = await this.connection.getMultipleAccountsInfo(bondingCurveKeys, 'confirmed');
+
+      for (let i = 0; i < tradeList.length; i++) {
+        const trade = tradeList[i];
+        const accountInfo = accountInfos[i];
+
+        try {
+          this.evaluatePosition(trade, accountInfo?.data || null);
+        } catch (error) {
+          logger.error(
+            { error, mint: trade.mint },
+            '[paper-trade] Error evaluating position'
+          );
+        }
       }
+    } catch (error) {
+      logger.error({ error }, '[paper-trade] Error fetching bonding curve states (batch)');
     }
   }
 
   /**
-   * Check a single position for TP/SL/time triggers
+   * Evaluate a single position using pre-fetched bonding curve data
+   * No individual RPC calls - all data passed in from batch fetch
    */
-  private async checkPosition(trade: PaperTrade): Promise<void> {
+  private evaluatePosition(trade: PaperTrade, bondingCurveData: Buffer | null): void {
     if (!this.monitorConfig) return;
 
-    const bondingCurve = new PublicKey(trade.bondingCurve);
+    // Check max hold duration first (no RPC needed)
+    if (this.monitorConfig.maxHoldDurationMs > 0) {
+      const holdDuration = Date.now() - trade.entryTimestamp;
+      if (holdDuration >= this.monitorConfig.maxHoldDurationMs) {
+        logger.info(
+          { mint: trade.mint, name: trade.name, holdDurationMs: holdDuration },
+          '[paper-trade] Max hold duration triggered'
+        );
+        // If we have bonding curve data, calculate exit values; otherwise use entry as fallback
+        if (bondingCurveData) {
+          const state = decodeBondingCurveState(bondingCurveData);
+          if (state && !state.complete) {
+            const tokensBN = new BN(trade.hypotheticalTokensReceived);
+            const currentSolOutLamports = calculateSellSolOut(state, tokensBN);
+            const currentValueSol = currentSolOutLamports.toNumber() / LAMPORTS_PER_SOL;
+            const pnlPercent = ((currentValueSol - trade.hypotheticalSolSpent) / trade.hypotheticalSolSpent) * 100;
+            this.closePaperTrade(trade, 'time_exit', state, currentValueSol, pnlPercent);
+            return;
+          }
+        }
+        // Fallback: close with entry value (0% PnL) if no bonding curve data
+        this.closePaperTrade(trade, 'time_exit', null as any, trade.hypotheticalSolSpent, 0);
+        return;
+      }
+    }
 
-    // Fetch current bonding curve state
-    const accountInfo = await this.connection.getAccountInfo(bondingCurve);
-    if (!accountInfo) {
+    if (!bondingCurveData) {
       logger.warn({ mint: trade.mint }, '[paper-trade] Bonding curve account not found');
       return;
     }
 
-    const state = decodeBondingCurveState(accountInfo.data);
+    const state = decodeBondingCurveState(bondingCurveData);
     if (!state) {
       logger.warn({ mint: trade.mint }, '[paper-trade] Failed to decode bonding curve');
       return;
@@ -266,19 +303,6 @@ export class PaperTradeTracker {
       );
       this.closePaperTrade(trade, 'stop_loss', state, currentValueSol, pnlPercent);
       return;
-    }
-
-    // Check max hold duration
-    if (this.monitorConfig.maxHoldDurationMs > 0) {
-      const holdDuration = Date.now() - trade.entryTimestamp;
-      if (holdDuration >= this.monitorConfig.maxHoldDurationMs) {
-        logger.info(
-          { mint: trade.mint, name: trade.name, holdDurationMs: holdDuration },
-          '[paper-trade] Max hold duration triggered'
-        );
-        this.closePaperTrade(trade, 'time_exit', state, currentValueSol, pnlPercent);
-        return;
-      }
     }
   }
 

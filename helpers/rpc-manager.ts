@@ -274,7 +274,18 @@ export function getRpcManager(): RpcManager {
 }
 
 /**
- * Execute an operation with automatic retry and failover
+ * Check if an error is a 429 rate limit error
+ */
+function isRateLimitError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return msg.includes('429') || msg.includes('rate limit') || msg.includes('too many requests');
+  }
+  return false;
+}
+
+/**
+ * Execute an operation with automatic retry, 429 backoff, and failover
  */
 export async function withRpcRetry<T>(
   operation: (connection: Connection) => Promise<T>,
@@ -291,6 +302,18 @@ export async function withRpcRetry<T>(
       return result;
     } catch (error) {
       lastError = error as Error;
+
+      // 429 rate limit: exponential backoff (1s, 2s, 4s) without endpoint rotation
+      if (isRateLimitError(error)) {
+        const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
+        logger.warn(
+          { attempt: attempt + 1, backoffMs },
+          'RPC rate limited (429) - backing off',
+        );
+        await new Promise(resolve => setTimeout(resolve, backoffMs));
+        continue;
+      }
+
       logger.warn({ attempt: attempt + 1, error: lastError.message }, 'RPC operation failed');
 
       const rotated = manager.reportFailure();
