@@ -120,6 +120,10 @@ export interface PumpFunTxResult {
   solReceived?: number;         // Actual verified (or expected as fallback)
   expectedSol?: number;         // Always the calculated expected amount
 
+  // SOL tracking (for buys) - how much SOL was actually deducted
+  actualSolSpent?: number;              // Pre - post SOL balance (includes gas)
+  instructionAmountLamports?: number;   // What was encoded in the buy instruction
+
   // Verification metadata
   actualVerified: boolean;      // Whether the amount was verified post-tx
   verificationMethod?: VerificationMethod;  // How verification was performed
@@ -642,13 +646,14 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     transaction.feePayer = wallet.publicKey;
     transaction.sign(wallet);
 
-    // Capture pre-tx token balance for verification
+    // Capture pre-tx balances for verification
     const preTokenBalance = await getPreTxTokenBalance(
       connection,
       wallet.publicKey,
       mint,
       tokenProgramId,
     );
+    const preSolBalance = await getPreTxSolBalance(connection, wallet.publicKey);
 
     // Send and confirm
     const signature = await connection.sendRawTransaction(transaction.serialize(), {
@@ -675,11 +680,21 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     // Use actual tokens if verification succeeded, otherwise fall back to expected
     const actualTokensReceived = verification.actualTokensReceived ?? expectedTokens.toNumber();
 
+    // Calculate actual SOL spent by comparing pre/post balance
+    let actualSolSpent: number | undefined;
+    if (preSolBalance > 0) {
+      const postSolBalance = await getPreTxSolBalance(connection, wallet.publicKey);
+      if (postSolBalance !== null) {
+        actualSolSpent = (preSolBalance - postSolBalance) / LAMPORTS_PER_SOL;
+      }
+    }
+
     logger.info(
       {
         mint: mint.toString(),
         signature,
         amountSol,
+        actualSolSpent: actualSolSpent?.toFixed(6),
         expectedTokens: expectedTokens.toString(),
         actualTokens: actualTokensReceived,
         verified: verification.success,
@@ -694,6 +709,8 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       signature,
       tokensReceived: actualTokensReceived,
       expectedTokens: expectedTokens.toNumber(),
+      actualSolSpent,
+      instructionAmountLamports: amountLamports.toNumber(),
       actualVerified: verification.success,
       verificationMethod: verification.verificationMethod,
       slippagePercent: verification.tokenSlippagePercent,

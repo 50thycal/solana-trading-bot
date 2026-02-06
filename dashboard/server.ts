@@ -15,6 +15,7 @@ import { getPnlTracker, getExposureManager, getPumpFunPositionMonitor } from '..
 import { PoolAction, PoolType } from '../persistence/models';
 import { getPipelineStats, resetPipelineStats } from '../pipeline';
 import { getPaperTradeTracker } from '../risk';
+import { getTradeAuditManager } from '../helpers/trade-audit';
 
 /**
  * Dashboard server configuration
@@ -249,6 +250,20 @@ export class DashboardServer {
         case '/api/paper-trades':
           data = this.getApiPaperTrades();
           break;
+
+        case '/api/trade-audit':
+          data = this.getApiTradeAudit();
+          break;
+
+        case '/api/trade-audit/alerts':
+          data = this.getApiTradeAuditAlerts();
+          break;
+
+        case '/api/trade-audit/compact':
+          // Return plain text report for copying into Claude
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end(this.getTradeAuditCompactReport());
+          return;
 
         default:
           // Check for /api/pools/:id pattern
@@ -751,6 +766,56 @@ export class DashboardServer {
     logger.info('[dashboard] Paper trades cleared via dashboard');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, message: 'Paper trades cleared' }));
+  }
+
+  // ============================================================
+  // TRADE AUDIT ENDPOINTS
+  // ============================================================
+
+  /**
+   * GET /api/trade-audit - Full trade audit data
+   */
+  private getApiTradeAudit() {
+    const auditManager = getTradeAuditManager();
+    if (!auditManager) {
+      return {
+        error: 'Trade audit manager not initialized',
+        summary: { totalAudited: 0, mismatches: 0 },
+        recentAudits: [],
+        alerts: [],
+      };
+    }
+
+    return {
+      summary: auditManager.getSummary(),
+      recentAudits: auditManager.getRecent(50),
+      alerts: auditManager.getAlerts(),
+    };
+  }
+
+  /**
+   * GET /api/trade-audit/alerts - Only mismatch records
+   */
+  private getApiTradeAuditAlerts() {
+    const auditManager = getTradeAuditManager();
+    if (!auditManager) {
+      return { alerts: [], count: 0 };
+    }
+
+    const alerts = auditManager.getAlerts();
+    return { alerts, count: alerts.length };
+  }
+
+  /**
+   * GET /api/trade-audit/compact - Plain text report for Claude
+   */
+  private getTradeAuditCompactReport(): string {
+    const auditManager = getTradeAuditManager();
+    if (!auditManager) {
+      return 'Trade audit manager not initialized. No audit data available.';
+    }
+
+    return auditManager.getCompactReport();
   }
 
   // ============================================================
