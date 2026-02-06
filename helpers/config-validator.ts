@@ -112,6 +112,9 @@ export interface ValidatedConfig {
   momentumMinTotalBuys: number;
   momentumRecheckIntervalMs: number;
   momentumMaxChecks: number;
+
+  // Test Mode
+  testMode: '' | 'smoke';
 }
 
 interface ValidationError {
@@ -424,6 +427,13 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'MOMENTUM_MAX_CHECKS', message: 'MOMENTUM_MAX_CHECKS must be at least 1' });
   }
 
+  // === TEST MODE ===
+  const testModeRaw = getEnv('TEST_MODE', '').toLowerCase();
+  const testMode = testModeRaw as '' | 'smoke';
+  if (testModeRaw && testModeRaw !== 'smoke') {
+    errors.push({ variable: 'TEST_MODE', message: `Invalid TEST_MODE: "${testModeRaw}". Must be "smoke" or empty` });
+  }
+
   // Validate private key format (base58)
   if (privateKey) {
     try {
@@ -534,6 +544,7 @@ export function validateConfig(): ValidatedConfig {
     momentumMinTotalBuys,
     momentumRecheckIntervalMs,
     momentumMaxChecks,
+    testMode,
   };
 
   // Log dry run mode warning

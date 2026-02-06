@@ -171,27 +171,60 @@ async function bootstrap(): Promise<void> {
     });
   });
 
-  // Step 2: Load the main application
-  startupState = 'loading';
-  log('info', 'Loading main application...');
+  // Step 2: Check for test mode or load main application
+  const testMode = (process.env.TEST_MODE || '').toLowerCase();
 
-  try {
-    // Dynamic import to avoid triggering config validation until now
-    await import('./index');
+  if (testMode === 'smoke') {
+    startupState = 'loading';
+    log('info', 'Smoke test mode detected - running smoke test...');
 
-    // If we get here, the main app loaded successfully
-    startupState = 'ready';
-    log('info', 'Main application loaded successfully', {
-      publicPort: PUBLIC_PORT,
-      dashboardPort: DASHBOARD_PORT,
-    });
-  } catch (error) {
-    startupState = 'failed';
-    startupError = error instanceof Error ? error.message : String(error);
-    log('error', 'Failed to load main application', { error: startupError });
+    try {
+      const { runSmokeTest } = await import('./smoke-test');
+      startupState = 'ready';
+      const report = await runSmokeTest();
 
-    // Keep the server running so Railway can see the error
-    log('info', 'Server still running - reporting failure state');
+      // Keep server running briefly so Railway logs flush and report is accessible
+      log('info', `Smoke test complete: ${report.overallResult}`, {
+        passed: report.passedCount,
+        failed: report.failedCount,
+        total: report.totalSteps,
+        durationMs: report.totalDurationMs,
+      });
+
+      // Wait 10 seconds for logs to flush and for the user to see the report
+      await new Promise(resolve => setTimeout(resolve, 10_000));
+
+      process.exit(report.overallResult === 'PASS' ? 0 : 1);
+    } catch (error) {
+      startupState = 'failed';
+      startupError = error instanceof Error ? error.message : String(error);
+      log('error', 'Smoke test failed with error', { error: startupError });
+      await new Promise(resolve => setTimeout(resolve, 5_000));
+      process.exit(1);
+    }
+  } else {
+    // Normal startup
+    startupState = 'loading';
+    log('info', 'Loading main application...');
+
+    try {
+      // Dynamic import to avoid triggering config validation until now
+      await import('./index');
+
+      // If we get here, the main app loaded successfully
+      startupState = 'ready';
+      log('info', 'Main application loaded successfully', {
+        publicPort: PUBLIC_PORT,
+        dashboardPort: DASHBOARD_PORT,
+      });
+    } catch (error) {
+      startupState = 'failed';
+      startupError = error instanceof Error ? error.message : String(error);
+      log('error', 'Failed to load main application', { error: startupError });
+
+      // Keep the server running so Railway can see the error
+      log('info', 'Server still running - reporting failure state');
+    }
   }
 }
 

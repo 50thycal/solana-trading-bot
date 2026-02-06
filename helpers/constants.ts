@@ -178,6 +178,11 @@ export function logFilterPresetInfo(): void {
   logger.info(`  Pool size range: ${filterSettings.minPoolSize} - ${filterSettings.maxPoolSize}`);
 }
 
+// ============================================================================
+// TEST MODE
+// ============================================================================
+export const TEST_MODE = config.testMode;
+
 // Export the resolved filter settings for external use
 export { filterSettings };
 
