@@ -53,6 +53,7 @@ import {
 import {
   buyOnPumpFun,
 } from './helpers/pumpfun';
+import { initTradeAuditManager, getTradeAuditManager } from './helpers/trade-audit';
 import { initRpcManager } from './helpers/rpc-manager';
 import { startDashboardServer, DashboardServer } from './dashboard';
 import { version } from './package.json';
@@ -429,6 +430,9 @@ const runListener = async () => {
 
   initPipelineStats();
 
+  // === Initialize Trade Audit ===
+  initTradeAuditManager();
+
   // === Initialize Position Monitoring ===
   // In DRY_RUN mode, use paper trade tracker
   // In LIVE mode, use pump.fun position monitor
@@ -767,6 +771,25 @@ const runListener = async () => {
             },
             '[pump.fun] Trade verification complete'
           );
+        }
+
+        // Record trade audit
+        const auditManager = getTradeAuditManager();
+        if (auditManager) {
+          auditManager.recordBuy({
+            tokenMint: baseMintStr,
+            tokenSymbol: token.symbol || 'Unknown',
+            intendedAmountSol: tradeAmount,
+            instructionAmountLamports: buyResult.instructionAmountLamports || Math.floor(tradeAmount * 1e9),
+            actualSolSpent: buyResult.actualSolSpent || null,
+            actualTokensReceived: buyResult.tokensReceived || null,
+            expectedTokens: buyResult.expectedTokens || null,
+            verificationMethod: buyResult.verificationMethod || 'none',
+            verified: buyResult.actualVerified,
+            tokenSlippagePercent: buyResult.slippagePercent || null,
+            signature: buyResult.signature || '',
+            bondingCurve: bondingCurveStr,
+          });
         }
 
         // Record position

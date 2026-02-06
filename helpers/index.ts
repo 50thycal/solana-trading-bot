@@ -9,3 +9,4 @@ export * from './rpc-manager';
 export * from './fee-estimator';
 export * from './token-validator';
 export * from './tx-verifier';
+export * from './trade-audit';
