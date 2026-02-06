@@ -8,7 +8,7 @@ const transport = logFormat === 'compact'
       target: 'pino-pretty',
       options: {
         colorize: false,
-        translateTime: 'HH:MM:ss',
+        translateTime: 'HH:mm:ss',
         ignore: 'pid,hostname',
         singleLine: true,
         messageFormat: '{msg}',

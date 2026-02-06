@@ -850,14 +850,16 @@ export class DashboardServer {
     const pipelineStats = getPipelineStats();
     const summarizer = getLogSummarizer();
 
+    const pipelineSnap = pipelineStats ? pipelineStats.getSnapshot() : null;
+
     return {
-      pipeline: pipelineStats ? {
-        detected: pipelineStats.getSnapshot().tokensDetected,
-        bought: pipelineStats.getSnapshot().tokensBought,
-        rejected: pipelineStats.getSnapshot().tokensRejected,
-        buyRate: pipelineStats.getSnapshot().buyRate.toFixed(1) + '%',
-        avgDurationMs: pipelineStats.getSnapshot().avgPipelineDurationMs.toFixed(0),
-        topRejections: pipelineStats.getSnapshot().topRejectionReasons.slice(0, 5),
+      pipeline: pipelineSnap ? {
+        detected: pipelineSnap.tokensDetected,
+        bought: pipelineSnap.tokensBought,
+        rejected: pipelineSnap.tokensRejected,
+        buyRate: pipelineSnap.buyRate.toFixed(1) + '%',
+        avgDurationMs: pipelineSnap.avgPipelineDurationMs.toFixed(0),
+        topRejections: pipelineSnap.topRejectionReasons.slice(0, 5),
       } : null,
       tradeAudit: auditManager ? {
         summary: auditManager.getSummary(),

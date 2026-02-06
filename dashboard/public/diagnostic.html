@@ -200,7 +200,7 @@
       }
 
       // Pipeline stats
-      const stats = await fetchJSON('/api/stats');
+      const stats = await fetchJSON('/api/pipeline-stats');
       if (stats) {
         document.getElementById('f-detected').textContent = stats.tokensDetected || 0;
         document.getElementById('f-bought').textContent = stats.tokensBought || 0;

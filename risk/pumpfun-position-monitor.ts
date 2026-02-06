@@ -22,6 +22,7 @@ import {
 import { getStateStore } from '../persistence';
 import { getExposureManager } from './exposure-manager';
 import { getPnlTracker } from './pnl-tracker';
+import { getLogSummarizer } from '../helpers/log-summarizer';
 import BN from 'bn.js';
 
 /**
@@ -317,6 +318,10 @@ export class PumpFunPositionMonitor extends EventEmitter {
     };
     this.emit('trigger', triggerEvent);
 
+    // Record sell attempt in log summarizer
+    const summarizer = getLogSummarizer();
+    if (summarizer) summarizer.recordSellAttempt();
+
     // Get actual token balance
     const tokenAta = getAssociatedTokenAddressSync(
       mint,
@@ -358,6 +363,7 @@ export class PumpFunPositionMonitor extends EventEmitter {
         { mint: position.tokenMint, tokenAmount: actualTokenAmount, currentValueSol },
         '[pump.fun] DRY RUN - would have sold tokens',
       );
+      if (summarizer) summarizer.recordSellSuccess();
       this.finalizeSell(position, 'dry_run', currentValueSol, pnlPercent, reason);
       return;
     }
@@ -420,8 +426,13 @@ export class PumpFunPositionMonitor extends EventEmitter {
       );
 
       // Use ACTUAL SOL received for PnL calculation (CRITICAL FIX)
+      if (summarizer) summarizer.recordSellSuccess();
       this.finalizeSell(position, sellResult.signature || '', actualSolReceived, actualPnlPercent, reason);
     } else {
+      if (summarizer) {
+        summarizer.recordSellFailure();
+        summarizer.recordError(`Sell failed: ${sellResult.error || 'unknown'}`);
+      }
       logger.error(
         { mint: position.tokenMint, error: sellResult.error },
         '[pump.fun] Sell failed',
