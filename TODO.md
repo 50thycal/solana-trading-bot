@@ -77,3 +77,17 @@ The SQLite database (`bot.db`) has accumulated data from the old Raydium-era tra
 - **Update the blacklist** — Review whether any blacklisted tokens/creators are still relevant. Old Raydium-era blacklist entries can be cleared.
 
 Files to look at: `persistence/state-store.ts`, `persistence/models.ts`, `helpers/constants.ts`
+
+---
+
+## [ ] Investigate wrong buy amount bug — likely field ordering issue in pumpfun buy instruction encoding
+
+The bot is not trading the quote amount that is specified in config. A previous session's plan agent flagged that the buy instruction encoding in `pumpfun.ts` may have incorrect field ordering, which could be the root cause of the wrong buy amount being sent on-chain.
+
+**What to investigate:**
+- **Field ordering in the buy instruction** — Check that the fields passed to the pumpfun buy instruction (amount, max SOL cost, etc.) are in the correct order per the pumpfun program's expected layout. Swapped fields would cause the wrong value to be interpreted as the buy amount.
+- **Verify against the pumpfun IDL / on-chain program** — Compare the instruction data layout in `helpers/pumpfun.ts` with the actual pumpfun program's expected byte layout to confirm field positions.
+- **Check serialization** — Make sure the BN / buffer encoding matches the expected integer sizes and endianness for each field.
+- **Test with a known amount** — Do a paper trade or devnet test with a specific SOL amount and verify the on-chain instruction data matches what was intended.
+
+Files to look at: `helpers/pumpfun.ts`
