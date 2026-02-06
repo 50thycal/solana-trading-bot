@@ -38,19 +38,13 @@ export interface PumpFunState {
  * Unified interface for a detected token across all platforms
  *
  * This is the primary interface emitted by the 'new-token' event,
- * providing a consistent structure for all platforms (pump.fun, Raydium, Meteora).
+ * providing a consistent structure for the token detection pipeline.
  *
  * @example
  * ```typescript
  * listeners.on('new-token', async (token: DetectedToken) => {
- *   switch (token.source) {
- *     case 'pumpfun':
- *       await buyOnPumpFun(token);
- *       break;
- *     case 'raydium-ammv4':
- *       await bot.buy(token.poolId!, token.poolState.state);
- *       break;
- *     // ... etc
+ *   if (token.source === 'pumpfun') {
+ *     await buyOnPumpFun(token);
  *   }
  * });
  * ```
@@ -70,7 +64,7 @@ export interface DetectedToken {
   // Pool/Curve Identity (platform-specific)
   // ────────────────────────────────────────────────────────────────────────────
 
-  /** Pool account ID (Raydium/Meteora only) */
+  /** Pool account ID (optional, platform-specific) */
   poolId?: PublicKey;
 
   /** Bonding curve address (pump.fun only) */

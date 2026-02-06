@@ -162,17 +162,3 @@ export function resolveFilterSettings(
     maxPoolSize: preset.maxPoolSize,
   };
 }
-
-/**
- * Log the resolved filter settings
- */
-export function logFilterSettings(settings: ResolvedFilterSettings, presetName: FilterPresetName): void {
-  const preset = FILTER_PRESETS[presetName];
-  console.log(`  Filter preset: ${presetName} (${preset.description})`);
-  console.log(`    - Check burned LP: ${settings.checkIfBurned}`);
-  console.log(`    - Check mint renounced: ${settings.checkIfMintIsRenounced}`);
-  console.log(`    - Check not freezable: ${settings.checkIfFreezable}`);
-  console.log(`    - Check immutable metadata: ${settings.checkIfMutable}`);
-  console.log(`    - Check has socials: ${settings.checkIfSocials}`);
-  console.log(`    - Pool size range: ${settings.minPoolSize} - ${settings.maxPoolSize} SOL`);
-}
