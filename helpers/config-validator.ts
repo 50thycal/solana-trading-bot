@@ -18,6 +18,7 @@ export interface ValidatedConfig {
   // Mode
   dryRun: boolean;
   logLevel: string;
+  logFormat: 'pretty' | 'compact';
 
   // Trading
   quoteMint: string;
@@ -242,6 +243,8 @@ export function validateConfig(): ValidatedConfig {
   // === MODE ===
   const dryRun = requireBoolean('DRY_RUN', false);
   const logLevel = getEnv('LOG_LEVEL', 'info');
+  const logFormatRaw = getEnv('LOG_FORMAT', 'pretty').toLowerCase();
+  const logFormat = (logFormatRaw === 'compact' ? 'compact' : 'pretty') as 'pretty' | 'compact';
 
   // === TRADING PARAMETERS ===
   const quoteMintRaw = requireEnv('QUOTE_MINT');
@@ -478,6 +481,7 @@ export function validateConfig(): ValidatedConfig {
     commitmentLevel,
     dryRun,
     logLevel,
+    logFormat,
     quoteMint,
     quoteAmount,
     buySlippage,

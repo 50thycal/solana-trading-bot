@@ -17,6 +17,7 @@ import { getPipelineStats, resetPipelineStats } from '../pipeline';
 import { getPaperTradeTracker } from '../risk';
 import { getTradeAuditManager } from '../helpers/trade-audit';
 import { getSmokeTestReport } from '../smoke-test';
+import { getLogSummarizer } from '../helpers/log-summarizer';
 
 /**
  * Dashboard server configuration
@@ -268,6 +269,20 @@ export class DashboardServer {
 
         case '/api/smoke-test-report':
           data = getSmokeTestReport() || { status: 'no_report', message: 'No smoke test has been run' };
+          break;
+
+        case '/api/diagnostic':
+          data = this.getApiDiagnostic();
+          break;
+
+        case '/api/diagnostic/compact':
+          // Return plain text diagnostic report for copying into Claude
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end(this.getDiagnosticCompactReport());
+          return;
+
+        case '/api/log-summaries':
+          data = this.getApiLogSummaries();
           break;
 
         default:
@@ -821,6 +836,110 @@ export class DashboardServer {
     }
 
     return auditManager.getCompactReport();
+  }
+
+  // ============================================================
+  // DIAGNOSTIC ENDPOINTS
+  // ============================================================
+
+  /**
+   * GET /api/diagnostic - Full diagnostic data (pipeline + audit + summaries)
+   */
+  private getApiDiagnostic() {
+    const auditManager = getTradeAuditManager();
+    const pipelineStats = getPipelineStats();
+    const summarizer = getLogSummarizer();
+
+    return {
+      pipeline: pipelineStats ? {
+        detected: pipelineStats.getSnapshot().tokensDetected,
+        bought: pipelineStats.getSnapshot().tokensBought,
+        rejected: pipelineStats.getSnapshot().tokensRejected,
+        buyRate: pipelineStats.getSnapshot().buyRate.toFixed(1) + '%',
+        avgDurationMs: pipelineStats.getSnapshot().avgPipelineDurationMs.toFixed(0),
+        topRejections: pipelineStats.getSnapshot().topRejectionReasons.slice(0, 5),
+      } : null,
+      tradeAudit: auditManager ? {
+        summary: auditManager.getSummary(),
+        recentAudits: auditManager.getRecent(20),
+        alerts: auditManager.getAlerts(),
+      } : null,
+      logSummaries: summarizer ? {
+        current: this.serializeBucket(summarizer.getCurrentBucket()),
+        recent: summarizer.getSummaries(6).map(b => this.serializeBucket(b)),
+      } : null,
+    };
+  }
+
+  /**
+   * GET /api/diagnostic/compact - Plain text report combining all diagnostics
+   */
+  private getDiagnosticCompactReport(): string {
+    const lines: string[] = [];
+
+    // Log summaries section
+    const summarizer = getLogSummarizer();
+    if (summarizer) {
+      lines.push(summarizer.getCompactReport());
+      lines.push('');
+    }
+
+    // Trade audit section
+    const auditManager = getTradeAuditManager();
+    if (auditManager && auditManager.getCount() > 0) {
+      lines.push(auditManager.getCompactReport());
+      lines.push('');
+    }
+
+    // Pipeline section
+    const pipelineStats = getPipelineStats();
+    if (pipelineStats) {
+      const snap = pipelineStats.getSnapshot();
+      lines.push('=== Pipeline ===');
+      lines.push(`Detected: ${snap.tokensDetected} | Bought: ${snap.tokensBought} | Rate: ${snap.buyRate.toFixed(1)}% | Avg: ${snap.avgPipelineDurationMs.toFixed(0)}ms`);
+      if (snap.topRejectionReasons.length > 0) {
+        const total = snap.tokensRejected;
+        const reasons = snap.topRejectionReasons.slice(0, 5).map(r => {
+          const pct = total > 0 ? ((r.count / total) * 100).toFixed(0) : '0';
+          return `${r.reason}(${pct}%)`;
+        });
+        lines.push(`Rejections: ${reasons.join(', ')}`);
+      }
+    }
+
+    if (lines.length === 0) {
+      return 'No diagnostic data available yet. The bot needs to be running for data to accumulate.';
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
+   * GET /api/log-summaries - Log summary data
+   */
+  private getApiLogSummaries() {
+    const summarizer = getLogSummarizer();
+    if (!summarizer) {
+      return { compact: 'Log summarizer not initialized', buckets: [] };
+    }
+
+    return {
+      compact: summarizer.getCompactReport(),
+      current: this.serializeBucket(summarizer.getCurrentBucket()),
+      recent: summarizer.getSummaries(12).map(b => this.serializeBucket(b)),
+    };
+  }
+
+  /**
+   * Serialize a log summary bucket (Maps aren't JSON-serializable)
+   */
+  private serializeBucket(bucket: any) {
+    return {
+      ...bucket,
+      rejectionCounts: bucket.rejectionCounts instanceof Map
+        ? Object.fromEntries(bucket.rejectionCounts)
+        : bucket.rejectionCounts,
+    };
   }
 
   // ============================================================
