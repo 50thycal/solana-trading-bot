@@ -16,6 +16,7 @@ import { PoolAction, PoolType } from '../persistence/models';
 import { getPipelineStats, resetPipelineStats } from '../pipeline';
 import { getPaperTradeTracker } from '../risk';
 import { getTradeAuditManager } from '../helpers/trade-audit';
+import { getSmokeTestReport } from '../smoke-test';
 
 /**
  * Dashboard server configuration
@@ -264,6 +265,10 @@ export class DashboardServer {
           res.writeHead(200, { 'Content-Type': 'text/plain' });
           res.end(this.getTradeAuditCompactReport());
           return;
+
+        case '/api/smoke-test-report':
+          data = getSmokeTestReport() || { status: 'no_report', message: 'No smoke test has been run' };
+          break;
 
         default:
           // Check for /api/pools/:id pattern
