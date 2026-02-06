@@ -54,6 +54,7 @@ import {
   buyOnPumpFun,
 } from './helpers/pumpfun';
 import { initTradeAuditManager, getTradeAuditManager } from './helpers/trade-audit';
+import { initLogSummarizer, getLogSummarizer } from './helpers/log-summarizer';
 import { initRpcManager } from './helpers/rpc-manager';
 import { startDashboardServer, DashboardServer } from './dashboard';
 import { version } from './package.json';
@@ -433,6 +434,9 @@ const runListener = async () => {
   // === Initialize Trade Audit ===
   initTradeAuditManager();
 
+  // === Initialize Log Summarizer ===
+  initLogSummarizer();
+
   // === Initialize Position Monitoring ===
   // In DRY_RUN mode, use paper trade tracker
   // In LIVE mode, use pump.fun position monitor
@@ -642,6 +646,17 @@ const runListener = async () => {
       pipelineStats.recordResult(pipelineResult);
     }
 
+    // Feed log summarizer
+    const summarizer = getLogSummarizer();
+    if (summarizer) {
+      summarizer.recordTokenDetected();
+      if (pipelineResult.success) {
+        summarizer.recordTokenPassed();
+      } else {
+        summarizer.recordTokenRejected(pipelineResult.rejectionReason || 'unknown');
+      }
+    }
+
     if (!pipelineResult.success) {
       if (stateStore) {
         stateStore.recordSeenPool({
@@ -736,6 +751,8 @@ const runListener = async () => {
       // ═══════════════ LIVE BUY ═══════════════
       const isToken2022 = context.cheapGates?.mintInfo.isToken2022 ?? false;
 
+      if (summarizer) summarizer.recordBuyAttempt();
+
       const buyResult = await buyOnPumpFun({
         connection,
         wallet,
@@ -791,6 +808,8 @@ const runListener = async () => {
             bondingCurve: bondingCurveStr,
           });
         }
+
+        if (summarizer) summarizer.recordBuySuccess();
 
         // Record position
         const entryTimestamp = Date.now();
@@ -857,6 +876,8 @@ const runListener = async () => {
           '[pump.fun] Position recorded - monitoring for sell triggers'
         );
       } else {
+        if (summarizer) summarizer.recordBuyFailure();
+
         logger.error(
           {
             mint: baseMintStr,
@@ -918,6 +939,12 @@ const runListener = async () => {
     );
 
     pumpFunListener?.resetStats();
+
+    // Update log summarizer snapshot
+    const summarizer = getLogSummarizer();
+    if (summarizer) {
+      summarizer.updateSnapshot(monitorStats.positionCount, null);
+    }
   }, heartbeatIntervalMs);
 };
 

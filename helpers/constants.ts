@@ -182,6 +182,7 @@ export function logFilterPresetInfo(): void {
 // TEST MODE
 // ============================================================================
 export const TEST_MODE = config.testMode;
+export const LOG_FORMAT = config.logFormat;
 
 // Export the resolved filter settings for external use
 export { filterSettings };
