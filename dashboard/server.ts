@@ -576,19 +576,6 @@ export class DashboardServer {
         autoSell: config.autoSell,
         oneTokenAtATime: config.oneTokenAtATime,
       },
-      filters: {
-        preset: config.filterPreset,
-        checkIfBurned: config.checkIfBurned,
-        checkIfMintIsRenounced: config.checkIfMintIsRenounced,
-        checkIfFreezable: config.checkIfFreezable,
-        checkIfMutable: config.checkIfMutable,
-        checkIfSocials: config.checkIfSocials,
-        minPoolSize: config.minPoolSize,
-        maxPoolSize: config.maxPoolSize,
-        filterCheckInterval: config.filterCheckInterval,
-        filterCheckDuration: config.filterCheckDuration,
-        consecutiveFilterMatches: config.consecutiveFilterMatches,
-      },
       risk: {
         maxTotalExposureSol: config.maxTotalExposureSol,
         maxTradesPerHour: config.maxTradesPerHour,
@@ -600,7 +587,6 @@ export class DashboardServer {
         simulateTransaction: config.simulateTransaction,
         useDynamicFee: config.useDynamicFee,
         useFallbackExecutor: config.useFallbackExecutor,
-        precomputeTransaction: config.precomputeTransaction,
       },
     };
   }

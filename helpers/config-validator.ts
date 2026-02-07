@@ -42,28 +42,13 @@ export interface ValidatedConfig {
   maxBuyRetries: number;
   maxSellRetries: number;
 
-  // Filters
-  filterPreset: 'strict' | 'balanced' | 'aggressive' | 'custom';
-  checkIfBurned: boolean;
-  checkIfMintIsRenounced: boolean;
-  checkIfFreezable: boolean;
-  checkIfMutable: boolean;
-  checkIfSocials: boolean;
-  minPoolSize: string;
-  maxPoolSize: string;
-  filterCheckInterval: number;
-  filterCheckDuration: number;
-  consecutiveFilterMatches: number;
-  useSnipeList: boolean;
-  snipeListRefreshInterval: number;
-
-  // Risk Controls (Phase 2)
+  // Risk Controls
   maxTotalExposureSol: number;
   maxTradesPerHour: number;
   minWalletBufferSol: number;
   maxHoldDurationMs: number;
 
-  // Execution Quality (Phase 4)
+  // Execution Quality
   simulateTransaction: boolean;
   useDynamicFee: boolean;
   priorityFeePercentile: number;
@@ -72,33 +57,18 @@ export interface ValidatedConfig {
   useFallbackExecutor: boolean;
   jitoBundleTimeout: number;
   jitoBundlePollInterval: number;
-  precomputeTransaction: boolean;
 
   // Operational
   healthPort: number;
   dataDir: string;
 
-  // Dashboard (Phase 5)
+  // Dashboard
   dashboardEnabled: boolean;
   dashboardPort: number;
   dashboardPollInterval: number;
 
-  // Token Age Validation (Pool Detection Phase 1)
+  // Token Age
   maxTokenAgeSeconds: number;
-  enableTokenAgeCheck: boolean;
-
-  // Mint Detection (Pool Detection Phase 0)
-  enableHeliusMintDetection: boolean;
-
-  // pump.fun Detection (Token Monitoring Phase 1)
-  enablePumpfunDetection: boolean;
-
-  // DexScreener Fallback (Token Monitoring Phase 2)
-  dexscreenerFallbackEnabled: boolean;
-  dexscreenerRateLimit: number;
-
-  // Focused Mode (Scope Reduction)
-  pumpFunOnlyMode: boolean;
 
   // pump.fun Filters
   pumpfunMinSolInCurve: number;
@@ -125,7 +95,6 @@ interface ValidationError {
 
 const VALID_COMMITMENTS: Commitment[] = ['processed', 'confirmed', 'finalized'];
 const VALID_EXECUTORS = ['default', 'warp', 'jito'] as const;
-const VALID_PRESETS = ['strict', 'balanced', 'aggressive', 'custom'] as const;
 const KNOWN_QUOTE_MINTS: Record<string, string> = {
   'WSOL': 'So11111111111111111111111111111111111111112',
   'USDC': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
@@ -291,29 +260,7 @@ export function validateConfig(): ValidatedConfig {
   const maxBuyRetries = requireNumber('MAX_BUY_RETRIES', 10);
   const maxSellRetries = requireNumber('MAX_SELL_RETRIES', 10);
 
-  // === FILTERS ===
-  const filterPreset = getEnv('FILTER_PRESET', 'custom') as 'strict' | 'balanced' | 'aggressive' | 'custom';
-  if (!VALID_PRESETS.includes(filterPreset)) {
-    errors.push({
-      variable: 'FILTER_PRESET',
-      message: `Invalid FILTER_PRESET: "${filterPreset}". Must be one of: ${VALID_PRESETS.join(', ')}`
-    });
-  }
-
-  const checkIfBurned = requireBoolean('CHECK_IF_BURNED', true);
-  const checkIfMintIsRenounced = requireBoolean('CHECK_IF_MINT_IS_RENOUNCED', true);
-  const checkIfFreezable = requireBoolean('CHECK_IF_FREEZABLE', true);
-  const checkIfMutable = requireBoolean('CHECK_IF_MUTABLE', true);
-  const checkIfSocials = requireBoolean('CHECK_IF_SOCIALS', true);
-  const minPoolSize = getEnv('MIN_POOL_SIZE', '5');
-  const maxPoolSize = getEnv('MAX_POOL_SIZE', '50');
-  const filterCheckInterval = requireNumber('FILTER_CHECK_INTERVAL', 2000);
-  const filterCheckDuration = requireNumber('FILTER_CHECK_DURATION', 60000);
-  const consecutiveFilterMatches = requireNumber('CONSECUTIVE_FILTER_MATCHES', 3);
-  const useSnipeList = requireBoolean('USE_SNIPE_LIST', false);
-  const snipeListRefreshInterval = requireNumber('SNIPE_LIST_REFRESH_INTERVAL', 30000);
-
-  // === RISK CONTROLS (Phase 2) ===
+  // === RISK CONTROLS ===
   const maxTotalExposureSol = requireNumber('MAX_TOTAL_EXPOSURE_SOL', 0.5);
   if (maxTotalExposureSol <= 0) {
     errors.push({ variable: 'MAX_TOTAL_EXPOSURE_SOL', message: 'MAX_TOTAL_EXPOSURE_SOL must be greater than 0' });
@@ -335,7 +282,7 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'MAX_HOLD_DURATION_MS', message: 'MAX_HOLD_DURATION_MS cannot be negative' });
   }
 
-  // === EXECUTION QUALITY (Phase 4) ===
+  // === EXECUTION QUALITY ===
   const simulateTransaction = requireBoolean('SIMULATE_TRANSACTION', true);
   const useDynamicFee = requireBoolean('USE_DYNAMIC_FEE', false);
   const priorityFeePercentile = requireNumber('PRIORITY_FEE_PERCENTILE', 75);
@@ -350,7 +297,6 @@ export function validateConfig(): ValidatedConfig {
   const useFallbackExecutor = requireBoolean('USE_FALLBACK_EXECUTOR', true);
   const jitoBundleTimeout = requireNumber('JITO_BUNDLE_TIMEOUT', 60000);
   const jitoBundlePollInterval = requireNumber('JITO_BUNDLE_POLL_INTERVAL', 2000);
-  const precomputeTransaction = requireBoolean('PRECOMPUTE_TRANSACTION', true);
 
   // === OPERATIONAL ===
   const healthPort = requireNumber('HEALTH_PORT', 8080);
@@ -361,30 +307,11 @@ export function validateConfig(): ValidatedConfig {
   const dashboardPort = requireNumber('DASHBOARD_PORT', 3000); // Internal port - bootstrap proxies from public PORT
   const dashboardPollInterval = requireNumber('DASHBOARD_POLL_INTERVAL', 5000);
 
-  // === TOKEN AGE VALIDATION (Pool Detection Phase 1) ===
+  // === TOKEN AGE ===
   const maxTokenAgeSeconds = requireNumber('MAX_TOKEN_AGE_SECONDS', 300); // 5 minutes default
   if (maxTokenAgeSeconds < 0) {
     errors.push({ variable: 'MAX_TOKEN_AGE_SECONDS', message: 'MAX_TOKEN_AGE_SECONDS cannot be negative' });
   }
-  const enableTokenAgeCheck = requireBoolean('ENABLE_TOKEN_AGE_CHECK', true);
-
-  // === MINT DETECTION (Pool Detection Phase 0) ===
-  const enableHeliusMintDetection = requireBoolean('ENABLE_HELIUS_MINT_DETECTION', true);
-
-  // === PUMP.FUN DETECTION (Token Monitoring Phase 1) ===
-  const enablePumpfunDetection = requireBoolean('ENABLE_PUMPFUN_DETECTION', true);
-
-  // === DEXSCREENER FALLBACK (Token Monitoring Phase 2) ===
-  const dexscreenerFallbackEnabled = requireBoolean('DEXSCREENER_FALLBACK_ENABLED', true);
-  const dexscreenerRateLimit = requireNumber('DEXSCREENER_RATE_LIMIT', 200);
-  if (dexscreenerRateLimit < 1 || dexscreenerRateLimit > 300) {
-    errors.push({ variable: 'DEXSCREENER_RATE_LIMIT', message: 'DEXSCREENER_RATE_LIMIT must be between 1 and 300' });
-  }
-
-  // === FOCUSED MODE (Scope Reduction) ===
-  // When true, ONLY pump.fun detection runs. All other detection systems are disabled.
-  // This simplifies the bot to a single pipeline for focused iteration.
-  const pumpFunOnlyMode = requireBoolean('PUMP_FUN_ONLY_MODE', true);
 
   // === PUMP.FUN FILTERS ===
   const pumpfunMinSolInCurve = requireNumber('PUMPFUN_MIN_SOL_IN_CURVE', 5);
@@ -508,19 +435,6 @@ export function validateConfig(): ValidatedConfig {
     customFee,
     maxBuyRetries,
     maxSellRetries,
-    filterPreset,
-    checkIfBurned,
-    checkIfMintIsRenounced,
-    checkIfFreezable,
-    checkIfMutable,
-    checkIfSocials,
-    minPoolSize,
-    maxPoolSize,
-    filterCheckInterval,
-    filterCheckDuration,
-    consecutiveFilterMatches,
-    useSnipeList,
-    snipeListRefreshInterval,
     maxTotalExposureSol,
     maxTradesPerHour,
     minWalletBufferSol,
@@ -533,19 +447,12 @@ export function validateConfig(): ValidatedConfig {
     useFallbackExecutor,
     jitoBundleTimeout,
     jitoBundlePollInterval,
-    precomputeTransaction,
     healthPort,
     dataDir,
     dashboardEnabled,
     dashboardPort,
     dashboardPollInterval,
     maxTokenAgeSeconds,
-    enableTokenAgeCheck,
-    enableHeliusMintDetection,
-    enablePumpfunDetection,
-    dexscreenerFallbackEnabled,
-    dexscreenerRateLimit,
-    pumpFunOnlyMode,
     pumpfunMinSolInCurve,
     pumpfunMaxSolInCurve,
     pumpfunEnableMinSolFilter,
