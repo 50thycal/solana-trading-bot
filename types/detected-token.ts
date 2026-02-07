@@ -12,7 +12,7 @@ export type TokenSource = 'pumpfun';
 /**
  * How the token's age was verified
  */
-export type VerificationSource = 'mint-cache' | 'dexscreener' | 'on-chain' | 'not-indexed' | 'none';
+export type VerificationSource = 'mint-cache' | 'on-chain' | 'not-indexed' | 'none';
 
 /**
  * Pool state types - pump.fun bonding curve
