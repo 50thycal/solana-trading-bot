@@ -247,7 +247,7 @@ export function validateConfig(): ValidatedConfig {
   const logFormat = (logFormatRaw === 'compact' ? 'compact' : 'pretty') as 'pretty' | 'compact';
 
   // === TRADING PARAMETERS ===
-  const quoteMintRaw = requireEnv('QUOTE_MINT');
+  const quoteMintRaw = getEnv('QUOTE_MINT', 'WSOL');
   const quoteMint = validateQuoteMint(quoteMintRaw);
   const quoteAmount = getEnv('QUOTE_AMOUNT', '0.01');
 
@@ -461,13 +461,21 @@ export function validateConfig(): ValidatedConfig {
 
   // Report all errors at once
   if (errors.length > 0) {
+    const isRailway = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RAILWAY_PROJECT_ID;
+
     logger.error('Configuration validation failed:');
     for (const error of errors) {
       logger.error(`  - ${error.variable}: ${error.message}`);
     }
     logger.error('');
-    logger.error('Please check your .env file and fix the above issues.');
-    logger.error('Refer to .env.example for a complete configuration template.');
+    if (isRailway) {
+      logger.error('You are running on Railway. Set these variables in your Railway service:');
+      logger.error('  Railway Dashboard → Select your project → Variables tab');
+      logger.error('Refer to .env.example in the repo for a complete configuration template.');
+    } else {
+      logger.error('Please check your .env file and fix the above issues.');
+      logger.error('Refer to .env.example for a complete configuration template.');
+    }
     // Throw error instead of process.exit() to allow bootstrap health server to report the issue
     const errorMessages = errors.map(e => `${e.variable}: ${e.message}`).join('; ');
     throw new Error(`Configuration validation failed: ${errorMessages}`);
