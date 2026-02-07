@@ -793,20 +793,25 @@ const runListener = async () => {
         // Record trade audit
         const auditManager = getTradeAuditManager();
         if (auditManager) {
-          auditManager.recordBuy({
+          const auditRecord = auditManager.recordBuy({
             tokenMint: baseMintStr,
             tokenSymbol: token.symbol || 'Unknown',
             intendedAmountSol: tradeAmount,
             instructionAmountLamports: buyResult.instructionAmountLamports || Math.floor(tradeAmount * 1e9),
-            actualSolSpent: buyResult.actualSolSpent || null,
-            actualTokensReceived: buyResult.tokensReceived || null,
-            expectedTokens: buyResult.expectedTokens || null,
+            actualSolSpent: buyResult.actualSolSpent ?? null,
+            actualTokensReceived: buyResult.tokensReceived ?? null,
+            expectedTokens: buyResult.expectedTokens ?? null,
             verificationMethod: buyResult.verificationMethod || 'none',
             verified: buyResult.actualVerified,
-            tokenSlippagePercent: buyResult.slippagePercent || null,
+            tokenSlippagePercent: buyResult.slippagePercent ?? null,
             signature: buyResult.signature || '',
             bondingCurve: bondingCurveStr,
           });
+
+          // Wire verification alerts to log summarizer
+          if (auditRecord.hasMismatch && summarizer) {
+            summarizer.recordVerificationAlert();
+          }
         }
 
         if (summarizer) summarizer.recordBuySuccess();
@@ -876,7 +881,10 @@ const runListener = async () => {
           '[pump.fun] Position recorded - monitoring for sell triggers'
         );
       } else {
-        if (summarizer) summarizer.recordBuyFailure();
+        if (summarizer) {
+          summarizer.recordBuyFailure();
+          summarizer.recordError(`Buy failed: ${buyResult.error || 'unknown'}`);
+        }
 
         logger.error(
           {
