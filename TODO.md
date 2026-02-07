@@ -91,3 +91,19 @@ The bot is not trading the quote amount that is specified in config. A previous 
 - **Test with a known amount** — Do a paper trade or devnet test with a specific SOL amount and verify the on-chain instruction data matches what was intended.
 
 Files to look at: `helpers/pumpfun.ts`
+
+---
+
+## [ ] Security check — prevent API keys and private keys from appearing in logs
+
+Audit the entire codebase to ensure that sensitive credentials (private keys, API keys, RPC endpoint secrets) are never printed to logs. Even if most paths look safe today, add defensive guardrails so future code changes can't accidentally leak secrets.
+
+**What to check and fix:**
+- **Audit every `logger.*` and `console.log` call** — Confirm no call site passes raw private keys, full RPC URLs with API key query params, or config objects that contain secrets.
+- **Expand Pino `redact` paths** — The logger in `helpers/logger.ts` currently only redacts `['poolKeys']`. Add paths for common secret field names (`privateKey`, `secretKey`, `secret`, `apiKey`, `api_key`, `authorization`) so even if a secret ends up in a structured log object it gets masked automatically.
+- **Verify `maskUrl()` coverage** — `helpers/rpc-manager.ts` has a `maskUrl()` helper that replaces API key query params with `***`. Confirm every code path that logs an RPC endpoint URL runs it through `maskUrl()` first, including error/catch blocks and fallback logic.
+- **Guard startup config logging** — `index.ts` and `bootstrap.ts` log configuration values at startup. Make sure `PRIVATE_KEY` and raw `RPC_ENDPOINT` / `RPC_WEBSOCKET_ENDPOINT` values are never included in these logs.
+- **Sanitize error payloads** — Some error objects (especially from RPC responses) could contain the request URL or headers. Check that error serialization in catch blocks doesn't leak endpoint secrets.
+- **Add a lint rule or grep check** — Consider adding a CI step or pre-commit hook that greps for patterns like `PRIVATE_KEY`, `secret`, or raw env var references inside log statements to catch future regressions.
+
+Files to look at: `helpers/logger.ts`, `helpers/rpc-manager.ts`, `index.ts`, `bootstrap.ts`, `transactions/`, `listeners/`
