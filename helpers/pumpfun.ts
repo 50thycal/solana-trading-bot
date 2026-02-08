@@ -625,6 +625,15 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     const amountLamports = new BN(Math.floor(amountSol * LAMPORTS_PER_SOL));
     const expectedTokens = calculateBuyTokensOut(state, amountLamports);
 
+    // Guard: reject if bonding curve returns zero or negative tokens
+    if (expectedTokens.isZero() || expectedTokens.isNeg()) {
+      return {
+        success: false,
+        error: `Bonding curve returned ${expectedTokens.toString()} tokens for ${amountSol} SOL — curve may be empty or corrupted`,
+        actualVerified: false,
+      };
+    }
+
     // Apply slippage UPWARD on SOL cost - willing to pay MORE due to price movement
     // The pump.fun program takes (tokenAmount, maxSolCost):
     //   - tokenAmount: how many tokens we want to buy

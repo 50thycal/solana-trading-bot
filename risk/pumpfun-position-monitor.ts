@@ -137,6 +137,17 @@ export class PumpFunPositionMonitor extends EventEmitter {
    * Add a position to monitor
    */
   addPosition(position: PumpFunPosition): void {
+    if (!position.entryAmountSol || position.entryAmountSol <= 0) {
+      logger.error(
+        {
+          mint: position.tokenMint,
+          entryAmountSol: position.entryAmountSol,
+        },
+        '[pump.fun] Rejecting position with invalid entryAmountSol <= 0',
+      );
+      return;
+    }
+
     this.positions.set(position.tokenMint, position);
     logger.info(
       {
@@ -253,6 +264,19 @@ export class PumpFunPositionMonitor extends EventEmitter {
     const tokenAmountBN = new BN(tokenAmount);
     const expectedSolOut = calculateSellSolOut(state, tokenAmountBN);
     const currentValueSol = expectedSolOut.toNumber() / LAMPORTS_PER_SOL;
+
+    // Guard: skip evaluation if currentValueSol is invalid (corrupted/stale bonding curve)
+    if (!Number.isFinite(currentValueSol) || currentValueSol < 0) {
+      logger.warn(
+        {
+          mint: position.tokenMint,
+          rawSolOut: expectedSolOut.toString(),
+          currentValueSol,
+        },
+        '[pump.fun] Invalid currentValueSol — skipping evaluation (will retry next interval)',
+      );
+      return;
+    }
 
     // Calculate bonding curve P&L (used for TP/SL triggers)
     const pnlSol = currentValueSol - position.entryAmountSol;

@@ -77,7 +77,12 @@ export class TokenLogBuffer {
 
     lines.push(separator);
 
-    // Write the entire block as a single logger.info call so it's atomic
+    // Write the entire block as a single logger.info() call. This is atomic because:
+    // 1. flush() is synchronous — Node.js won't yield to another async pipeline mid-call
+    // 2. pino serializes each logger.info() into one JSON record (newlines are inside the msg field)
+    // 3. pino-pretty formats each record as a unit before writing to stdout
+    // No mutex is needed. If flush() is ever made async or split into multiple logger calls,
+    // this atomicity guarantee must be revisited.
     logger.info(lines.join('\n'));
   }
 
