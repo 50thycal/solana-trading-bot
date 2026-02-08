@@ -86,6 +86,7 @@ export interface ValidatedConfig {
 
   // Test Mode
   testMode: '' | 'smoke';
+  smokeTestTimeoutMs: number;
 
   // Bot Control
   runBot: boolean;
@@ -279,8 +280,8 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'MIN_WALLET_BUFFER_SOL', message: 'MIN_WALLET_BUFFER_SOL cannot be negative' });
   }
 
-  // Max hold duration (0 = disabled)
-  const maxHoldDurationMs = requireNumber('MAX_HOLD_DURATION_MS', 0);
+  // Max hold duration (0 = disabled, default 20s)
+  const maxHoldDurationMs = requireNumber('MAX_HOLD_DURATION_MS', 20000);
   if (maxHoldDurationMs < 0) {
     errors.push({ variable: 'MAX_HOLD_DURATION_MS', message: 'MAX_HOLD_DURATION_MS cannot be negative' });
   }
@@ -365,6 +366,11 @@ export function validateConfig(): ValidatedConfig {
   const testMode = testModeRaw as '' | 'smoke';
   if (testModeRaw && testModeRaw !== 'smoke') {
     errors.push({ variable: 'TEST_MODE', message: `Invalid TEST_MODE: "${testModeRaw}". Must be "smoke" or empty` });
+  }
+
+  const smokeTestTimeoutMs = requireNumber('SMOKE_TEST_TIMEOUT_MS', 300000);
+  if (smokeTestTimeoutMs < 30000) {
+    errors.push({ variable: 'SMOKE_TEST_TIMEOUT_MS', message: 'SMOKE_TEST_TIMEOUT_MS must be at least 30000 (30 seconds)' });
   }
 
   // === BOT CONTROL ===
@@ -470,6 +476,7 @@ export function validateConfig(): ValidatedConfig {
     momentumRecheckIntervalMs,
     momentumMaxChecks,
     testMode,
+    smokeTestTimeoutMs,
     runBot,
   };
 

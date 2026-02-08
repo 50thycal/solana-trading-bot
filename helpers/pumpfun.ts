@@ -392,8 +392,8 @@ function buildBuyInstruction(
   associatedBondingCurve: PublicKey,
   userTokenAccount: PublicKey,
   user: PublicKey,
-  amountLamports: BN,
-  maxTokenAmount: BN,
+  tokenAmount: BN,
+  maxSolCost: BN,
   tokenProgramId: PublicKey,
   creatorVault: PublicKey,
   globalVolumeAccumulator: PublicKey,
@@ -403,11 +403,13 @@ function buildBuyInstruction(
   // Buy instruction discriminator (first 8 bytes of sha256("global:buy"))
   const discriminator = Buffer.from([102, 6, 61, 18, 1, 218, 235, 234]);
 
-  // Instruction data: discriminator + amount (u64) + maxSolCost (u64)
+  // Instruction data: discriminator + tokenAmount (u64) + maxSolCost (u64)
+  // tokenAmount = number of tokens to buy
+  // maxSolCost = maximum SOL (lamports) willing to spend
   const data = Buffer.alloc(24);
   discriminator.copy(data, 0);
-  amountLamports.toArrayLike(Buffer, 'le', 8).copy(data, 8);
-  maxTokenAmount.toArrayLike(Buffer, 'le', 8).copy(data, 16);
+  tokenAmount.toArrayLike(Buffer, 'le', 8).copy(data, 8);
+  maxSolCost.toArrayLike(Buffer, 'le', 8).copy(data, 16);
 
   const keys = [
     // 0: global
@@ -578,9 +580,12 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     const amountLamports = new BN(Math.floor(amountSol * LAMPORTS_PER_SOL));
     const expectedTokens = calculateBuyTokensOut(state, amountLamports);
 
-    // Apply slippage - minimum tokens we'll accept
-    const slippageMultiplier = (10000 - slippageBps) / 10000;
-    const minTokensOut = new BN(Math.floor(expectedTokens.toNumber() * slippageMultiplier));
+    // Apply slippage UPWARD on SOL cost - willing to pay MORE due to price movement
+    // The pump.fun program takes (tokenAmount, maxSolCost):
+    //   - tokenAmount: how many tokens we want to buy
+    //   - maxSolCost: max SOL (lamports) we'll pay (budget + slippage buffer)
+    const slippageMultiplier = (10000 + slippageBps) / 10000;
+    const maxSolCost = new BN(Math.ceil(amountLamports.toNumber() * slippageMultiplier));
 
     // Get or create user token account (using correct token program)
     const userTokenAccount = getAssociatedTokenAddressSync(
@@ -603,7 +608,7 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
         mint: mint.toString(),
         amountSol,
         expectedTokens: expectedTokens.toString(),
-        minTokensOut: minTokensOut.toString(),
+        maxSolCostLamports: maxSolCost.toString(),
         slippageBps,
         isToken2022,
         tokenProgramId: tokenProgramId.toString(),
@@ -643,6 +648,8 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     }
 
     // Add buy instruction
+    // tokenAmount = expectedTokens (how many tokens we want)
+    // maxSolCost = amountLamports + slippage buffer (max SOL we'll pay)
     transaction.add(
       buildBuyInstruction(
         mint,
@@ -650,8 +657,8 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
         associatedBondingCurve,
         userTokenAccount,
         wallet.publicKey,
-        amountLamports,
-        minTokensOut,
+        expectedTokens,
+        maxSolCost,
         tokenProgramId,
         creatorVault,
         globalVolumeAccumulator,
