@@ -48,6 +48,7 @@ import {
   PUMPFUN_ENABLE_MIN_SOL_FILTER,
   PUMPFUN_ENABLE_MAX_SOL_FILTER,
   PUMPFUN_MIN_SCORE_REQUIRED,
+  RUN_BOT,
 } from './helpers';
 import {
   buyOnPumpFun,
@@ -290,6 +291,21 @@ const runListener = async () => {
     } catch (error) {
       logger.error({ error }, 'Failed to start dashboard server');
     }
+  }
+
+  // === RUN_BOT Gate ===
+  // When RUN_BOT=false, skip all RPC-consuming work. The dashboard/health
+  // server stays alive so Railway doesn't restart the service.
+  if (!RUN_BOT) {
+    logger.info('RUN_BOT is set to false - bot is in standby mode');
+    logger.info('Set RUN_BOT=true and restart to resume trading.');
+    if (!dashboardServer) {
+      // Keep the process alive even without dashboard, so Railway doesn't restart
+      setInterval(() => {
+        logger.debug('Standby heartbeat - RUN_BOT=false');
+      }, 60_000);
+    }
+    return;
   }
 
   // Initialize RPC Manager with failover

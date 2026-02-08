@@ -23,6 +23,7 @@ export const RPC_BACKUP_ENDPOINTS = config.rpcBackupEndpoints;
 // ============================================================================
 export const DRY_RUN = config.dryRun;
 export const LOG_LEVEL = config.logLevel;
+export const RUN_BOT = config.runBot;
 export { isDryRun };
 
 // ============================================================================

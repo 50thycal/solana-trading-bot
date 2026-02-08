@@ -86,6 +86,9 @@ export interface ValidatedConfig {
 
   // Test Mode
   testMode: '' | 'smoke';
+
+  // Bot Control
+  runBot: boolean;
 }
 
 interface ValidationError {
@@ -364,6 +367,9 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'TEST_MODE', message: `Invalid TEST_MODE: "${testModeRaw}". Must be "smoke" or empty` });
   }
 
+  // === BOT CONTROL ===
+  const runBot = requireBoolean('RUN_BOT', true);
+
   // Validate private key format (base58)
   if (privateKey) {
     try {
@@ -464,6 +470,7 @@ export function validateConfig(): ValidatedConfig {
     momentumRecheckIntervalMs,
     momentumMaxChecks,
     testMode,
+    runBot,
   };
 
   // Log dry run mode warning
