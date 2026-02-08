@@ -138,6 +138,9 @@ export interface DetectedToken {
   /** Launch confidence score (future: for scoring system) */
   launchScore?: number;
 
+  /** Whether this token uses Token-2022 (CreateV2) vs SPL Token (Create) */
+  isToken2022?: boolean;
+
   /** Transaction signature that triggered detection */
   signature?: string;
 

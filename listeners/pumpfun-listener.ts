@@ -51,6 +51,8 @@ export interface PumpFunToken {
   uri: string;
   signature: string;
   detectedAt: number;
+  /** Whether this token uses Token-2022 (CreateV2) vs SPL Token (Create) */
+  isToken2022: boolean;
 }
 
 /**
@@ -294,6 +296,7 @@ export class PumpFunListener extends EventEmitter {
           inMintCache: true, // We just added it
           verificationSource: 'mint-cache',
           verified: true,
+          isToken2022: token.isToken2022,
           signature: token.signature,
           poolState: {
             type: 'pumpfun',
@@ -449,6 +452,7 @@ export class PumpFunListener extends EventEmitter {
                 uri,
                 signature,
                 detectedAt: Date.now(),
+                isToken2022: isCreateV2,
               };
             }
           }
@@ -509,6 +513,7 @@ export class PumpFunListener extends EventEmitter {
                 uri,
                 signature,
                 detectedAt: Date.now(),
+                isToken2022: isCreateV2,
               };
             }
           }
@@ -571,6 +576,7 @@ export class PumpFunListener extends EventEmitter {
               uri,
               signature,
               detectedAt: Date.now(),
+              isToken2022: false, // Conservative default for fallback path
             };
           }
         }

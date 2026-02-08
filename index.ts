@@ -645,6 +645,7 @@ const runListener = async () => {
       symbol: token.symbol,
       rawLogs: token.rawLogs || [],
       detectedAt: Date.now(),
+      isToken2022: token.isToken2022,
       source: 'websocket',
     };
 

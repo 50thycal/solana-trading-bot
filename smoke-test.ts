@@ -312,6 +312,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
       symbol: token.symbol,
       rawLogs: [],
       detectedAt: Date.now(),
+      isToken2022: token.isToken2022,
       source: 'websocket',
     };
 
@@ -319,6 +320,9 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     if (!pipeline) throw new Error('Pipeline not initialized');
 
     const result = await pipeline.process(detectionEvent);
+
+    // Set isToken2022 from cheapGates if available, otherwise from detection event
+    state.isToken2022 = result.context.cheapGates?.mintInfo.isToken2022 ?? token.isToken2022 ?? false;
 
     if (!result.success) {
       // Pipeline rejection is expected -- doesn't mean the pipeline is broken
@@ -337,7 +341,6 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     }
 
     state.passedBondingCurve = token.bondingCurve!;
-    state.isToken2022 = result.context.cheapGates?.mintInfo.isToken2022 ?? false;
     const score = result.context.deepFilters?.filterResults.score ?? 'N/A';
     return `Pipeline passed, score: ${score}, duration: ${result.totalDurationMs}ms`;
   });

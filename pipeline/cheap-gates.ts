@@ -358,13 +358,14 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
         );
       }
     } else {
-      // Skip mint info check (testing mode)
+      // Skip mint info check — use isToken2022 from detection event (set by listener
+      // based on whether the token was created via Create or CreateV2 instruction)
       mintInfo = {
         mintAuthority: null,
         freezeAuthority: null,
         decimals: 6,
         supply: BigInt(0),
-        isToken2022: true, // pump.fun uses Token-2022 exclusively
+        isToken2022: detection.isToken2022 ?? false,
       };
     }
 
