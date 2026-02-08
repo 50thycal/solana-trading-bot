@@ -99,6 +99,7 @@ export const PUMPFUN_MIN_SCORE_REQUIRED = config.pumpfunMinScoreRequired;
 // TEST MODE
 // ============================================================================
 export const TEST_MODE = config.testMode;
+export const SMOKE_TEST_TIMEOUT_MS = config.smokeTestTimeoutMs;
 export const LOG_FORMAT = config.logFormat;
 
 // Export the full config for advanced use cases
