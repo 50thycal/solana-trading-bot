@@ -77,6 +77,7 @@ const CHEAP_GATES = [
   { name: 'blacklist', displayName: 'Blacklist Check' },
   { name: 'exposure', displayName: 'Exposure Check' },
   { name: 'pattern', displayName: 'Name/Symbol Pattern' },
+  { name: 'suspicious-ix', displayName: 'Suspicious Instruction' },
   { name: 'mint-info', displayName: 'Mint Info Check' },
 ];
 
@@ -252,6 +253,7 @@ export class PipelineStats {
       INSUFFICIENT_BALANCE: 'exposure',
       JUNK_NAME: 'pattern',
       JUNK_SYMBOL: 'pattern',
+      SUSPICIOUS_INSTRUCTION: 'suspicious-ix',
       MINT_NOT_RENOUNCED: 'mint-info',
       HAS_FREEZE_AUTHORITY: 'mint-info',
       INVALID_DECIMALS: 'mint-info',
@@ -264,8 +266,12 @@ export class PipelineStats {
     if (!failedGate) {
       const lowerReason = reason.toLowerCase();
 
+      // Suspicious instruction rejections
+      if (lowerReason.includes('suspicious instruction')) {
+        failedGate = 'suspicious-ix';
+      }
       // Name/Symbol pattern rejections (from checkNameSymbolPatterns)
-      if (
+      else if (
         lowerReason.includes('name') ||
         lowerReason.includes('symbol') ||
         lowerReason.includes('junk pattern') ||

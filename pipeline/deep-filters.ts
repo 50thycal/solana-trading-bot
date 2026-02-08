@@ -68,6 +68,7 @@ export class DeepFiltersStage implements PipelineStage<PipelineContext, DeepFilt
     const { detection } = context;
     const mintStr = detection.mint.toString();
     const bondingCurveStr = detection.bondingCurve.toString();
+    const buf = context.logBuffer;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // FETCH BONDING CURVE STATE
@@ -82,14 +83,16 @@ export class DeepFiltersStage implements PipelineStage<PipelineContext, DeepFilt
           return this.reject(
             RejectionReasons.CURVE_NOT_FOUND,
             startTime,
-            { mint: mintStr, bondingCurve: bondingCurveStr }
+            { mint: mintStr, bondingCurve: bondingCurveStr },
+            buf
           );
         }
       } catch (error) {
         return this.reject(
           `Failed to fetch bonding curve: ${error instanceof Error ? error.message : 'Unknown error'}`,
           startTime,
-          { mint: mintStr, bondingCurve: bondingCurveStr }
+          { mint: mintStr, bondingCurve: bondingCurveStr },
+          buf
         );
       }
 
@@ -100,7 +103,8 @@ export class DeepFiltersStage implements PipelineStage<PipelineContext, DeepFilt
         return this.reject(
           RejectionReasons.ALREADY_GRADUATED,
           startTime,
-          { mint: mintStr, bondingCurve: bondingCurveStr }
+          { mint: mintStr, bondingCurve: bondingCurveStr },
+          buf
         );
       }
     } else {
@@ -149,7 +153,8 @@ export class DeepFiltersStage implements PipelineStage<PipelineContext, DeepFilt
                 passed: f.passed,
                 reason: f.reason,
               })),
-            }
+            },
+            buf
           );
         }
 
@@ -187,17 +192,21 @@ export class DeepFiltersStage implements PipelineStage<PipelineContext, DeepFilt
     // ═══════════════════════════════════════════════════════════════════════════
     const duration = Date.now() - startTime;
 
-    logger.debug(
-      {
-        stage: this.name,
-        mint: mintStr,
-        durationMs: duration,
-        score: filterResults.score,
-        realSolReserves: bondingCurveState.realSolReserves.toString(),
-        complete: bondingCurveState.complete,
-      },
-      '[pipeline] Deep filters passed'
-    );
+    if (buf) {
+      buf.info(`Deep filters: PASSED (${duration}ms)`);
+    } else {
+      logger.debug(
+        {
+          stage: this.name,
+          mint: mintStr,
+          durationMs: duration,
+          score: filterResults.score,
+          realSolReserves: bondingCurveState.realSolReserves.toString(),
+          complete: bondingCurveState.complete,
+        },
+        '[pipeline] Deep filters passed'
+      );
+    }
 
     return {
       pass: true,
@@ -217,19 +226,24 @@ export class DeepFiltersStage implements PipelineStage<PipelineContext, DeepFilt
   private reject(
     reason: string,
     startTime: number,
-    logData: Record<string, unknown> = {}
+    logData: Record<string, unknown> = {},
+    logBuffer?: import('../helpers/token-log-buffer').TokenLogBuffer
   ): StageResult<DeepFiltersData> {
     const duration = Date.now() - startTime;
 
-    logger.info(
-      {
-        stage: this.name,
-        reason,
-        durationMs: duration,
-        ...logData,
-      },
-      `[pipeline] Rejected: ${reason}`
-    );
+    if (logBuffer) {
+      logBuffer.info(`Deep filters: REJECTED - ${reason} (${duration}ms)`);
+    } else {
+      logger.info(
+        {
+          stage: this.name,
+          reason,
+          durationMs: duration,
+          ...logData,
+        },
+        `[pipeline] Rejected: ${reason}`
+      );
+    }
 
     return {
       pass: false,

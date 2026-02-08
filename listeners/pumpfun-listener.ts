@@ -247,6 +247,9 @@ export class PumpFunListener extends EventEmitter {
       const token = this.parseCreateTransaction(tx, signature);
 
       if (token) {
+        // Capture raw logs for downstream pipeline filtering (e.g. suspicious instruction check)
+        const rawLogs = tx?.meta?.logMessages || [];
+
         // Add to mint cache (high confidence - we detected the creation)
         const mintCache = getMintCache();
         mintCache.add(token.mint, 'helius', signature);
@@ -296,6 +299,7 @@ export class PumpFunListener extends EventEmitter {
             type: 'pumpfun',
             state: pumpFunState,
           },
+          rawLogs,
         };
 
         // Update stats and emit unified event

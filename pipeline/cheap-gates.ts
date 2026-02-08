@@ -53,6 +53,18 @@ const JUNK_SYMBOL_PATTERNS = [
   /^aaa+$/i,
 ];
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SUSPICIOUS INSTRUCTION PATTERNS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Patterns in raw transaction logs that indicate suspicious/malicious tokens.
+ * Extensible array - add new patterns as threats are discovered.
+ */
+const SUSPICIOUS_INSTRUCTION_PATTERNS = [
+  'InitializeMayhemState',
+];
+
 /**
  * Check if name/symbol matches junk patterns.
  * Returns { passed: true } if OK, { passed: false, reason } if junk.
@@ -152,6 +164,7 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
     const { detection } = context;
     const mintStr = detection.mint.toString();
     const creatorStr = detection.creator?.toString();
+    const buf = context.logBuffer;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // FREE GATE 1: Dedupe Check
@@ -165,7 +178,8 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
         return this.reject(
           RejectionReasons.ALREADY_PROCESSED,
           startTime,
-          { mint: mintStr, bondingCurve: bondingCurveStr }
+          { mint: mintStr, bondingCurve: bondingCurveStr },
+          buf
         );
       }
 
@@ -174,7 +188,8 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
         return this.reject(
           RejectionReasons.ALREADY_OWNED,
           startTime,
-          { mint: mintStr }
+          { mint: mintStr },
+          buf
         );
       }
 
@@ -184,7 +199,8 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
         return this.reject(
           RejectionReasons.PENDING_TRADE,
           startTime,
-          { mint: mintStr, tradeId: pendingTrade.id }
+          { mint: mintStr, tradeId: pendingTrade.id },
+          buf
         );
       }
     }
@@ -198,7 +214,8 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
       return this.reject(
         RejectionReasons.MINT_BLACKLISTED,
         startTime,
-        { mint: mintStr }
+        { mint: mintStr },
+        buf
       );
     }
 
@@ -206,7 +223,8 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
       return this.reject(
         RejectionReasons.CREATOR_BLACKLISTED,
         startTime,
-        { mint: mintStr, creator: creatorStr }
+        { mint: mintStr, creator: creatorStr },
+        buf
       );
     }
 
@@ -222,14 +240,14 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
 
         // Map to specific rejection reason
         if (reason.includes('exposure')) {
-          return this.reject(RejectionReasons.EXPOSURE_LIMIT, startTime, { mint: mintStr, reason });
+          return this.reject(RejectionReasons.EXPOSURE_LIMIT, startTime, { mint: mintStr, reason }, buf);
         } else if (reason.includes('trades per hour')) {
-          return this.reject(RejectionReasons.TRADES_PER_HOUR, startTime, { mint: mintStr, reason });
+          return this.reject(RejectionReasons.TRADES_PER_HOUR, startTime, { mint: mintStr, reason }, buf);
         } else if (reason.includes('balance') || reason.includes('buffer')) {
-          return this.reject(RejectionReasons.INSUFFICIENT_BALANCE, startTime, { mint: mintStr, reason });
+          return this.reject(RejectionReasons.INSUFFICIENT_BALANCE, startTime, { mint: mintStr, reason }, buf);
         }
 
-        return this.reject(reason, startTime, { mint: mintStr });
+        return this.reject(reason, startTime, { mint: mintStr }, buf);
       }
     }
 
@@ -242,8 +260,27 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
       return this.reject(
         patternCheck.reason || RejectionReasons.JUNK_NAME,
         startTime,
-        { mint: mintStr, name: detection.name, symbol: detection.symbol }
+        { mint: mintStr, name: detection.name, symbol: detection.symbol },
+        buf
       );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FREE GATE 4.5: Suspicious Instruction Check
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (detection.rawLogs && detection.rawLogs.length > 0) {
+      for (const logLine of detection.rawLogs) {
+        for (const pattern of SUSPICIOUS_INSTRUCTION_PATTERNS) {
+          if (logLine.includes(pattern)) {
+            return this.reject(
+              `${RejectionReasons.SUSPICIOUS_INSTRUCTION}: ${pattern}`,
+              startTime,
+              { mint: mintStr, matchedPattern: pattern },
+              buf
+            );
+          }
+        }
+      }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -269,7 +306,8 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
             return this.reject(
               'Failed to fetch mint info',
               startTime,
-              { mint: mintStr, error: String(e) }
+              { mint: mintStr, error: String(e) },
+              buf
             );
           }
         }
@@ -279,7 +317,8 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
           return this.reject(
             RejectionReasons.MINT_NOT_RENOUNCED,
             startTime,
-            { mint: mintStr, mintAuthority: mint.mintAuthority.toString() }
+            { mint: mintStr, mintAuthority: mint.mintAuthority.toString() },
+            buf
           );
         }
 
@@ -288,7 +327,8 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
           return this.reject(
             RejectionReasons.HAS_FREEZE_AUTHORITY,
             startTime,
-            { mint: mintStr, freezeAuthority: mint.freezeAuthority.toString() }
+            { mint: mintStr, freezeAuthority: mint.freezeAuthority.toString() },
+            buf
           );
         }
 
@@ -297,7 +337,8 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
           return this.reject(
             RejectionReasons.INVALID_DECIMALS,
             startTime,
-            { mint: mintStr, decimals: mint.decimals }
+            { mint: mintStr, decimals: mint.decimals },
+            buf
           );
         }
 
@@ -312,7 +353,8 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
         return this.reject(
           `Mint info check failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
           startTime,
-          { mint: mintStr }
+          { mint: mintStr },
+          buf
         );
       }
     } else {
@@ -331,18 +373,18 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
     // ═══════════════════════════════════════════════════════════════════════════
     const duration = Date.now() - startTime;
 
-    logger.debug(
-      {
-        stage: this.name,
-        mint: mintStr,
-        durationMs: duration,
-        mintAuthority: mintInfo.mintAuthority?.toString() || 'null',
-        freezeAuthority: mintInfo.freezeAuthority?.toString() || 'null',
-        decimals: mintInfo.decimals,
-        isToken2022: mintInfo.isToken2022,
-      },
-      '[pipeline] Cheap gates passed'
-    );
+    if (buf) {
+      buf.info(`Cheap gates: PASSED (${duration}ms)`);
+    } else {
+      logger.debug(
+        {
+          stage: this.name,
+          mint: mintStr,
+          durationMs: duration,
+        },
+        '[pipeline] Cheap gates passed'
+      );
+    }
 
     return {
       pass: true,
@@ -362,19 +404,24 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
   private reject(
     reason: string,
     startTime: number,
-    logData: Record<string, unknown> = {}
+    logData: Record<string, unknown> = {},
+    logBuffer?: import('../helpers/token-log-buffer').TokenLogBuffer
   ): StageResult<CheapGatesData> {
     const duration = Date.now() - startTime;
 
-    logger.info(
-      {
-        stage: this.name,
-        reason,
-        durationMs: duration,
-        ...logData,
-      },
-      `[pipeline] Rejected: ${reason}`
-    );
+    if (logBuffer) {
+      logBuffer.info(`Cheap gates: REJECTED - ${reason} (${duration}ms)`);
+    } else {
+      logger.info(
+        {
+          stage: this.name,
+          reason,
+          durationMs: duration,
+          ...logData,
+        },
+        `[pipeline] Rejected: ${reason}`
+      );
+    }
 
     return {
       pass: false,
