@@ -325,7 +325,7 @@ export class PumpFunListener extends EventEmitter {
   /**
    * Parse a pump.fun create transaction to extract token details
    *
-   * pump.fun Create instruction account layout:
+   * pump.fun Create (v1/legacy) instruction account layout:
    * 0: mint - The new token mint account
    * 1: mintAuthority - PDA that controls minting
    * 2: bondingCurve - The bonding curve account for this token
@@ -340,6 +340,20 @@ export class PumpFunListener extends EventEmitter {
    * 11: rent
    * 12: eventAuthority
    * 13: program (pump.fun)
+   *
+   * pump.fun CreateV2 (Token-2022) instruction account layout:
+   * 0: mint - The new token mint account
+   * 1: mintAuthority - PDA that controls minting
+   * 2: bondingCurve - The bonding curve account for this token
+   * 3: associatedBondingCurve - ATA for bonding curve to hold tokens
+   * 4: global - Global config account
+   * 5: user - The creator/payer
+   * 6: systemProgram
+   * 7: tokenProgram (Token-2022)
+   * 8: associatedTokenProgram
+   * 9: rent
+   * 10: eventAuthority
+   * ...additional accounts (volume accumulators, fee config, fee program)
    */
   private parseCreateTransaction(
     tx: ParsedTransactionWithMeta,
@@ -386,7 +400,12 @@ export class PumpFunListener extends EventEmitter {
               const mint = accounts[0];
               const bondingCurve = accounts[2];
               const associatedBondingCurve = accounts[3];
-              const creator = accounts[7];
+
+              // Determine creator based on instruction type:
+              // CreateV2 (Token-2022): accounts[7] is Token-2022 program, creator is at accounts[5]
+              // Create (v1/legacy): accounts[7] is the creator/payer
+              const isCreateV2 = accounts[7].equals(TOKEN_2022_PROGRAM_ID);
+              const creator = isCreateV2 ? accounts[5] : accounts[7];
 
               // DEBUG: Log extracted values
               logger.info(
@@ -396,6 +415,7 @@ export class PumpFunListener extends EventEmitter {
                   extractedBondingCurve: bondingCurve.toString(),
                   extractedAssociatedBondingCurve: associatedBondingCurve.toString(),
                   extractedCreator: creator.toString(),
+                  isCreateV2,
                   isPumpFunGlobal: mint.equals(PUMP_FUN_GLOBAL),
                   isMintAProgram: mint.toString().length < 44, // Programs have shorter addresses
                 },
@@ -457,7 +477,12 @@ export class PumpFunListener extends EventEmitter {
               const mint = accounts[0];
               const bondingCurve = accounts[2];
               const associatedBondingCurve = accounts[3];
-              const creator = accounts[7];
+
+              // Determine creator based on instruction type:
+              // CreateV2 (Token-2022): accounts[7] is Token-2022 program, creator is at accounts[5]
+              // Create (v1/legacy): accounts[7] is the creator/payer
+              const isCreateV2 = accounts[7].equals(TOKEN_2022_PROGRAM_ID);
+              const creator = isCreateV2 ? accounts[5] : accounts[7];
 
               // Skip if mint is PUMP_FUN_GLOBAL
               if (mint.equals(PUMP_FUN_GLOBAL)) {
