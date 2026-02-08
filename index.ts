@@ -627,7 +627,7 @@ const runListener = async () => {
       creator: token.creator || null,
       name: token.name,
       symbol: token.symbol,
-      rawLogs: [],
+      rawLogs: token.rawLogs || [],
       detectedAt: Date.now(),
       source: 'websocket',
     };

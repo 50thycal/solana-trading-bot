@@ -7,6 +7,7 @@
 
 import { PublicKey } from '@solana/web3.js';
 import { BondingCurveState } from '../helpers/pumpfun';
+import { TokenLogBuffer } from '../helpers/token-log-buffer';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // STAGE 1: DETECTION EVENT
@@ -183,6 +184,9 @@ export interface PipelineContext {
   /** Data from momentum gate (if passed) */
   momentumGate?: MomentumGateData;
 
+  /** Log buffer for non-interleaved output */
+  logBuffer?: TokenLogBuffer;
+
   /** Rejection info (if pipeline stopped) */
   rejection?: {
     stage: string;
@@ -241,6 +245,9 @@ export const RejectionReasons = {
   // Filters
   FILTER_FAILED: 'Failed filter check',
   SCORE_TOO_LOW: 'Score below minimum threshold',
+
+  // Suspicious instruction
+  SUSPICIOUS_INSTRUCTION: 'Suspicious instruction detected in transaction logs',
 
   // Momentum Gate
   MOMENTUM_THRESHOLD_NOT_MET: 'Momentum threshold not met',

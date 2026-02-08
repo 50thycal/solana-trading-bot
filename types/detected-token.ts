@@ -140,6 +140,9 @@ export interface DetectedToken {
 
   /** Transaction signature that triggered detection */
   signature?: string;
+
+  /** Raw log messages from the creation transaction */
+  rawLogs?: string[];
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

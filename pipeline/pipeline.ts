@@ -24,6 +24,7 @@ import { CheapGatesStage, CheapGatesConfig } from './cheap-gates';
 import { DeepFiltersStage, DeepFiltersConfig } from './deep-filters';
 import { MomentumGateStage, MomentumGateConfig } from './momentum-gate';
 import { logger } from '../helpers';
+import { TokenLogBuffer } from '../helpers/token-log-buffer';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PIPELINE RESULT
@@ -130,107 +131,101 @@ export class PumpFunPipeline {
     const stageResults: StageResult[] = [];
     const mintStr = detection.mint.toString();
 
+    // Create log buffer for non-interleaved output
+    const logBuffer = new TokenLogBuffer(mintStr, detection.symbol);
+    logBuffer.info(`Detected via ${detection.source}`);
+
     // Initialize context
     const context: PipelineContext = {
       detection,
+      logBuffer,
     };
 
     if (this.config.verbose) {
-      logger.debug(
-        {
-          mint: mintStr,
-          signature: detection.signature,
-          slot: detection.slot,
-          creator: detection.creator?.toString(),
-        },
-        '[pipeline] Starting processing'
-      );
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // STAGE 2: Cheap Gates
-    // ═══════════════════════════════════════════════════════════════════════════
-    const cheapGatesResult = await this.cheapGatesStage.execute(context);
-    stageResults.push(cheapGatesResult);
-
-    if (!cheapGatesResult.pass) {
-      context.rejection = {
-        stage: cheapGatesResult.stage,
-        reason: cheapGatesResult.reason,
-        timestamp: Date.now(),
-      };
-
-      return this.buildResult(false, context, stageResults, pipelineStart, cheapGatesResult);
-    }
-
-    // Add cheap gates data to context
-    context.cheapGates = cheapGatesResult.data as CheapGatesData;
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // STAGE 3: Deep Filters
-    // ═══════════════════════════════════════════════════════════════════════════
-    const deepFiltersResult = await this.deepFiltersStage.execute(context);
-    stageResults.push(deepFiltersResult);
-
-    if (!deepFiltersResult.pass) {
-      context.rejection = {
-        stage: deepFiltersResult.stage,
-        reason: deepFiltersResult.reason,
-        timestamp: Date.now(),
-      };
-
-      return this.buildResult(false, context, stageResults, pipelineStart, deepFiltersResult);
-    }
-
-    // Add deep filters data to context
-    context.deepFilters = deepFiltersResult.data as DeepFiltersData;
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // STAGE 4: Momentum Gate
-    // ═══════════════════════════════════════════════════════════════════════════
-    const momentumGateResult = await this.momentumGateStage.execute(context);
-    stageResults.push(momentumGateResult);
-
-    if (!momentumGateResult.pass) {
-      context.rejection = {
-        stage: momentumGateResult.stage,
-        reason: momentumGateResult.reason,
-        timestamp: Date.now(),
-      };
-
-      return this.buildResult(false, context, stageResults, pipelineStart, momentumGateResult);
-    }
-
-    // Add momentum gate data to context
-    context.momentumGate = momentumGateResult.data as MomentumGateData;
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ALL STAGES PASSED
-    // ═══════════════════════════════════════════════════════════════════════════
-    const totalDuration = Date.now() - pipelineStart;
-
-    logger.info(
-      {
+      logBuffer.debug('Starting processing', {
         mint: mintStr,
-        totalDurationMs: totalDuration,
-        stages: stageResults.map((s) => ({
-          stage: s.stage,
-          pass: s.pass,
-          durationMs: s.durationMs,
-        })),
-        score: context.deepFilters?.filterResults.score,
-        momentum: context.momentumGate
-          ? {
-              buyCount: context.momentumGate.buyCount,
-              sellCount: context.momentumGate.sellCount,
-              checksPerformed: context.momentumGate.checksPerformed,
-            }
-          : undefined,
-      },
-      '[pipeline] All stages passed - ready to execute'
-    );
+        signature: detection.signature,
+        slot: detection.slot,
+        creator: detection.creator?.toString(),
+      });
+    }
 
-    return this.buildResult(true, context, stageResults, pipelineStart);
+    try {
+      // ═══════════════════════════════════════════════════════════════════════════
+      // STAGE 2: Cheap Gates
+      // ═══════════════════════════════════════════════════════════════════════════
+      const cheapGatesResult = await this.cheapGatesStage.execute(context);
+      stageResults.push(cheapGatesResult);
+
+      if (!cheapGatesResult.pass) {
+        context.rejection = {
+          stage: cheapGatesResult.stage,
+          reason: cheapGatesResult.reason,
+          timestamp: Date.now(),
+        };
+
+        return this.buildResult(false, context, stageResults, pipelineStart, cheapGatesResult);
+      }
+
+      // Add cheap gates data to context
+      context.cheapGates = cheapGatesResult.data as CheapGatesData;
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // STAGE 3: Deep Filters
+      // ═══════════════════════════════════════════════════════════════════════════
+      const deepFiltersResult = await this.deepFiltersStage.execute(context);
+      stageResults.push(deepFiltersResult);
+
+      if (!deepFiltersResult.pass) {
+        context.rejection = {
+          stage: deepFiltersResult.stage,
+          reason: deepFiltersResult.reason,
+          timestamp: Date.now(),
+        };
+
+        return this.buildResult(false, context, stageResults, pipelineStart, deepFiltersResult);
+      }
+
+      // Add deep filters data to context
+      context.deepFilters = deepFiltersResult.data as DeepFiltersData;
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // STAGE 4: Momentum Gate
+      // ═══════════════════════════════════════════════════════════════════════════
+      const momentumGateResult = await this.momentumGateStage.execute(context);
+      stageResults.push(momentumGateResult);
+
+      if (!momentumGateResult.pass) {
+        context.rejection = {
+          stage: momentumGateResult.stage,
+          reason: momentumGateResult.reason,
+          timestamp: Date.now(),
+        };
+
+        return this.buildResult(false, context, stageResults, pipelineStart, momentumGateResult);
+      }
+
+      // Add momentum gate data to context
+      context.momentumGate = momentumGateResult.data as MomentumGateData;
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // ALL STAGES PASSED
+      // ═══════════════════════════════════════════════════════════════════════════
+      return this.buildResult(true, context, stageResults, pipelineStart);
+    } finally {
+      // Flush the log buffer atomically regardless of outcome
+      const totalMs = Date.now() - pipelineStart;
+      if (context.rejection) {
+        logBuffer.flush({
+          result: 'REJECTED',
+          stage: context.rejection.stage,
+          reason: context.rejection.reason,
+          totalMs,
+        });
+      } else {
+        logBuffer.flush({ result: 'BOUGHT', totalMs });
+      }
+    }
   }
 
   /**

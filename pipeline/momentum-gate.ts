@@ -199,13 +199,18 @@ export class MomentumGateStage implements PipelineStage<PipelineContext, Momentu
     const { detection } = context;
     const mintStr = detection.mint.toString();
     const bondingCurveStr = detection.bondingCurve.toString();
+    const buf = context.logBuffer;
 
     // If disabled, pass through immediately
     if (!this.config.enabled) {
-      logger.debug(
-        { stage: this.name, mint: mintStr },
-        '[pipeline] Momentum gate disabled, passing through'
-      );
+      if (buf) {
+        buf.info('Momentum gate: SKIPPED (disabled)');
+      } else {
+        logger.debug(
+          { stage: this.name, mint: mintStr },
+          '[pipeline] Momentum gate disabled, passing through'
+        );
+      }
       return {
         pass: true,
         reason: 'Momentum gate disabled',
@@ -249,7 +254,8 @@ export class MomentumGateStage implements PipelineStage<PipelineContext, Momentu
             bondingCurve: bondingCurveStr,
             checksPerformed,
             error: errorMsg,
-          }
+          },
+          buf
         );
       }
 
@@ -274,18 +280,22 @@ export class MomentumGateStage implements PipelineStage<PipelineContext, Momentu
         // PASS!
         const duration = Date.now() - startTime;
 
-        logger.info(
-          {
-            stage: this.name,
-            mint: mintStr,
-            buyCount: counts.buyCount,
-            sellCount: counts.sellCount,
-            threshold: this.config.minTotalBuys,
-            checksPerformed,
-            durationMs: duration,
-          },
-          '[pipeline] Momentum gate passed'
-        );
+        if (buf) {
+          buf.info(`Momentum gate: PASSED - ${counts.buyCount} buys (${duration}ms)`);
+        } else {
+          logger.info(
+            {
+              stage: this.name,
+              mint: mintStr,
+              buyCount: counts.buyCount,
+              sellCount: counts.sellCount,
+              threshold: this.config.minTotalBuys,
+              checksPerformed,
+              durationMs: duration,
+            },
+            '[pipeline] Momentum gate passed'
+          );
+        }
 
         return {
           pass: true,
@@ -320,7 +330,8 @@ export class MomentumGateStage implements PipelineStage<PipelineContext, Momentu
         sellCount: lastSellCount,
         threshold: this.config.minTotalBuys,
         checksPerformed,
-      }
+      },
+      buf
     );
   }
 
@@ -330,19 +341,24 @@ export class MomentumGateStage implements PipelineStage<PipelineContext, Momentu
   private reject(
     reason: string,
     startTime: number,
-    logData: Record<string, unknown> = {}
+    logData: Record<string, unknown> = {},
+    logBuffer?: import('../helpers/token-log-buffer').TokenLogBuffer
   ): StageResult<MomentumGateData> {
     const duration = Date.now() - startTime;
 
-    logger.info(
-      {
-        stage: this.name,
-        reason,
-        durationMs: duration,
-        ...logData,
-      },
-      `[pipeline] Rejected: ${reason}`
-    );
+    if (logBuffer) {
+      logBuffer.info(`Momentum gate: REJECTED - ${reason} (${duration}ms)`);
+    } else {
+      logger.info(
+        {
+          stage: this.name,
+          reason,
+          durationMs: duration,
+          ...logData,
+        },
+        `[pipeline] Rejected: ${reason}`
+      );
+    }
 
     return {
       pass: false,
