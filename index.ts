@@ -881,6 +881,7 @@ const runListener = async () => {
           tokenMint: baseMintStr,
           bondingCurve: bondingCurveStr,
           entryAmountSol: tradeAmount,
+          actualCostSol: buyResult.actualSolSpent,
           tokenAmount: buyResult.tokensReceived || 0,
           entryTimestamp,
           buySignature: buyResult.signature || '',
