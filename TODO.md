@@ -107,3 +107,18 @@ Audit the entire codebase to ensure that sensitive credentials (private keys, AP
 - **Add a lint rule or grep check** — Consider adding a CI step or pre-commit hook that greps for patterns like `PRIVATE_KEY`, `secret`, or raw env var references inside log statements to catch future regressions.
 
 Files to look at: `helpers/logger.ts`, `helpers/rpc-manager.ts`, `index.ts`, `bootstrap.ts`, `transactions/`, `listeners/`
+
+---
+
+## [ ] Investigate log output vs dashboard mismatch
+
+Dry-run tests show that the logs don't fully match what the dashboard displays. When an AI session is given a dashboard screenshot alongside the corresponding logs, most data lines up but the logs appear incomplete — missing entries or truncated info that the dashboard does show.
+
+**Possible root causes to investigate:**
+
+- **Incomplete log output** — Some data that the dashboard renders may not be getting logged at all, or is logged at a level (`debug`) that isn't visible in the default log output. Check whether every stat/metric the dashboard displays has a corresponding log statement.
+- **Context window / truncation issues** — If logs are being consumed by an AI session, long output may be getting truncated by the context window before the AI sees it. Consider whether log output needs to be condensed or summarized to fit.
+- **Dashboard showing stale or derived data** — The dashboard may be computing or aggregating values (e.g. rolling averages, cumulative counts) that aren't represented line-for-line in the logs. Verify whether the dashboard is pulling from a data source the logs don't cover.
+- **Timing / refresh mismatch** — The dashboard polls or refreshes on an interval. Logs are a point-in-time snapshot. A dry-run screenshot may capture dashboard state that includes updates the logs haven't flushed yet.
+
+Files to look at: `dashboard/server.ts`, `dashboard/public/app.js`, `helpers/logger.ts`, `risk/pumpfun-position-monitor.ts`, `pipeline/pipeline-stats.ts`, `risk/pnl-tracker.ts`
