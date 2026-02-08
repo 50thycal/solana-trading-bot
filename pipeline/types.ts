@@ -50,6 +50,9 @@ export interface DetectionEvent {
   /** Timestamp when event was detected */
   detectedAt: number;
 
+  /** Whether this token uses Token-2022 (CreateV2) vs SPL Token (Create) */
+  isToken2022?: boolean;
+
   /** Detection source identifier */
   source: 'websocket' | 'webhook';
 }

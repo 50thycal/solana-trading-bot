@@ -454,19 +454,21 @@ function buildBuyInstruction(
 /**
  * Build the sell instruction for pump.fun
  *
- * pump.fun Sell instruction accounts:
+ * pump.fun Sell instruction accounts (14 total):
  * 0: global
- * 1: feeRecipient
+ * 1: fee_recipient
  * 2: mint
- * 3: bondingCurve
- * 4: associatedBondingCurve
- * 5: associatedUser (user's token account)
+ * 3: bonding_curve
+ * 4: associated_bonding_curve
+ * 5: associated_user (user's token account)
  * 6: user
- * 7: systemProgram
- * 8: associatedTokenProgram
- * 9: tokenProgram
- * 10: eventAuthority
+ * 7: system_program
+ * 8: creator_vault (mutable) — NOTE: swapped with token_program vs buy
+ * 9: token_program
+ * 10: event_authority
  * 11: program
+ * 12: fee_config (NOT mutable)
+ * 13: fee_program (NOT mutable)
  */
 function buildSellInstruction(
   mint: PublicKey,
@@ -476,7 +478,9 @@ function buildSellInstruction(
   user: PublicKey,
   tokenAmount: BN,
   minSolOutput: BN,
-  tokenProgramId: PublicKey = TOKEN_PROGRAM_ID
+  tokenProgramId: PublicKey,
+  creatorVault: PublicKey,
+  feeConfig: PublicKey,
 ): TransactionInstruction {
   // Sell instruction discriminator (first 8 bytes of sha256("global:sell"))
   const discriminator = Buffer.from([51, 230, 133, 164, 1, 127, 131, 173]);
@@ -488,18 +492,34 @@ function buildSellInstruction(
   minSolOutput.toArrayLike(Buffer, 'le', 8).copy(data, 16);
 
   const keys = [
+    // 0: global
     { pubkey: PUMP_FUN_GLOBAL, isSigner: false, isWritable: false },
+    // 1: fee_recipient
     { pubkey: PUMP_FUN_FEE_RECIPIENT, isSigner: false, isWritable: true },
+    // 2: mint
     { pubkey: mint, isSigner: false, isWritable: false },
+    // 3: bonding_curve
     { pubkey: bondingCurve, isSigner: false, isWritable: true },
+    // 4: associated_bonding_curve
     { pubkey: associatedBondingCurve, isSigner: false, isWritable: true },
+    // 5: associated_user (user's token account)
     { pubkey: userTokenAccount, isSigner: false, isWritable: true },
+    // 6: user
     { pubkey: user, isSigner: true, isWritable: true },
+    // 7: system_program
     { pubkey: SYSTEM_PROGRAM, isSigner: false, isWritable: false },
-    { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    // 8: creator_vault (mutable) — NOTE: position 8 in sell, position 9 in buy
+    { pubkey: creatorVault, isSigner: false, isWritable: true },
+    // 9: token_program — NOTE: position 9 in sell, position 8 in buy
     { pubkey: tokenProgramId, isSigner: false, isWritable: false },
+    // 10: event_authority
     { pubkey: PUMP_FUN_EVENT_AUTHORITY, isSigner: false, isWritable: false },
+    // 11: program
     { pubkey: PUMP_FUN_PROGRAM_ID, isSigner: false, isWritable: false },
+    // 12: fee_config (NOT mutable)
+    { pubkey: feeConfig, isSigner: false, isWritable: false },
+    // 13: fee_program (NOT mutable)
+    { pubkey: PUMP_FUN_FEE_PROGRAM_ID, isSigner: false, isWritable: false },
   ];
 
   return new TransactionInstruction({
@@ -766,6 +786,10 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
     const slippageMultiplier = (10000 - slippageBps) / 10000;
     const minSolOut = new BN(Math.floor(expectedSol.toNumber() * slippageMultiplier));
 
+    // Derive PDAs needed for the sell instruction
+    const creatorVault = deriveCreatorVault(state.creator);
+    const feeConfig = deriveFeeConfig();
+
     logger.debug(
       {
         mint: mint.toString(),
@@ -775,6 +799,9 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
         slippageBps,
         isToken2022,
         tokenProgramId: tokenProgramId.toString(),
+        creator: state.creator.toString(),
+        creatorVault: creatorVault.toString(),
+        feeConfig: feeConfig.toString(),
       },
       'Preparing pump.fun sell'
     );
@@ -809,7 +836,9 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
         wallet.publicKey,
         tokenAmountBN,
         minSolOut,
-        tokenProgramId
+        tokenProgramId,
+        creatorVault,
+        feeConfig,
       )
     );
 
