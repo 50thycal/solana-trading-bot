@@ -62,6 +62,51 @@ const SYSTEM_PROGRAM = SystemProgram.programId;
 const WSOL_MINT = new PublicKey('So11111111111111111111111111111111111111112');
 
 /**
+ * ATA rent exemption amount in lamports (standard for a token account).
+ */
+const ATA_RENT_LAMPORTS = 2039280;
+
+/**
+ * Safety margin added to fee estimates (configurable via env, default 10000 lamports = 0.00001 SOL).
+ */
+const FEE_SAFETY_MARGIN_LAMPORTS = Number(process.env.FEE_SAFETY_MARGIN_LAMPORTS || 10000);
+
+/**
+ * Compute expected maximum SOL outflow for a buy transaction.
+ * Includes trade amount + slippage, ATA rent (if needed), and fees.
+ */
+interface OutflowEstimate {
+  maxSolCostLamports: number;
+  ataRentLamports: number;
+  feeBufferLamports: number;
+  totalExpectedOutflow: number;
+}
+
+function computeExpectedOutflow(
+  amountLamports: number,
+  slippageBps: number,
+  computeUnitLimit: number,
+  computeUnitPrice: number,
+  ataExists: boolean,
+): OutflowEstimate {
+  const slippageMultiplier = (10000 + slippageBps) / 10000;
+  const maxSolCostLamports = Math.ceil(amountLamports * slippageMultiplier);
+  const ataRentLamports = ataExists ? 0 : ATA_RENT_LAMPORTS;
+
+  // Base fee (5000 lamports/sig) + priority fee + safety margin
+  const baseFee = 5000;
+  const priorityFee = Math.ceil((computeUnitPrice * computeUnitLimit) / 1_000_000);
+  const feeBufferLamports = baseFee + priorityFee + FEE_SAFETY_MARGIN_LAMPORTS;
+
+  return {
+    maxSolCostLamports,
+    ataRentLamports,
+    feeBufferLamports,
+    totalExpectedOutflow: maxSolCostLamports + ataRentLamports + feeBufferLamports,
+  };
+}
+
+/**
  * Bonding curve state structure
  */
 export interface BondingCurveState {
@@ -634,7 +679,8 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
 
     // Check if user token account exists, create if not
     const userTokenAccountInfo = await connection.getAccountInfo(userTokenAccount);
-    if (!userTokenAccountInfo) {
+    const ataExists = userTokenAccountInfo !== null;
+    if (!ataExists) {
       transaction.add(
         createAssociatedTokenAccountInstruction(
           wallet.publicKey,
@@ -645,6 +691,49 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
           ASSOCIATED_TOKEN_PROGRAM_ID
         )
       );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // OUTFLOW GUARD: Verify wallet can cover the full transaction cost
+    // ═══════════════════════════════════════════════════════════════════════
+    const outflow = computeExpectedOutflow(
+      amountLamports.toNumber(),
+      slippageBps,
+      computeUnitLimit,
+      computeUnitPrice,
+      ataExists,
+    );
+
+    const preSolBalanceForGuard = await getPreTxSolBalance(connection, wallet.publicKey);
+
+    logger.info(
+      {
+        mint: mint.toString(),
+        tradeAmountLamports: amountLamports.toNumber(),
+        maxSolCostLamports: outflow.maxSolCostLamports,
+        ataRentLamports: outflow.ataRentLamports,
+        feeBufferLamports: outflow.feeBufferLamports,
+        totalExpectedOutflow: outflow.totalExpectedOutflow,
+        totalExpectedOutflowSol: (outflow.totalExpectedOutflow / LAMPORTS_PER_SOL).toFixed(6),
+        walletBalanceLamports: preSolBalanceForGuard,
+        walletBalanceSol: (preSolBalanceForGuard / LAMPORTS_PER_SOL).toFixed(6),
+        ataExists,
+      },
+      '[pump.fun] Outflow breakdown',
+    );
+
+    if (preSolBalanceForGuard < outflow.totalExpectedOutflow) {
+      const shortfall = (outflow.totalExpectedOutflow - preSolBalanceForGuard) / LAMPORTS_PER_SOL;
+      return {
+        success: false,
+        error: `Outflow guard rejected: wallet ${(preSolBalanceForGuard / LAMPORTS_PER_SOL).toFixed(6)} SOL ` +
+               `< required ${(outflow.totalExpectedOutflow / LAMPORTS_PER_SOL).toFixed(6)} SOL ` +
+               `(trade+slippage: ${(outflow.maxSolCostLamports / LAMPORTS_PER_SOL).toFixed(6)}, ` +
+               `ATA: ${(outflow.ataRentLamports / LAMPORTS_PER_SOL).toFixed(6)}, ` +
+               `fees: ${(outflow.feeBufferLamports / LAMPORTS_PER_SOL).toFixed(6)}, ` +
+               `shortfall: ${shortfall.toFixed(6)} SOL)`,
+        actualVerified: false,
+      };
     }
 
     // Add buy instruction
@@ -680,7 +769,8 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       mint,
       tokenProgramId,
     );
-    const preSolBalance = await getPreTxSolBalance(connection, wallet.publicKey);
+    // Reuse the balance from outflow guard (fetched moments ago) to avoid extra RPC call
+    const preSolBalance = preSolBalanceForGuard;
 
     // Send and confirm
     const signature = await connection.sendRawTransaction(transaction.serialize(), {

@@ -109,6 +109,8 @@ export interface SmokeTestReport {
   buyFailures: BuyFailureRecord[];
   tokensEvaluated: number;
   tokensPipelinePassed: number;
+  actualSolSpentOnBuy?: number;
+  buyOverheadSol?: number;
 }
 
 // Shared state for the report endpoint
@@ -198,6 +200,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     isToken2022: boolean;
     buySignature: string;
     tokensReceived: number;
+    actualSolSpent: number | undefined;
     sellSignature: string;
     exitTrigger: string;
   } = {
@@ -209,6 +212,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     isToken2022: false,
     buySignature: '',
     tokensReceived: 0,
+    actualSolSpent: undefined,
     sellSignature: '',
     exitTrigger: '',
   };
@@ -365,9 +369,13 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     }
 
     const currentSolBalance = (await state.connection!.getBalance(state.wallet!.publicKey, 'confirmed')) / LAMPORTS_PER_SOL;
-    const solSpent = walletBalanceBefore - currentSolBalance;
+    const totalSolSpent = walletBalanceBefore - currentSolBalance;
+    const overhead = state.actualSolSpent !== undefined
+      ? state.actualSolSpent - tradeAmount
+      : totalSolSpent - tradeAmount;
 
-    return `${actualBalance} tokens in wallet, ${solSpent.toFixed(4)} SOL spent`;
+    return `${actualBalance} tokens in wallet, ${totalSolSpent.toFixed(4)} SOL spent ` +
+           `(trade: ${tradeAmount}, overhead: ${overhead.toFixed(6)} [ATA rent + gas])`;
   });
 
   // ─────────────────────────────────────────────────────────────────────
@@ -386,6 +394,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
       tokenMint: state.passedToken!.mint.toString(),
       bondingCurve: state.passedBondingCurve!.toString(),
       entryAmountSol: tradeAmount,
+      actualCostSol: state.actualSolSpent,
       tokenAmount: state.tokensReceived,
       entryTimestamp: Date.now(),
       buySignature: state.buySignature,
@@ -411,7 +420,11 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
 
         state.exitTrigger = event.type;
         const pnlSign = event.pnlPercent >= 0 ? '+' : '';
-        resolve(`Exit trigger: ${event.type}, PnL: ${pnlSign}${event.pnlPercent.toFixed(2)}%, value: ${event.currentValueSol.toFixed(6)} SOL`);
+        const tradePnl = `${pnlSign}${event.pnlPercent.toFixed(2)}%`;
+        const totalCostPnlStr = event.totalCostPnlPercent !== undefined
+          ? `, total-cost PnL: ${event.totalCostPnlPercent >= 0 ? '+' : ''}${event.totalCostPnlPercent.toFixed(2)}%`
+          : '';
+        resolve(`Exit trigger: ${event.type}, PnL: ${tradePnl}${totalCostPnlStr}, value: ${event.currentValueSol.toFixed(6)} SOL`);
       });
     });
   });
@@ -496,7 +509,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     } catch { /* ignore */ }
   }
 
-  return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceAfter, state.exitTrigger, buyFailures, tokensEvaluated, tokensPipelinePassed);
+  return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceAfter, state.exitTrigger, buyFailures, tokensEvaluated, tokensPipelinePassed, state.actualSolSpent, tradeAmount);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -519,6 +532,7 @@ async function runListenPipelineAndBuy(
     isToken2022: boolean;
     buySignature: string;
     tokensReceived: number;
+    actualSolSpent: number | undefined;
     sellSignature: string;
     exitTrigger: string;
   },
@@ -617,6 +631,7 @@ async function runListenPipelineAndBuy(
             state.isToken2022 = isToken2022;
             state.buySignature = buyResult.signature || '';
             state.tokensReceived = buyResult.tokensReceived || 0;
+            state.actualSolSpent = buyResult.actualSolSpent;
             buySucceeded = true;
 
             clearTimeout(overallTimeout);
@@ -698,12 +713,18 @@ function buildReport(
   buyFailures: BuyFailureRecord[],
   tokensEvaluated: number,
   tokensPipelinePassed: number,
+  actualSolSpentOnBuy?: number,
+  tradeAmount?: number,
 ): SmokeTestReport {
   const completedAt = Date.now();
   const passedCount = steps.filter((s) => s.status === 'passed').length;
   const failedCount = steps.filter((s) => s.status === 'failed').length;
   const totalSteps = steps.filter((s) => s.status !== 'skipped' && s.status !== 'pending').length;
   const overallResult = failedCount === 0 && passedCount > 0 ? 'PASS' : 'FAIL';
+
+  const buyOverhead = (actualSolSpentOnBuy !== undefined && tradeAmount !== undefined)
+    ? actualSolSpentOnBuy - tradeAmount
+    : undefined;
 
   const report: SmokeTestReport = {
     startedAt,
@@ -721,6 +742,8 @@ function buildReport(
     buyFailures,
     tokensEvaluated,
     tokensPipelinePassed,
+    actualSolSpentOnBuy,
+    buyOverheadSol: buyOverhead,
   };
 
   // Store for dashboard retrieval
@@ -738,6 +761,10 @@ function buildReport(
   logger.info(`  Duration:        ${totalSecs}s`);
   logger.info(`  Net cost:        ${netCost} SOL`);
   logger.info(`  Wallet:          ${walletBefore.toFixed(4)} -> ${walletAfter.toFixed(4)} SOL`);
+  if (report.actualSolSpentOnBuy !== undefined) {
+    const overhead = report.buyOverheadSol ?? 0;
+    logger.info(`  Buy cost:        ${report.actualSolSpentOnBuy.toFixed(6)} SOL (trade: ${(report.actualSolSpentOnBuy - overhead).toFixed(6)}, overhead: ${overhead.toFixed(6)})`);
+  }
   if (exitTrigger) {
     logger.info(`  Exit trigger:    ${exitTrigger}`);
   }

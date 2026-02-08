@@ -32,6 +32,7 @@ export interface PumpFunPosition {
   tokenMint: string;
   bondingCurve: string;
   entryAmountSol: number;
+  actualCostSol?: number; // Total wallet debit (trade + ATA rent + gas fees)
   tokenAmount: number;
   entryTimestamp: number;
   buySignature: string;
@@ -49,6 +50,7 @@ export interface PumpFunTriggerEvent {
   position: PumpFunPosition;
   currentValueSol: number;
   pnlPercent: number;
+  totalCostPnlPercent?: number; // PnL including fees/ATA rent (for reporting)
   reason: string;
 }
 
@@ -252,9 +254,16 @@ export class PumpFunPositionMonitor extends EventEmitter {
     const expectedSolOut = calculateSellSolOut(state, tokenAmountBN);
     const currentValueSol = expectedSolOut.toNumber() / LAMPORTS_PER_SOL;
 
-    // Calculate P&L
+    // Calculate bonding curve P&L (used for TP/SL triggers)
     const pnlSol = currentValueSol - position.entryAmountSol;
     const pnlPercent = (pnlSol / position.entryAmountSol) * 100;
+
+    // Calculate total-cost P&L (includes ATA rent + gas fees, for reporting only)
+    let totalCostPnlPercent: number | undefined;
+    if (position.actualCostSol !== undefined && position.actualCostSol > 0) {
+      const totalCostPnlSol = currentValueSol - position.actualCostSol;
+      totalCostPnlPercent = (totalCostPnlSol / position.actualCostSol) * 100;
+    }
 
     // Store current value for unrealized PnL tracking
     position.lastCurrentValueSol = currentValueSol;
@@ -264,8 +273,12 @@ export class PumpFunPositionMonitor extends EventEmitter {
       {
         mint: position.tokenMint,
         entryAmountSol: position.entryAmountSol,
+        actualCostSol: position.actualCostSol,
         currentValueSol: currentValueSol.toFixed(4),
-        pnlPercent: pnlPercent.toFixed(2) + '%',
+        bondingCurvePnl: pnlPercent.toFixed(2) + '%',
+        totalCostPnl: totalCostPnlPercent !== undefined
+          ? totalCostPnlPercent.toFixed(2) + '%'
+          : 'N/A',
         holdTimeSec: Math.floor((Date.now() - position.entryTimestamp) / 1000),
       },
       '[pump.fun] Position check',
@@ -308,12 +321,19 @@ export class PumpFunPositionMonitor extends EventEmitter {
     // Determine token program ID based on token type
     const tokenProgramId = position.isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
 
+    // Compute total-cost PnL for reporting
+    let totalCostPnlPercent: number | undefined;
+    if (position.actualCostSol !== undefined && position.actualCostSol > 0) {
+      totalCostPnlPercent = ((currentValueSol - position.actualCostSol) / position.actualCostSol) * 100;
+    }
+
     // Emit trigger event before executing
     const triggerEvent: PumpFunTriggerEvent = {
       type: triggerType,
       position,
       currentValueSol,
       pnlPercent,
+      totalCostPnlPercent,
       reason,
     };
     this.emit('trigger', triggerEvent);
@@ -485,12 +505,21 @@ export class PumpFunPositionMonitor extends EventEmitter {
       reason,
     });
 
+    // Compute total-cost PnL for the close log
+    let totalCostPnl = 'N/A';
+    if (position.actualCostSol !== undefined && position.actualCostSol > 0) {
+      const tcPnl = ((exitValueSol - position.actualCostSol) / position.actualCostSol) * 100;
+      totalCostPnl = tcPnl.toFixed(2) + '%';
+    }
+
     logger.info(
       {
         mint: position.tokenMint,
         entrySol: position.entryAmountSol,
+        actualCostSol: position.actualCostSol,
         exitSol: exitValueSol,
-        pnlPercent: pnlPercent.toFixed(2) + '%',
+        bondingCurvePnl: pnlPercent.toFixed(2) + '%',
+        totalCostPnl,
         reason,
       },
       '[pump.fun] Position closed',
@@ -507,19 +536,27 @@ export class PumpFunPositionMonitor extends EventEmitter {
     totalCurrentValue: number;
     unrealizedPnl: number;
     unrealizedPnlPercent: number;
+    totalActualCost: number;
+    totalCostUnrealizedPnl: number;
+    totalCostUnrealizedPnlPercent: number;
   } {
     let totalEntryValue = 0;
     let totalCurrentValue = 0;
+    let totalActualCost = 0;
 
     for (const position of this.positions.values()) {
       totalEntryValue += position.entryAmountSol;
-      // Use lastCurrentValueSol if available, otherwise fall back to entry value
       totalCurrentValue += position.lastCurrentValueSol ?? position.entryAmountSol;
+      totalActualCost += position.actualCostSol ?? position.entryAmountSol;
     }
 
     const unrealizedPnl = totalCurrentValue - totalEntryValue;
     const unrealizedPnlPercent =
       totalEntryValue > 0 ? (unrealizedPnl / totalEntryValue) * 100 : 0;
+
+    const totalCostUnrealizedPnl = totalCurrentValue - totalActualCost;
+    const totalCostUnrealizedPnlPercent =
+      totalActualCost > 0 ? (totalCostUnrealizedPnl / totalActualCost) * 100 : 0;
 
     return {
       isRunning: this.isRunning,
@@ -528,6 +565,9 @@ export class PumpFunPositionMonitor extends EventEmitter {
       totalCurrentValue,
       unrealizedPnl,
       unrealizedPnlPercent,
+      totalActualCost,
+      totalCostUnrealizedPnl,
+      totalCostUnrealizedPnlPercent,
     };
   }
 }
