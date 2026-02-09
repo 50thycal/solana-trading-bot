@@ -125,8 +125,10 @@ export class ABPipeline {
     this.evictOldMints();
 
     // ── Gate 2: Token age ───────────────────────────────────────────────────
+    // detectedAt is a Unix timestamp in SECONDS (from pumpfun-listener)
     if (this.config.maxTokenAgeSeconds > 0 && detection.detectedAt) {
-      const ageSeconds = (Date.now() - detection.detectedAt) / 1000;
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const ageSeconds = nowSeconds - detection.detectedAt;
       if (ageSeconds > this.config.maxTokenAgeSeconds) {
         return { passed: false, rejectionStage: 'token-age', rejectionReason: `Token age ${ageSeconds.toFixed(0)}s > max ${this.config.maxTokenAgeSeconds}s`, pipelineDurationMs: Date.now() - start };
       }
