@@ -85,8 +85,13 @@ export interface ValidatedConfig {
   momentumMaxChecks: number;
 
   // Test Mode
-  testMode: '' | 'smoke';
+  testMode: '' | 'smoke' | 'ab';
   smokeTestTimeoutMs: number;
+
+  // A/B Test
+  abTestDurationMs: number;
+  abConfigA: string;
+  abConfigB: string;
 
   // Bot Control
   runBot: boolean;
@@ -363,15 +368,20 @@ export function validateConfig(): ValidatedConfig {
 
   // === TEST MODE ===
   const testModeRaw = getEnv('TEST_MODE', '').toLowerCase();
-  const testMode = testModeRaw as '' | 'smoke';
-  if (testModeRaw && testModeRaw !== 'smoke') {
-    errors.push({ variable: 'TEST_MODE', message: `Invalid TEST_MODE: "${testModeRaw}". Must be "smoke" or empty` });
+  const testMode = testModeRaw as '' | 'smoke' | 'ab';
+  if (testModeRaw && testModeRaw !== 'smoke' && testModeRaw !== 'ab') {
+    errors.push({ variable: 'TEST_MODE', message: `Invalid TEST_MODE: "${testModeRaw}". Must be "smoke", "ab", or empty` });
   }
 
   const smokeTestTimeoutMs = requireNumber('SMOKE_TEST_TIMEOUT_MS', 300000);
   if (smokeTestTimeoutMs < 30000) {
     errors.push({ variable: 'SMOKE_TEST_TIMEOUT_MS', message: 'SMOKE_TEST_TIMEOUT_MS must be at least 30000 (30 seconds)' });
   }
+
+  // === A/B TEST ===
+  const abTestDurationMs = requireNumber('AB_TEST_DURATION_MS', 14400000); // 4 hours default
+  const abConfigA = getEnv('AB_CONFIG_A', '');
+  const abConfigB = getEnv('AB_CONFIG_B', '');
 
   // === BOT CONTROL ===
   const runBot = requireBoolean('RUN_BOT', true);
@@ -477,6 +487,9 @@ export function validateConfig(): ValidatedConfig {
     momentumMaxChecks,
     testMode,
     smokeTestTimeoutMs,
+    abTestDurationMs,
+    abConfigA,
+    abConfigB,
     runBot,
   };
 

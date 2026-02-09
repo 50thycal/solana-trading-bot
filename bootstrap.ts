@@ -202,6 +202,32 @@ async function bootstrap(): Promise<void> {
       await new Promise(resolve => setTimeout(resolve, 5_000));
       process.exit(1);
     }
+  } else if (testMode === 'ab') {
+    startupState = 'loading';
+    log('info', 'A/B test mode detected - running A/B paper trade test...');
+
+    try {
+      const { runABTest } = await import('./ab-test');
+      startupState = 'ready';
+      const report = await runABTest();
+
+      log('info', `A/B test complete: Winner=${report.winner}`, {
+        variantA_pnl: report.variantA.realizedPnlSol,
+        variantB_pnl: report.variantB.realizedPnlSol,
+        tokensDetected: report.totalTokensDetected,
+        durationMs: report.durationMs,
+      });
+
+      // Wait for logs to flush
+      await new Promise(resolve => setTimeout(resolve, 10_000));
+      process.exit(0);
+    } catch (error) {
+      startupState = 'failed';
+      startupError = error instanceof Error ? error.message : String(error);
+      log('error', 'A/B test failed with error', { error: startupError });
+      await new Promise(resolve => setTimeout(resolve, 5_000));
+      process.exit(1);
+    }
   } else {
     // Normal startup
     startupState = 'loading';
