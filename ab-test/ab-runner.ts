@@ -173,6 +173,9 @@ export class ABTestRunner {
     // Force-close any remaining active positions (record them as time_exit)
     await this.forceCloseActivePositions();
 
+    // Allow in-flight token handlers to finish before closing DB
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
     // Complete session in DB
     this.store.completeSession(this.config.sessionId, this.tokensDetected);
 
