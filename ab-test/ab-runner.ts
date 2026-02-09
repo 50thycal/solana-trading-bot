@@ -18,7 +18,7 @@ import { PaperTradeTracker, PaperTrade } from '../risk/paper-trade-tracker';
 import { PumpFunListener } from '../listeners/pumpfun-listener';
 import { DetectedToken } from '../types';
 import { DetectionEvent } from '../pipeline/types';
-import { getBondingCurveState } from '../helpers/pumpfun';
+import { getBondingCurveState, BondingCurveState } from '../helpers/pumpfun';
 import { logger } from '../helpers';
 import { getConfig } from '../helpers/config-validator';
 
@@ -194,7 +194,7 @@ export class ABTestRunner {
     const detection = toDetectionEvent(token);
 
     // Share the bonding curve fetch between both variants to save RPC calls
-    let sharedState = undefined;
+    let sharedState: BondingCurveState | null | undefined = undefined;
     try {
       sharedState = await getBondingCurveState(this.connection, detection.bondingCurve);
     } catch {
@@ -222,7 +222,7 @@ export class ABTestRunner {
     pipeline: ABPipeline,
     tracker: PaperTradeTracker,
     detection: DetectionEvent,
-    sharedState: import('../helpers/pumpfun').BondingCurveState | null | undefined,
+    sharedState: BondingCurveState | null | undefined,
   ): Promise<void> {
     const result = await pipeline.process(detection, sharedState);
 
