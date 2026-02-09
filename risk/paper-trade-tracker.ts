@@ -7,6 +7,7 @@
  */
 
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { EventEmitter } from 'events';
 import {
   decodeBondingCurveState,
   calculateBuyTokensOut,
@@ -121,7 +122,7 @@ const MAX_PAPER_TRADES = 100;
 // PAPER TRADE TRACKER CLASS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export class PaperTradeTracker {
+export class PaperTradeTracker extends EventEmitter {
   private activeTrades: Map<string, PaperTrade> = new Map();
   private closedTrades: PaperTrade[] = [];
   private connection: Connection;
@@ -130,6 +131,7 @@ export class PaperTradeTracker {
   private isMonitoringActive: boolean = false;
 
   constructor(connection: Connection, monitorConfig?: PaperMonitorConfig) {
+    super();
     this.connection = connection;
     if (monitorConfig) {
       this.monitorConfig = monitorConfig;
@@ -356,6 +358,9 @@ export class PaperTradeTracker {
     // Move from active to closed
     this.activeTrades.delete(trade.mint);
     this.closedTrades.push(closedTrade);
+
+    // Emit event for A/B test framework and other listeners
+    this.emit('trade-closed', closedTrade);
 
     const reasonDisplayMap: Record<PaperCloseReason, string> = {
       take_profit: 'TP Hit',
