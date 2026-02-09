@@ -108,6 +108,17 @@ export class ABReportGenerator {
     const sB = report.variantB;
     lines.push(this.tableRow('Pipeline Passed', String(sA.totalPipelinePassed), String(sB.totalPipelinePassed)));
     lines.push(this.tableRow('Pipeline Rejected', String(sA.totalPipelineRejected), String(sB.totalPipelineRejected)));
+
+    // Rejection breakdown by stage
+    const allStages = new Set([...Object.keys(sA.rejectionBreakdown), ...Object.keys(sB.rejectionBreakdown)]);
+    if (allStages.size > 0) {
+      for (const stage of allStages) {
+        const countA = sA.rejectionBreakdown[stage] || 0;
+        const countB = sB.rejectionBreakdown[stage] || 0;
+        lines.push(this.tableRow(`  Rej: ${stage}`, String(countA), String(countB)));
+      }
+    }
+
     lines.push(this.tableRow('Trades Entered', String(sA.totalTradesEntered), String(sB.totalTradesEntered)));
     lines.push(this.tableRow('Trades Closed', String(sA.totalTradesClosed), String(sB.totalTradesClosed)));
     lines.push(this.tableRow('Trades Active', String(sA.totalTradesActive), String(sB.totalTradesActive)));
@@ -168,6 +179,13 @@ export class ABReportGenerator {
     const passedDecisions = decisions.filter(d => d.passed);
     const rejectedDecisions = decisions.filter(d => !d.passed);
 
+    // Build rejection breakdown by stage
+    const rejectionBreakdown: Record<string, number> = {};
+    for (const d of rejectedDecisions) {
+      const stage = d.rejectionStage || 'unknown';
+      rejectionBreakdown[stage] = (rejectionBreakdown[stage] || 0) + 1;
+    }
+
     // P&L
     const totalSolDeployed = closedTrades.reduce((sum, t) => sum + t.hypotheticalSolSpent, 0);
     const totalSolReturned = closedTrades.reduce((sum, t) => sum + (t.exitSolReceived || 0), 0);
@@ -207,6 +225,7 @@ export class ABReportGenerator {
       totalTokensSeen: decisions.length,
       totalPipelinePassed: passedDecisions.length,
       totalPipelineRejected: rejectedDecisions.length,
+      rejectionBreakdown,
       totalTradesEntered: trades.length,
       totalTradesClosed: closedTrades.length,
       totalTradesActive: activeTrades.length,

@@ -160,6 +160,7 @@ export interface ABVariantSummary {
   totalTokensSeen: number;
   totalPipelinePassed: number;
   totalPipelineRejected: number;
+  rejectionBreakdown: Record<string, number>;
 
   // Trades
   totalTradesEntered: number;
