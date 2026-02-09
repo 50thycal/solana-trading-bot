@@ -87,6 +87,7 @@ const SCHEMA_SQL = `
 
 export class ABTestStore {
   private db: DatabaseType;
+  private closed = false;
 
   constructor(dataDir: string) {
     const dbPath = path.join(dataDir, 'ab-test.db');
@@ -180,6 +181,7 @@ export class ABTestStore {
   // ── Pipeline Decision Operations ─────────────────────────────────────────
 
   recordPipelineDecision(decision: Omit<ABPipelineDecision, 'id'>): void {
+    if (this.closed) return;
     const id = `abd_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     this.db.prepare(`
       INSERT INTO ab_pipeline_decisions (id, session_id, variant, token_mint, token_name, token_symbol, timestamp, passed, rejection_stage, rejection_reason, pipeline_duration_ms)
@@ -230,6 +232,7 @@ export class ABTestStore {
   // ── Trade Operations ─────────────────────────────────────────────────────
 
   recordTradeEntry(trade: Omit<ABTradeResult, 'id' | 'status'>): string {
+    if (this.closed) return '';
     const id = `abt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     this.db.prepare(`
       INSERT INTO ab_trades (id, session_id, variant, token_mint, token_name, token_symbol, entry_timestamp, hypothetical_sol_spent, hypothetical_tokens_received, entry_price_per_token, pipeline_duration_ms, status)
@@ -250,7 +253,7 @@ export class ABTestStore {
     return id;
   }
 
-  recordTradeExit(tradeId: string, exitData: {
+  recordTradeExit(tradeId: string | null, exitData: {
     exitTimestamp: number;
     exitReason: string;
     exitPricePerToken: number;
@@ -259,6 +262,7 @@ export class ABTestStore {
     realizedPnlPercent: number;
     holdDurationMs: number;
   }): void {
+    if (this.closed || !tradeId) return;
     this.db.prepare(`
       UPDATE ab_trades
       SET status = 'closed',
@@ -330,6 +334,7 @@ export class ABTestStore {
   // ── Cleanup ──────────────────────────────────────────────────────────────
 
   close(): void {
+    this.closed = true;
     this.db.close();
   }
 }
