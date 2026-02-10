@@ -74,11 +74,28 @@ const SCHEMA_SQL = `
     FOREIGN KEY (session_id) REFERENCES ab_sessions(session_id)
   );
 
+  -- Parameter diffs: which params changed per session and which value won
+  CREATE TABLE IF NOT EXISTS ab_parameter_diffs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    param_name TEXT NOT NULL,
+    value_a REAL NOT NULL,
+    value_b REAL NOT NULL,
+    winner TEXT,
+    winner_value REAL,
+    pnl_a REAL,
+    pnl_b REAL,
+    pnl_difference REAL,
+    FOREIGN KEY (session_id) REFERENCES ab_sessions(session_id)
+  );
+
   -- Indexes
   CREATE INDEX IF NOT EXISTS idx_ab_trades_session ON ab_trades(session_id, variant);
   CREATE INDEX IF NOT EXISTS idx_ab_trades_status ON ab_trades(status);
   CREATE INDEX IF NOT EXISTS idx_ab_decisions_session ON ab_pipeline_decisions(session_id, variant);
   CREATE INDEX IF NOT EXISTS idx_ab_sessions_status ON ab_sessions(status);
+  CREATE INDEX IF NOT EXISTS idx_ab_param_diffs_session ON ab_parameter_diffs(session_id);
+  CREATE INDEX IF NOT EXISTS idx_ab_param_diffs_param ON ab_parameter_diffs(param_name);
 `;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -329,6 +346,143 @@ export class ABTestStore {
     ).get(sessionId, variant, tokenMint) as any;
 
     return row?.id ?? null;
+  }
+
+  // ── Parameter Diff Operations ────────────────────────────────────────────
+
+  saveParameterDiffs(sessionId: string, diffs: Array<{
+    paramName: string;
+    valueA: number;
+    valueB: number;
+    winner: 'A' | 'B' | 'tie';
+    winnerValue: number;
+    pnlA: number;
+    pnlB: number;
+    pnlDifference: number;
+  }>): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO ab_parameter_diffs (session_id, param_name, value_a, value_b, winner, winner_value, pnl_a, pnl_b, pnl_difference)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertMany = this.db.transaction((items: typeof diffs) => {
+      for (const d of items) {
+        stmt.run(sessionId, d.paramName, d.valueA, d.valueB, d.winner, d.winnerValue, d.pnlA, d.pnlB, d.pnlDifference);
+      }
+    });
+
+    insertMany(diffs);
+  }
+
+  getParameterDiffs(sessionId: string): Array<{
+    paramName: string;
+    valueA: number;
+    valueB: number;
+    winner: string;
+    winnerValue: number;
+    pnlA: number;
+    pnlB: number;
+    pnlDifference: number;
+  }> {
+    const rows = this.db.prepare(
+      'SELECT * FROM ab_parameter_diffs WHERE session_id = ? ORDER BY ABS(pnl_difference) DESC'
+    ).all(sessionId) as any[];
+
+    return rows.map(row => ({
+      paramName: row.param_name,
+      valueA: row.value_a,
+      valueB: row.value_b,
+      winner: row.winner,
+      winnerValue: row.winner_value,
+      pnlA: row.pnl_a,
+      pnlB: row.pnl_b,
+      pnlDifference: row.pnl_difference,
+    }));
+  }
+
+  /** Get all parameter diffs across all sessions for a given param */
+  getParameterHistory(paramName: string): Array<{
+    sessionId: string;
+    valueA: number;
+    valueB: number;
+    winner: string;
+    winnerValue: number;
+    pnlDifference: number;
+    startedAt: number;
+  }> {
+    const rows = this.db.prepare(`
+      SELECT d.*, s.started_at
+      FROM ab_parameter_diffs d
+      JOIN ab_sessions s ON d.session_id = s.session_id
+      WHERE d.param_name = ? AND s.status = 'completed'
+      ORDER BY s.started_at DESC
+    `).all(paramName) as any[];
+
+    return rows.map(row => ({
+      sessionId: row.session_id,
+      valueA: row.value_a,
+      valueB: row.value_b,
+      winner: row.winner,
+      winnerValue: row.winner_value,
+      pnlDifference: row.pnl_difference,
+      startedAt: row.started_at,
+    }));
+  }
+
+  /** Get all unique parameter names that have been tested */
+  getTestedParameters(): string[] {
+    const rows = this.db.prepare(
+      'SELECT DISTINCT param_name FROM ab_parameter_diffs ORDER BY param_name'
+    ).all() as any[];
+
+    return rows.map(row => row.param_name);
+  }
+
+  /** Get completed sessions with summary PnL data */
+  getCompletedSessionsWithPnl(): Array<{
+    sessionId: string;
+    description?: string;
+    startedAt: number;
+    completedAt: number;
+    durationMs: number;
+    totalTokensDetected: number;
+    configA: ABVariantConfig;
+    configB: ABVariantConfig;
+    pnlA: number;
+    pnlB: number;
+    winner: string;
+  }> {
+    const sessions = this.db.prepare(
+      "SELECT * FROM ab_sessions WHERE status = 'completed' ORDER BY started_at DESC"
+    ).all() as any[];
+
+    return sessions.map(session => {
+      // Calculate PnL for each variant from trades
+      const tradesA = this.db.prepare(
+        "SELECT COALESCE(SUM(exit_sol_received), 0) - COALESCE(SUM(hypothetical_sol_spent), 0) as pnl FROM ab_trades WHERE session_id = ? AND variant = 'A' AND status = 'closed'"
+      ).get(session.session_id) as any;
+
+      const tradesB = this.db.prepare(
+        "SELECT COALESCE(SUM(exit_sol_received), 0) - COALESCE(SUM(hypothetical_sol_spent), 0) as pnl FROM ab_trades WHERE session_id = ? AND variant = 'B' AND status = 'closed'"
+      ).get(session.session_id) as any;
+
+      const pnlA = tradesA?.pnl || 0;
+      const pnlB = tradesB?.pnl || 0;
+
+      return {
+        sessionId: session.session_id,
+        description: session.description ?? undefined,
+        startedAt: session.started_at,
+        completedAt: session.completed_at,
+        durationMs: session.duration_ms,
+        totalTokensDetected: session.total_tokens_detected || 0,
+        configA: JSON.parse(session.config_a),
+        configB: JSON.parse(session.config_b),
+        pnlA,
+        pnlB,
+        winner: pnlA > pnlB ? 'A' : pnlB > pnlA ? 'B' : 'tie',
+      };
+    });
   }
 
   // ── Cleanup ──────────────────────────────────────────────────────────────
