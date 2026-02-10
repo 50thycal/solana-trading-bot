@@ -158,7 +158,7 @@ export class JitoTransactionExecutor implements TransactionExecutor {
       if (error instanceof AxiosError) {
         logger.trace({ error: error.response?.data }, 'Failed to execute jito transaction');
       }
-      logger.error('Error during transaction execution', error);
+      logger.error({ error: error instanceof Error ? error.message : String(error) }, 'Error during transaction execution');
       return { confirmed: false, error: error instanceof Error ? error.message : String(error) };
     }
   }

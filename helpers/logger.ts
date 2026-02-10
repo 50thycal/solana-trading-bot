@@ -21,7 +21,16 @@ const transport = logFormat === 'compact'
 export const logger = pino(
   {
     level: 'info',
-    redact: ['poolKeys'],
+    redact: {
+      paths: [
+        'poolKeys',
+        'privateKey', 'secretKey', 'secret',
+        'apiKey', 'api_key', 'authorization',
+        '*.privateKey', '*.secretKey', '*.secret',
+        '*.apiKey', '*.api_key', '*.authorization',
+      ],
+      censor: '[REDACTED]',
+    },
     serializers: {
       error: pino.stdSerializers.err,
     },
