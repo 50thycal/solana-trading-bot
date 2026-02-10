@@ -49,6 +49,7 @@ import {
   PUMPFUN_ENABLE_MAX_SOL_FILTER,
   PUMPFUN_MIN_SCORE_REQUIRED,
   RUN_BOT,
+  PRODUCTION_TIME_LIMIT_MS,
 } from './helpers';
 import {
   buyOnPumpFun,
@@ -183,6 +184,13 @@ function printDetails(wallet: Keypair, bot: Bot) {
   logger.info('- pump.fun Filters -');
   logger.info(`Min SOL in curve: ${PUMPFUN_MIN_SOL_IN_CURVE}`);
   logger.info(`Max SOL in curve: ${PUMPFUN_MAX_SOL_IN_CURVE}`);
+
+  // Time limit
+  if (PRODUCTION_TIME_LIMIT_MS > 0) {
+    logger.info(`Production time limit: ${(PRODUCTION_TIME_LIMIT_MS / 60000).toFixed(0)} minutes`);
+  } else {
+    logger.info('Production time limit: disabled (runs indefinitely)');
+  }
 
   logger.info('------- CONFIGURATION END -------');
 
@@ -933,6 +941,24 @@ const runListener = async () => {
   }
 
   printDetails(wallet, bot!);
+
+  // === Production Time Limit ===
+  if (PRODUCTION_TIME_LIMIT_MS > 0) {
+    const minutes = (PRODUCTION_TIME_LIMIT_MS / 60000).toFixed(0);
+    const hours = (PRODUCTION_TIME_LIMIT_MS / 3600000).toFixed(2);
+    logger.info(
+      { timeLimitMs: PRODUCTION_TIME_LIMIT_MS, timeLimitMinutes: minutes, timeLimitHours: hours },
+      `Production time limit set: bot will shut down in ${minutes} minutes (${hours} hours)`,
+    );
+
+    setTimeout(() => {
+      logger.info(
+        { timeLimitMs: PRODUCTION_TIME_LIMIT_MS },
+        'Production time limit reached - initiating graceful shutdown',
+      );
+      gracefulShutdown('PRODUCTION_TIME_LIMIT');
+    }, PRODUCTION_TIME_LIMIT_MS);
+  }
 
   // Periodic heartbeat
   const heartbeatIntervalMs = 5 * 60 * 1000;
