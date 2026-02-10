@@ -109,5 +109,10 @@ export const AB_TEST_DURATION_MS = config.abTestDurationMs;
 export const AB_CONFIG_A = config.abConfigA;
 export const AB_CONFIG_B = config.abConfigB;
 
+// ============================================================================
+// PRODUCTION TIME LIMIT
+// ============================================================================
+export const PRODUCTION_TIME_LIMIT_MS = config.productionTimeLimitMs;
+
 // Export the full config for advanced use cases
 export { config as validatedConfig };

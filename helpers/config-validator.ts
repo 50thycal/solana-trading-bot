@@ -95,6 +95,9 @@ export interface ValidatedConfig {
 
   // Bot Control
   runBot: boolean;
+
+  // Production Time Limit
+  productionTimeLimitMs: number;
 }
 
 interface ValidationError {
@@ -383,6 +386,16 @@ export function validateConfig(): ValidatedConfig {
   const abConfigA = getEnv('AB_CONFIG_A', '');
   const abConfigB = getEnv('AB_CONFIG_B', '');
 
+  // === PRODUCTION TIME LIMIT ===
+  const productionTimeLimitMinutes = requireNumber('PRODUCTION_TIME_LIMIT_MINUTES', 0);
+  if (productionTimeLimitMinutes < 0) {
+    errors.push({ variable: 'PRODUCTION_TIME_LIMIT_MINUTES', message: 'PRODUCTION_TIME_LIMIT_MINUTES cannot be negative' });
+  }
+  if (productionTimeLimitMinutes > 0 && productionTimeLimitMinutes < 1) {
+    errors.push({ variable: 'PRODUCTION_TIME_LIMIT_MINUTES', message: 'PRODUCTION_TIME_LIMIT_MINUTES must be at least 1 minute when set, or 0 to disable' });
+  }
+  const productionTimeLimitMs = productionTimeLimitMinutes * 60000;
+
   // === BOT CONTROL ===
   const runBot = requireBoolean('RUN_BOT', true);
 
@@ -491,6 +504,7 @@ export function validateConfig(): ValidatedConfig {
     abConfigA,
     abConfigB,
     runBot,
+    productionTimeLimitMs,
   };
 
   // Log dry run mode warning
