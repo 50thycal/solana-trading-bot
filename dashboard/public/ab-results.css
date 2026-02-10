@@ -1,0 +1,572 @@
+/* A/B Results Page Styles */
+
+/* Tab Navigation */
+.ab-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 1.5rem;
+  border-bottom: 2px solid var(--border-color);
+  overflow-x: auto;
+}
+
+.ab-tab {
+  padding: 0.75rem 1.25rem;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.ab-tab:hover {
+  color: var(--text-primary);
+}
+
+.ab-tab.active {
+  color: var(--accent-blue);
+  border-bottom-color: var(--accent-blue);
+}
+
+.ab-tab-content {
+  display: none;
+}
+
+.ab-tab-content.active {
+  display: block;
+}
+
+/* Session List */
+.session-list {
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: background 0.15s;
+  gap: 1rem;
+}
+
+.session-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.session-item:last-child {
+  border-bottom: none;
+}
+
+.session-winner-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.session-winner-dot.winner-a {
+  background: var(--accent-blue);
+  box-shadow: 0 0 6px var(--accent-blue);
+}
+
+.session-winner-dot.winner-b {
+  background: var(--accent-purple);
+  box-shadow: 0 0 6px var(--accent-purple);
+}
+
+.session-winner-dot.winner-tie {
+  background: var(--text-muted);
+}
+
+.session-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-date {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.session-description {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: 0.125rem;
+}
+
+.session-params-tested {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.375rem;
+}
+
+.param-tag {
+  font-size: 0.625rem;
+  padding: 0.125rem 0.375rem;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.session-result {
+  text-align: right;
+  flex-shrink: 0;
+  min-width: 120px;
+}
+
+.session-winner-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.session-winner-label.winner-a {
+  color: var(--accent-blue);
+}
+
+.session-winner-label.winner-b {
+  color: var(--accent-purple);
+}
+
+.session-winner-label.winner-tie {
+  color: var(--text-muted);
+}
+
+.session-pnl-diff {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  margin-top: 0.125rem;
+}
+
+.session-duration {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  margin-top: 0.125rem;
+}
+
+/* Impact Ranking */
+.impact-ranking {
+  padding: 0;
+}
+
+.impact-item {
+  display: flex;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: background 0.15s;
+  gap: 1rem;
+}
+
+.impact-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.impact-item:last-child {
+  border-bottom: none;
+}
+
+.impact-rank {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  min-width: 30px;
+  text-align: center;
+}
+
+.impact-rank.rank-1 { color: var(--accent-yellow); }
+.impact-rank.rank-2 { color: var(--text-secondary); }
+.impact-rank.rank-3 { color: #cd7f32; }
+
+.impact-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.impact-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.impact-meta {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.impact-bar-container {
+  width: 120px;
+  flex-shrink: 0;
+}
+
+.impact-bar {
+  height: 8px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.impact-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+
+.impact-values {
+  text-align: right;
+  flex-shrink: 0;
+  min-width: 100px;
+}
+
+.impact-avg-pnl {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--accent-yellow);
+}
+
+.impact-best-value {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  margin-top: 0.125rem;
+}
+
+/* Parameter Detail */
+.param-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.param-history-table th {
+  text-align: left;
+  padding: 0.75rem 1rem;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+}
+
+.param-history-table td {
+  padding: 0.625rem 1rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.param-history-table tr:last-child td {
+  border-bottom: none;
+}
+
+.param-history-table .winner-cell {
+  font-weight: 600;
+}
+
+.param-history-table .winner-cell.winner-a {
+  color: var(--accent-blue);
+}
+
+.param-history-table .winner-cell.winner-b {
+  color: var(--accent-purple);
+}
+
+.param-history-table .winner-cell.winner-tie {
+  color: var(--text-muted);
+}
+
+/* Best Config Grid */
+.best-config-grid {
+  padding: 1rem;
+}
+
+.config-param-row {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+  gap: 0.75rem;
+}
+
+.config-param-row:last-child {
+  border-bottom: none;
+}
+
+.config-param-name {
+  flex: 1;
+  font-size: 0.875rem;
+  min-width: 0;
+}
+
+.config-param-value {
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-family: monospace;
+  min-width: 80px;
+  text-align: right;
+}
+
+.config-confidence-badge {
+  display: inline-block;
+  font-size: 0.6rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  font-weight: 600;
+  text-transform: uppercase;
+  min-width: 50px;
+  text-align: center;
+}
+
+.config-confidence-badge.high {
+  background: rgba(0, 200, 83, 0.2);
+  color: var(--accent-green);
+  border: 1px solid var(--accent-green);
+}
+
+.config-confidence-badge.medium {
+  background: rgba(255, 193, 7, 0.2);
+  color: var(--accent-yellow);
+  border: 1px solid var(--accent-yellow);
+}
+
+.config-confidence-badge.low {
+  background: rgba(139, 152, 165, 0.1);
+  color: var(--text-muted);
+  border: 1px solid var(--text-muted);
+}
+
+.config-sessions-count {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  min-width: 60px;
+  text-align: right;
+}
+
+/* Test Suggestions */
+.suggestion-list {
+  padding: 0;
+}
+
+.suggestion-item {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.suggestion-item:last-child {
+  border-bottom: none;
+}
+
+.suggestion-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.375rem;
+}
+
+.suggestion-priority {
+  display: inline-block;
+  font-size: 0.6rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.suggestion-priority.high {
+  background: var(--accent-red);
+  color: white;
+}
+
+.suggestion-priority.medium {
+  background: var(--accent-yellow);
+  color: var(--bg-primary);
+}
+
+.suggestion-priority.low {
+  background: var(--text-muted);
+  color: white;
+}
+
+.suggestion-param {
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.suggestion-reason {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.suggestion-values {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.8rem;
+}
+
+.suggestion-value {
+  padding: 0.375rem 0.75rem;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  font-family: monospace;
+}
+
+.suggestion-value .label {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  margin-right: 0.375rem;
+}
+
+/* Session Detail */
+.session-detail-header {
+  padding: 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.session-detail-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.session-detail-meta {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.comparison-table th {
+  text-align: left;
+  padding: 0.625rem 1rem;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.comparison-table td {
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.comparison-table tr:last-child td {
+  border-bottom: none;
+}
+
+.comparison-table .section-row td {
+  background: var(--bg-tertiary);
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.5rem 1rem;
+}
+
+.comparison-table .diff-highlight td:nth-child(2),
+.comparison-table .diff-highlight td:nth-child(3) {
+  color: var(--accent-yellow);
+}
+
+.comparison-table .pnl-positive {
+  color: var(--accent-green);
+  font-weight: 600;
+}
+
+.comparison-table .pnl-negative {
+  color: var(--accent-red);
+  font-weight: 600;
+}
+
+.winner-banner {
+  padding: 1rem 1.25rem;
+  background: linear-gradient(135deg, rgba(33, 150, 243, 0.1), rgba(156, 39, 176, 0.1));
+  border-top: 1px solid var(--border-color);
+  text-align: center;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.winner-banner.winner-a {
+  border-left: 4px solid var(--accent-blue);
+}
+
+.winner-banner.winner-b {
+  border-left: 4px solid var(--accent-purple);
+}
+
+.winner-banner.winner-tie {
+  border-left: 4px solid var(--text-muted);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .ab-tabs {
+    gap: 0;
+  }
+
+  .ab-tab {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.75rem;
+  }
+
+  .session-item {
+    flex-wrap: wrap;
+  }
+
+  .session-result {
+    min-width: auto;
+  }
+
+  .impact-bar-container {
+    display: none;
+  }
+
+  .comparison-table {
+    font-size: 0.7rem;
+  }
+
+  .comparison-table th,
+  .comparison-table td {
+    padding: 0.375rem 0.5rem;
+  }
+}
+
+/* No data state */
+.no-data-message {
+  padding: 3rem 2rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.no-data-message h3 {
+  margin-bottom: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.no-data-message p {
+  font-size: 0.875rem;
+  max-width: 400px;
+  margin: 0 auto;
+  line-height: 1.6;
+}

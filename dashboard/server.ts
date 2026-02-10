@@ -18,6 +18,9 @@ import { getPaperTradeTracker } from '../risk';
 import { getTradeAuditManager } from '../helpers/trade-audit';
 import { getSmokeTestReport } from '../smoke-test';
 import { getLogSummarizer } from '../helpers/log-summarizer';
+import { ABTestStore } from '../ab-test/ab-store';
+import { ABReportGenerator } from '../ab-test/ab-report';
+import { ABAnalyzer } from '../ab-test/ab-analyzer';
 
 /**
  * Dashboard server configuration
@@ -285,9 +288,22 @@ export class DashboardServer {
           data = this.getApiLogSummaries();
           break;
 
+        case '/api/ab-results/analysis':
+          data = this.getAbResultsAnalysis();
+          break;
+
+        case '/api/ab-results/sessions':
+          data = this.getAbResultsSessions();
+          break;
+
         default:
+          // Check for /api/ab-results/session/:id pattern
+          if (pathname.startsWith('/api/ab-results/session/')) {
+            const sessionId = pathname.substring('/api/ab-results/session/'.length);
+            data = this.getAbResultsSessionDetail(sessionId);
+          }
           // Check for /api/pools/:id pattern
-          if (pathname.startsWith('/api/pools/')) {
+          else if (pathname.startsWith('/api/pools/')) {
             const id = pathname.substring('/api/pools/'.length);
             data = this.getApiPoolById(id);
           } else {
@@ -931,12 +947,86 @@ export class DashboardServer {
   }
 
   // ============================================================
+  // A/B TEST RESULTS ENDPOINTS
+  // ============================================================
+
+  /**
+   * Open a read-only ABTestStore connection.
+   * Returns null if no AB test database exists yet.
+   */
+  private openAbStore(): ABTestStore | null {
+    try {
+      const { getConfig } = require('../helpers/config-validator');
+      const config = getConfig();
+      const dbPath = require('path').join(config.dataDir, 'ab-test.db');
+      if (!require('fs').existsSync(dbPath)) return null;
+      return new ABTestStore(config.dataDir);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * GET /api/ab-results/analysis - Cross-session analysis
+   */
+  private getAbResultsAnalysis() {
+    const store = this.openAbStore();
+    if (!store) {
+      return { error: 'No A/B test data found', totalSessions: 0 };
+    }
+
+    try {
+      const analyzer = new ABAnalyzer(store);
+      return analyzer.analyze();
+    } finally {
+      store.close();
+    }
+  }
+
+  /**
+   * GET /api/ab-results/sessions - List all sessions
+   */
+  private getAbResultsSessions() {
+    const store = this.openAbStore();
+    if (!store) {
+      return { sessions: [] };
+    }
+
+    try {
+      return { sessions: store.getAllSessions() };
+    } finally {
+      store.close();
+    }
+  }
+
+  /**
+   * GET /api/ab-results/session/:id - Full session report
+   */
+  private getAbResultsSessionDetail(sessionId: string) {
+    const store = this.openAbStore();
+    if (!store) {
+      return { error: 'No A/B test data found' };
+    }
+
+    try {
+      const reportGen = new ABReportGenerator(store);
+      return reportGen.generate(sessionId);
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Session not found' };
+    } finally {
+      store.close();
+    }
+  }
+
+  // ============================================================
   // STATIC FILE SERVING
   // ============================================================
 
   private async handleStaticFile(pathname: string, res: http.ServerResponse): Promise<void> {
-    // Default to index.html for root
-    let filePath = pathname === '/' ? '/index.html' : pathname;
+    // Default to index.html for root, and handle known page routes
+    let filePath = pathname === '/' ? '/index.html'
+      : pathname === '/ab-results' ? '/ab-results.html'
+      : pathname;
 
     // Security: prevent directory traversal
     filePath = path.normalize(filePath).replace(/^(\.\.[\/\\])+/, '');

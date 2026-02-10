@@ -14,6 +14,7 @@ import { ABTestConfig, ABTestReport } from './types';
 import { ABPipeline } from './ab-pipeline';
 import { ABTestStore } from './ab-store';
 import { ABReportGenerator } from './ab-report';
+import { ABAnalyzer } from './ab-analyzer';
 import { PaperTradeTracker, PaperTrade } from '../risk/paper-trade-tracker';
 import { PumpFunListener } from '../listeners/pumpfun-listener';
 import { DetectedToken } from '../types';
@@ -182,6 +183,20 @@ export class ABTestRunner {
     // Generate report
     const report = this.reportGenerator.generate(this.config.sessionId);
     this.reportGenerator.printReport(report);
+
+    // Compute and save parameter diffs for cross-session analysis
+    try {
+      const analyzer = new ABAnalyzer(this.store);
+      analyzer.computeAndSaveParameterDiffs(
+        this.config.sessionId,
+        this.config.variantA,
+        this.config.variantB,
+        report.variantA.realizedPnlSol,
+        report.variantB.realizedPnlSol,
+      );
+    } catch (err) {
+      logger.error({ error: err }, '[ab-runner] Failed to compute parameter diffs');
+    }
 
     // Cleanup
     this.store.close();

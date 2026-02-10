@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>A/B Test Results</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/ab-results.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-left">
+        <h1>A/B Test Results</h1>
+        <span class="header-badge">Analysis</span>
+      </div>
+      <div class="header-right">
+        <a href="/" class="btn btn-secondary btn-small">Back to Dashboard</a>
+      </div>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="ab-tabs">
+      <button class="ab-tab active" data-tab="overview">Overview</button>
+      <button class="ab-tab" data-tab="analysis">Parameter Analysis</button>
+      <button class="ab-tab" data-tab="recommendations">Recommendations</button>
+      <button class="ab-tab" data-tab="session-detail">Session Detail</button>
+    </div>
+
+    <!-- OVERVIEW TAB -->
+    <div id="tab-overview" class="ab-tab-content active">
+      <!-- Summary Cards -->
+      <div class="overview-cards">
+        <div class="card">
+          <div class="card-label">Sessions Completed</div>
+          <div class="card-value" id="total-sessions">--</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Parameters Tested</div>
+          <div class="card-value" id="params-tested">--</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Most Impactful Param</div>
+          <div class="card-value" id="top-param" style="font-size:1rem">--</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Config Confidence</div>
+          <div class="card-value" id="config-confidence">--</div>
+        </div>
+      </div>
+
+      <!-- Session History -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Session History</h2>
+          <span class="panel-subtitle">All completed A/B tests</span>
+        </div>
+        <div id="session-list" class="session-list">
+          <div class="empty-state">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PARAMETER ANALYSIS TAB -->
+    <div id="tab-analysis" class="ab-tab-content">
+      <!-- Impact Ranking -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Parameter Impact Ranking</h2>
+          <span class="panel-subtitle">Sorted by average PnL impact across sessions</span>
+        </div>
+        <div id="impact-ranking" class="impact-ranking">
+          <div class="empty-state">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Parameter Detail (shown when clicking a parameter) -->
+      <div id="param-detail-panel" class="panel" style="display:none; margin-top:1rem;">
+        <div class="panel-header">
+          <h2 id="param-detail-title">Parameter Detail</h2>
+          <button class="btn btn-secondary btn-small" onclick="closeParamDetail()">Close</button>
+        </div>
+        <div id="param-detail-body"></div>
+      </div>
+    </div>
+
+    <!-- RECOMMENDATIONS TAB -->
+    <div id="tab-recommendations" class="ab-tab-content">
+      <!-- Best Known Config -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Best Known Configuration</h2>
+          <span class="panel-subtitle" id="config-confidence-label">Based on all completed sessions</span>
+        </div>
+        <div id="best-config" class="best-config-grid">
+          <div class="empty-state">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Test Suggestions -->
+      <div class="panel" style="margin-top:1rem;">
+        <div class="panel-header">
+          <h2>What to Test Next</h2>
+          <span class="panel-subtitle">Suggested A/B tests to improve confidence</span>
+        </div>
+        <div id="test-suggestions">
+          <div class="empty-state">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SESSION DETAIL TAB -->
+    <div id="tab-session-detail" class="ab-tab-content">
+      <div id="session-detail-content">
+        <div class="empty-state">Select a session from the Overview tab to view details</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/ab-results.js"></script>
+</body>
+</html>
