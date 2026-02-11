@@ -597,7 +597,7 @@ export class DashboardServer {
         maxTotalExposureSol: config.maxTotalExposureSol,
         maxTradesPerHour: config.maxTradesPerHour,
         minWalletBufferSol: config.minWalletBufferSol,
-        maxHoldDurationMs: config.maxHoldDurationMs,
+        maxHoldDurationMinutes: config.maxHoldDurationMs / 60000,
       },
       execution: {
         executor: config.transactionExecutor,

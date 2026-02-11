@@ -54,14 +54,14 @@ function parseVariantConfig(jsonStr: string, name: string): ABVariantConfig {
     name,
     takeProfit: num(parsed.takeProfit, DEFAULT_VARIANT_CONFIG.takeProfit),
     stopLoss: num(parsed.stopLoss, DEFAULT_VARIANT_CONFIG.stopLoss),
-    maxHoldDurationMs: num(parsed.maxHoldDurationMs, DEFAULT_VARIANT_CONFIG.maxHoldDurationMs),
-    priceCheckIntervalMs: num(parsed.priceCheckIntervalMs, DEFAULT_VARIANT_CONFIG.priceCheckIntervalMs),
+    maxHoldDurationMs: Math.round(num(parsed.maxHoldDurationMinutes, DEFAULT_VARIANT_CONFIG.maxHoldDurationMs / 60000) * 60000),
+    priceCheckIntervalMs: Math.round(num(parsed.priceCheckIntervalMinutes, DEFAULT_VARIANT_CONFIG.priceCheckIntervalMs / 60000) * 60000),
     momentumMinTotalBuys: num(parsed.momentumMinTotalBuys, DEFAULT_VARIANT_CONFIG.momentumMinTotalBuys),
     pumpfunMinSolInCurve: num(parsed.pumpfunMinSolInCurve, DEFAULT_VARIANT_CONFIG.pumpfunMinSolInCurve),
     pumpfunMaxSolInCurve: num(parsed.pumpfunMaxSolInCurve, DEFAULT_VARIANT_CONFIG.pumpfunMaxSolInCurve),
     maxTokenAgeSeconds: num(parsed.maxTokenAgeSeconds, DEFAULT_VARIANT_CONFIG.maxTokenAgeSeconds),
-    momentumInitialDelayMs: num(parsed.momentumInitialDelayMs, DEFAULT_VARIANT_CONFIG.momentumInitialDelayMs),
-    momentumRecheckIntervalMs: num(parsed.momentumRecheckIntervalMs, DEFAULT_VARIANT_CONFIG.momentumRecheckIntervalMs),
+    momentumInitialDelayMs: Math.round(num(parsed.momentumInitialDelayMinutes, DEFAULT_VARIANT_CONFIG.momentumInitialDelayMs / 60000) * 60000),
+    momentumRecheckIntervalMs: Math.round(num(parsed.momentumRecheckIntervalMinutes, DEFAULT_VARIANT_CONFIG.momentumRecheckIntervalMs / 60000) * 60000),
     momentumMaxChecks: num(parsed.momentumMaxChecks, DEFAULT_VARIANT_CONFIG.momentumMaxChecks),
     buySlippage: num(parsed.buySlippage, DEFAULT_VARIANT_CONFIG.buySlippage),
     sellSlippage: num(parsed.sellSlippage, DEFAULT_VARIANT_CONFIG.sellSlippage),
@@ -73,14 +73,14 @@ function parseVariantConfig(jsonStr: string, name: string): ABVariantConfig {
   const errors: string[] = [];
   if (config.takeProfit <= 0) errors.push('takeProfit must be > 0');
   if (config.stopLoss <= 0) errors.push('stopLoss must be > 0');
-  if (config.maxHoldDurationMs < 0) errors.push('maxHoldDurationMs cannot be negative');
-  if (config.priceCheckIntervalMs < 500) errors.push('priceCheckIntervalMs must be >= 500');
+  if (config.maxHoldDurationMs < 0) errors.push('maxHoldDurationMinutes cannot be negative');
+  if (config.priceCheckIntervalMs < 500) errors.push('priceCheckIntervalMinutes must be >= 0.0083 (500ms)');
   if (config.momentumMinTotalBuys < 1) errors.push('momentumMinTotalBuys must be >= 1');
   if (config.pumpfunMinSolInCurve < 0) errors.push('pumpfunMinSolInCurve cannot be negative');
   if (config.pumpfunMaxSolInCurve <= config.pumpfunMinSolInCurve) errors.push('pumpfunMaxSolInCurve must be > pumpfunMinSolInCurve');
   if (config.maxTokenAgeSeconds < 0) errors.push('maxTokenAgeSeconds cannot be negative');
-  if (config.momentumInitialDelayMs < 0) errors.push('momentumInitialDelayMs cannot be negative');
-  if (config.momentumRecheckIntervalMs < 0) errors.push('momentumRecheckIntervalMs cannot be negative');
+  if (config.momentumInitialDelayMs < 0) errors.push('momentumInitialDelayMinutes cannot be negative');
+  if (config.momentumRecheckIntervalMs < 0) errors.push('momentumRecheckIntervalMinutes cannot be negative');
   if (config.momentumMaxChecks < 1) errors.push('momentumMaxChecks must be >= 1');
   if (config.buySlippage < 0 || config.buySlippage > 100) errors.push('buySlippage must be 0-100');
   if (config.sellSlippage < 0 || config.sellSlippage > 100) errors.push('sellSlippage must be 0-100');
@@ -104,10 +104,11 @@ function num(value: unknown, defaultValue: number): number {
  * Parse the full A/B test configuration from environment variables.
  */
 export function parseABTestConfig(): ABTestConfig {
-  const durationMs = Number(process.env.AB_TEST_DURATION_MS) || DEFAULT_DURATION_MS;
-  if (durationMs < 60000) {
-    throw new Error('AB_TEST_DURATION_MS must be at least 60000 (1 minute)');
+  const durationMinutes = Number(process.env.AB_TEST_DURATION_MINUTES) || (DEFAULT_DURATION_MS / 60000);
+  if (durationMinutes < 1) {
+    throw new Error('AB_TEST_DURATION_MINUTES must be at least 1');
   }
+  const durationMs = Math.round(durationMinutes * 60000);
 
   const configAStr = process.env.AB_CONFIG_A || '';
   const configBStr = process.env.AB_CONFIG_B || '';
@@ -145,14 +146,14 @@ function summarizeConfig(c: ABVariantConfig): Record<string, unknown> {
   return {
     tp: `${c.takeProfit}%`,
     sl: `${c.stopLoss}%`,
-    maxHold: `${c.maxHoldDurationMs}ms`,
-    checkInterval: `${c.priceCheckIntervalMs}ms`,
+    maxHold: `${(c.maxHoldDurationMs / 60000).toFixed(4)} min`,
+    checkInterval: `${(c.priceCheckIntervalMs / 60000).toFixed(4)} min`,
     minBuys: c.momentumMinTotalBuys,
     minSol: c.pumpfunMinSolInCurve,
     maxSol: c.pumpfunMaxSolInCurve,
     maxAge: `${c.maxTokenAgeSeconds}s`,
-    momDelay: `${c.momentumInitialDelayMs}ms`,
-    momRecheck: `${c.momentumRecheckIntervalMs}ms`,
+    momDelay: `${(c.momentumInitialDelayMs / 60000).toFixed(4)} min`,
+    momRecheck: `${(c.momentumRecheckIntervalMs / 60000).toFixed(4)} min`,
     momMaxChecks: c.momentumMaxChecks,
     buySlip: `${c.buySlippage}%`,
     sellSlip: `${c.sellSlippage}%`,

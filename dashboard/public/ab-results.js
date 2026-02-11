@@ -416,14 +416,14 @@ function renderSessionDetail(report) {
           <tr class="section-row"><td colspan="3">Configuration</td></tr>
           ${configRow('Take Profit', cA.takeProfit + '%', cB.takeProfit + '%')}
           ${configRow('Stop Loss', cA.stopLoss + '%', cB.stopLoss + '%')}
-          ${configRow('Max Hold Duration', cA.maxHoldDurationMs + 'ms', cB.maxHoldDurationMs + 'ms')}
-          ${configRow('Price Check Interval', cA.priceCheckIntervalMs + 'ms', cB.priceCheckIntervalMs + 'ms')}
+          ${configRow('Max Hold Duration', (cA.maxHoldDurationMs / 60000).toFixed(4) + ' min', (cB.maxHoldDurationMs / 60000).toFixed(4) + ' min')}
+          ${configRow('Price Check Interval', (cA.priceCheckIntervalMs / 60000).toFixed(4) + ' min', (cB.priceCheckIntervalMs / 60000).toFixed(4) + ' min')}
           ${configRow('Min Buys (Momentum)', cA.momentumMinTotalBuys, cB.momentumMinTotalBuys)}
           ${configRow('Min SOL in Curve', cA.pumpfunMinSolInCurve, cB.pumpfunMinSolInCurve)}
           ${configRow('Max SOL in Curve', cA.pumpfunMaxSolInCurve, cB.pumpfunMaxSolInCurve)}
           ${configRow('Max Token Age', cA.maxTokenAgeSeconds + 's', cB.maxTokenAgeSeconds + 's')}
-          ${configRow('Mom. Initial Delay', cA.momentumInitialDelayMs + 'ms', cB.momentumInitialDelayMs + 'ms')}
-          ${configRow('Mom. Recheck Interval', cA.momentumRecheckIntervalMs + 'ms', cB.momentumRecheckIntervalMs + 'ms')}
+          ${configRow('Mom. Initial Delay', (cA.momentumInitialDelayMs / 60000).toFixed(4) + ' min', (cB.momentumInitialDelayMs / 60000).toFixed(4) + ' min')}
+          ${configRow('Mom. Recheck Interval', (cA.momentumRecheckIntervalMs / 60000).toFixed(4) + ' min', (cB.momentumRecheckIntervalMs / 60000).toFixed(4) + ' min')}
           ${configRow('Mom. Max Checks', cA.momentumMaxChecks, cB.momentumMaxChecks)}
           ${configRow('Buy Slippage', cA.buySlippage + '%', cB.buySlippage + '%')}
           ${configRow('Sell Slippage', cA.sellSlippage + '%', cB.sellSlippage + '%')}
@@ -480,7 +480,7 @@ function formatParamName(name) {
   return name
     .replace(/([A-Z])/g, ' $1')
     .replace(/^./, s => s.toUpperCase())
-    .replace(/Ms$/, ' (ms)')
+    .replace(/Ms$/, ' (min)')
     .replace(/Sol /, 'SOL ')
     .trim();
 }
