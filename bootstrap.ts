@@ -171,10 +171,10 @@ async function bootstrap(): Promise<void> {
     });
   });
 
-  // Step 2: Check for test mode or load main application
-  const testMode = (process.env.TEST_MODE || '').toLowerCase();
+  // Step 2: Check bot mode and load appropriate application
+  const botMode = (process.env.BOT_MODE || 'production').toLowerCase();
 
-  if (testMode === 'smoke') {
+  if (botMode === 'smoke') {
     startupState = 'loading';
     log('info', 'Smoke test mode detected - running smoke test...');
 
@@ -202,7 +202,7 @@ async function bootstrap(): Promise<void> {
       await new Promise(resolve => setTimeout(resolve, 5_000));
       process.exit(1);
     }
-  } else if (testMode === 'ab') {
+  } else if (botMode === 'ab') {
     startupState = 'loading';
     log('info', 'A/B test mode detected - running A/B paper trade test...');
 
