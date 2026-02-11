@@ -377,8 +377,7 @@ const runListener = async () => {
   const valid = await bot.validate();
 
   if (!valid) {
-    logger.info('Bot is exiting...');
-    process.exit(1);
+    throw new Error('Bot validation failed - check wallet balance and RPC connection');
   }
 
   // === Initialize Persistence Layer ===
@@ -1012,8 +1011,15 @@ process.on('unhandledRejection', (reason, promise) => {
   logger.error({ reason, promise }, 'Unhandled promise rejection');
 });
 
-// Start the bot
-runListener().catch((error) => {
-  logger.error({ error }, 'Failed to start bot');
-  process.exit(1);
-});
+// Export runListener for bootstrap.ts to call and await, ensuring the
+// dashboard is fully started before the proxy marks the service as ready.
+export { runListener };
+
+// Auto-start when running directly (not via bootstrap).
+// When managed by bootstrap, it calls runListener() itself and awaits it.
+if (!process.env.__MANAGED_BY_BOOTSTRAP) {
+  runListener().catch((error) => {
+    logger.error({ error }, 'Failed to start bot');
+    process.exit(1);
+  });
+}
