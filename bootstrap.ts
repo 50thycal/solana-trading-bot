@@ -234,10 +234,18 @@ async function bootstrap(): Promise<void> {
     log('info', 'Loading main application...');
 
     try {
-      // Dynamic import to avoid triggering config validation until now
-      await import('./index');
+      // Signal that bootstrap is managing the lifecycle so index.ts
+      // does NOT auto-invoke runListener() or call process.exit()
+      process.env.__MANAGED_BY_BOOTSTRAP = '1';
 
-      // If we get here, the main app loaded successfully
+      // Dynamic import to avoid triggering config validation until now
+      const mainModule = await import('./index');
+
+      // Call and await runListener - this starts the dashboard, bot, and
+      // all subsystems. Only after this completes is the app truly ready
+      // to proxy requests to the dashboard on DASHBOARD_PORT.
+      await mainModule.runListener();
+
       startupState = 'ready';
       log('info', 'Main application loaded successfully', {
         publicPort: PUBLIC_PORT,
@@ -248,7 +256,7 @@ async function bootstrap(): Promise<void> {
       startupError = error instanceof Error ? error.message : String(error);
       log('error', 'Failed to load main application', { error: startupError });
 
-      // Keep the server running so Railway can see the error
+      // Keep the server running so Railway can see the error via health checks
       log('info', 'Server still running - reporting failure state');
     }
   }
