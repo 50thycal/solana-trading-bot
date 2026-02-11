@@ -269,8 +269,8 @@ export function validateConfig(): ValidatedConfig {
   const oneTokenAtATime = requireBoolean('ONE_TOKEN_AT_A_TIME', true);
   const takeProfit = requireNumber('TAKE_PROFIT', 40);
   const stopLoss = requireNumber('STOP_LOSS', 20);
-  const priceCheckIntervalMinutes = requireNumber('PRICE_CHECK_INTERVAL_MINUTES', 2000 / 60000);
-  const priceCheckInterval = Math.round(priceCheckIntervalMinutes * 60000);
+  const priceCheckIntervalSeconds = requireNumber('PRICE_CHECK_INTERVAL_SECONDS', 2);
+  const priceCheckInterval = Math.round(priceCheckIntervalSeconds * 1000);
   const priceCheckDurationMinutes = requireNumber('PRICE_CHECK_DURATION_MINUTES', 600000 / 60000);
   const priceCheckDuration = Math.round(priceCheckDurationMinutes * 60000);
 
@@ -305,12 +305,12 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'MIN_WALLET_BUFFER_SOL', message: 'MIN_WALLET_BUFFER_SOL cannot be negative' });
   }
 
-  // Max hold duration (0 = disabled, default ~20s = 0.333 min)
-  const maxHoldDurationMinutes = requireNumber('MAX_HOLD_DURATION_MINUTES', 20000 / 60000);
-  if (maxHoldDurationMinutes < 0) {
-    errors.push({ variable: 'MAX_HOLD_DURATION_MINUTES', message: 'MAX_HOLD_DURATION_MINUTES cannot be negative' });
+  // Max hold duration (0 = disabled, default 20s)
+  const maxHoldDurationSeconds = requireNumber('MAX_HOLD_DURATION_SECONDS', 20);
+  if (maxHoldDurationSeconds < 0) {
+    errors.push({ variable: 'MAX_HOLD_DURATION_SECONDS', message: 'MAX_HOLD_DURATION_SECONDS cannot be negative' });
   }
-  const maxHoldDurationMs = Math.round(maxHoldDurationMinutes * 60000);
+  const maxHoldDurationMs = Math.round(maxHoldDurationSeconds * 1000);
 
   // === EXECUTION QUALITY ===
   const simulateTransaction = requireBoolean('SIMULATE_TRANSACTION', true);
@@ -367,22 +367,22 @@ export function validateConfig(): ValidatedConfig {
 
   const momentumGateEnabled = requireBoolean('MOMENTUM_GATE_ENABLED', true);
 
-  const momentumInitialDelayMinutes = requireNumber('MOMENTUM_INITIAL_DELAY_MINUTES', 100 / 60000);
-  if (momentumInitialDelayMinutes < 0) {
-    errors.push({ variable: 'MOMENTUM_INITIAL_DELAY_MINUTES', message: 'MOMENTUM_INITIAL_DELAY_MINUTES cannot be negative' });
+  const momentumInitialDelaySeconds = requireNumber('MOMENTUM_INITIAL_DELAY_SECONDS', 0.1);
+  if (momentumInitialDelaySeconds < 0) {
+    errors.push({ variable: 'MOMENTUM_INITIAL_DELAY_SECONDS', message: 'MOMENTUM_INITIAL_DELAY_SECONDS cannot be negative' });
   }
-  const momentumInitialDelayMs = Math.round(momentumInitialDelayMinutes * 60000);
+  const momentumInitialDelayMs = Math.round(momentumInitialDelaySeconds * 1000);
 
   const momentumMinTotalBuys = requireNumber('MOMENTUM_MIN_TOTAL_BUYS', 10);
   if (momentumMinTotalBuys < 1) {
     errors.push({ variable: 'MOMENTUM_MIN_TOTAL_BUYS', message: 'MOMENTUM_MIN_TOTAL_BUYS must be at least 1' });
   }
 
-  const momentumRecheckIntervalMinutes = requireNumber('MOMENTUM_RECHECK_INTERVAL_MINUTES', 100 / 60000);
-  if (momentumRecheckIntervalMinutes < 0) {
-    errors.push({ variable: 'MOMENTUM_RECHECK_INTERVAL_MINUTES', message: 'MOMENTUM_RECHECK_INTERVAL_MINUTES cannot be negative' });
+  const momentumRecheckIntervalSeconds = requireNumber('MOMENTUM_RECHECK_INTERVAL_SECONDS', 0.1);
+  if (momentumRecheckIntervalSeconds < 0) {
+    errors.push({ variable: 'MOMENTUM_RECHECK_INTERVAL_SECONDS', message: 'MOMENTUM_RECHECK_INTERVAL_SECONDS cannot be negative' });
   }
-  const momentumRecheckIntervalMs = Math.round(momentumRecheckIntervalMinutes * 60000);
+  const momentumRecheckIntervalMs = Math.round(momentumRecheckIntervalSeconds * 1000);
 
   const momentumMaxChecks = requireNumber('MOMENTUM_MAX_CHECKS', 5);
   if (momentumMaxChecks < 1) {
