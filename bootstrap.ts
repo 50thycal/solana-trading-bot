@@ -109,13 +109,19 @@ function createServer(): http.Server {
 
     // For all other requests, proxy to dashboard
     if (startupState !== 'ready') {
-      // Service not ready yet
-      res.writeHead(503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        error: 'Service starting',
-        state: startupState,
-        message: 'Please wait while the service initializes',
-      }));
+      // Serve an HTML page that auto-refreshes while the service starts up.
+      // A raw 503 JSON response causes Railway to show "Application failed to respond".
+      const statusLabel = startupState === 'failed'
+        ? `Failed: ${startupError || 'unknown error'}`
+        : 'Starting up...';
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Bot Dashboard</title>
+<meta http-equiv="refresh" content="5"><style>
+body{font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0}
+.box{text-align:center;padding:2rem;border:1px solid #333;border-radius:8px;max-width:400px}
+h2{margin-top:0}p{color:#999}
+</style></head><body><div class="box"><h2>${statusLabel}</h2>
+<p>State: ${startupState}</p><p>This page will auto-refresh every 5 seconds.</p></div></body></html>`);
       return;
     }
 
@@ -183,9 +189,9 @@ async function bootstrap(): Promise<void> {
 
     try {
       const { runSmokeTest } = await import('./smoke-test');
-      startupState = 'ready';
       const report = await runSmokeTest();
 
+      startupState = 'ready';
       // Keep server running briefly so Railway logs flush and report is accessible
       log('info', `Smoke test complete: ${report.overallResult}`, {
         passed: report.passedCount,
@@ -202,8 +208,9 @@ async function bootstrap(): Promise<void> {
       startupState = 'failed';
       startupError = error instanceof Error ? error.message : String(error);
       log('error', 'Smoke test failed with error', { error: startupError });
-      await new Promise(resolve => setTimeout(resolve, 5_000));
-      process.exit(1);
+
+      // Keep the server running so Railway can see the error via health checks
+      log('info', 'Server still running - reporting failure state');
     }
   } else if (botMode === 'ab') {
     startupState = 'loading';
@@ -211,9 +218,9 @@ async function bootstrap(): Promise<void> {
 
     try {
       const { runABTest } = await import('./ab-test');
-      startupState = 'ready';
       const report = await runABTest();
 
+      startupState = 'ready';
       log('info', `A/B test complete: Winner=${report.winner}`, {
         variantA_pnl: report.variantA.realizedPnlSol,
         variantB_pnl: report.variantB.realizedPnlSol,
@@ -228,8 +235,9 @@ async function bootstrap(): Promise<void> {
       startupState = 'failed';
       startupError = error instanceof Error ? error.message : String(error);
       log('error', 'A/B test failed with error', { error: startupError });
-      await new Promise(resolve => setTimeout(resolve, 5_000));
-      process.exit(1);
+
+      // Keep the server running so Railway can see the error via health checks
+      log('info', 'Server still running - reporting failure state');
     }
   } else {
     // Normal startup
