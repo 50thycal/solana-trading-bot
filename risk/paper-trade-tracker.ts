@@ -155,11 +155,11 @@ export class PaperTradeTracker extends EventEmitter {
     this.isMonitoringActive = true;
     logger.info(
       {
-        checkInterval: `${this.monitorConfig.checkIntervalMs}ms`,
+        checkInterval: `${(this.monitorConfig.checkIntervalMs / 60000).toFixed(4)} min`,
         takeProfit: `${this.monitorConfig.takeProfit}%`,
         stopLoss: `${this.monitorConfig.stopLoss}%`,
         maxHoldDuration: this.monitorConfig.maxHoldDurationMs > 0
-          ? `${this.monitorConfig.maxHoldDurationMs}ms`
+          ? `${(this.monitorConfig.maxHoldDurationMs / 60000).toFixed(4)} min`
           : 'disabled',
       },
       '[paper-trade] Starting position monitor with TP/SL simulation'

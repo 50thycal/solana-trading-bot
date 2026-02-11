@@ -6,7 +6,7 @@
  * report when the test duration expires.
  *
  * Usage:
- *   BOT_MODE=ab AB_TEST_DURATION_MS=14400000 \
+ *   BOT_MODE=ab AB_TEST_DURATION_MINUTES=240 \
  *   AB_CONFIG_A='{"takeProfit":40,"stopLoss":20}' \
  *   AB_CONFIG_B='{"takeProfit":60,"stopLoss":15}' \
  *   npx ts-node bootstrap.ts

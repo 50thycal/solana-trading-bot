@@ -90,11 +90,11 @@ export class PumpFunPositionMonitor extends EventEmitter {
 
     logger.info(
       {
-        checkInterval: `${config.checkIntervalMs}ms`,
+        checkInterval: `${(config.checkIntervalMs / 60000).toFixed(4)} min`,
         takeProfit: `${config.takeProfit}%`,
         stopLoss: `${config.stopLoss}%`,
         maxHoldDuration: config.maxHoldDurationMs
-          ? `${config.maxHoldDurationMs}ms`
+          ? `${(config.maxHoldDurationMs / 60000).toFixed(4)} min`
           : 'disabled',
       },
       '[pump.fun] Position monitor initialized',

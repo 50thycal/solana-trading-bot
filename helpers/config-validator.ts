@@ -269,8 +269,10 @@ export function validateConfig(): ValidatedConfig {
   const oneTokenAtATime = requireBoolean('ONE_TOKEN_AT_A_TIME', true);
   const takeProfit = requireNumber('TAKE_PROFIT', 40);
   const stopLoss = requireNumber('STOP_LOSS', 20);
-  const priceCheckInterval = requireNumber('PRICE_CHECK_INTERVAL', 2000);
-  const priceCheckDuration = requireNumber('PRICE_CHECK_DURATION', 600000);
+  const priceCheckIntervalMinutes = requireNumber('PRICE_CHECK_INTERVAL_MINUTES', 2000 / 60000);
+  const priceCheckInterval = Math.round(priceCheckIntervalMinutes * 60000);
+  const priceCheckDurationMinutes = requireNumber('PRICE_CHECK_DURATION_MINUTES', 600000 / 60000);
+  const priceCheckDuration = Math.round(priceCheckDurationMinutes * 60000);
 
   // === TRANSACTION EXECUTION ===
   const transactionExecutor = getEnv('TRANSACTION_EXECUTOR', 'default') as 'default' | 'warp' | 'jito';
@@ -303,11 +305,12 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'MIN_WALLET_BUFFER_SOL', message: 'MIN_WALLET_BUFFER_SOL cannot be negative' });
   }
 
-  // Max hold duration (0 = disabled, default 20s)
-  const maxHoldDurationMs = requireNumber('MAX_HOLD_DURATION_MS', 20000);
-  if (maxHoldDurationMs < 0) {
-    errors.push({ variable: 'MAX_HOLD_DURATION_MS', message: 'MAX_HOLD_DURATION_MS cannot be negative' });
+  // Max hold duration (0 = disabled, default ~20s = 0.333 min)
+  const maxHoldDurationMinutes = requireNumber('MAX_HOLD_DURATION_MINUTES', 20000 / 60000);
+  if (maxHoldDurationMinutes < 0) {
+    errors.push({ variable: 'MAX_HOLD_DURATION_MINUTES', message: 'MAX_HOLD_DURATION_MINUTES cannot be negative' });
   }
+  const maxHoldDurationMs = Math.round(maxHoldDurationMinutes * 60000);
 
   // === EXECUTION QUALITY ===
   const simulateTransaction = requireBoolean('SIMULATE_TRANSACTION', true);
@@ -364,20 +367,22 @@ export function validateConfig(): ValidatedConfig {
 
   const momentumGateEnabled = requireBoolean('MOMENTUM_GATE_ENABLED', true);
 
-  const momentumInitialDelayMs = requireNumber('MOMENTUM_INITIAL_DELAY_MS', 100);
-  if (momentumInitialDelayMs < 0) {
-    errors.push({ variable: 'MOMENTUM_INITIAL_DELAY_MS', message: 'MOMENTUM_INITIAL_DELAY_MS cannot be negative' });
+  const momentumInitialDelayMinutes = requireNumber('MOMENTUM_INITIAL_DELAY_MINUTES', 100 / 60000);
+  if (momentumInitialDelayMinutes < 0) {
+    errors.push({ variable: 'MOMENTUM_INITIAL_DELAY_MINUTES', message: 'MOMENTUM_INITIAL_DELAY_MINUTES cannot be negative' });
   }
+  const momentumInitialDelayMs = Math.round(momentumInitialDelayMinutes * 60000);
 
   const momentumMinTotalBuys = requireNumber('MOMENTUM_MIN_TOTAL_BUYS', 10);
   if (momentumMinTotalBuys < 1) {
     errors.push({ variable: 'MOMENTUM_MIN_TOTAL_BUYS', message: 'MOMENTUM_MIN_TOTAL_BUYS must be at least 1' });
   }
 
-  const momentumRecheckIntervalMs = requireNumber('MOMENTUM_RECHECK_INTERVAL_MS', 100);
-  if (momentumRecheckIntervalMs < 0) {
-    errors.push({ variable: 'MOMENTUM_RECHECK_INTERVAL_MS', message: 'MOMENTUM_RECHECK_INTERVAL_MS cannot be negative' });
+  const momentumRecheckIntervalMinutes = requireNumber('MOMENTUM_RECHECK_INTERVAL_MINUTES', 100 / 60000);
+  if (momentumRecheckIntervalMinutes < 0) {
+    errors.push({ variable: 'MOMENTUM_RECHECK_INTERVAL_MINUTES', message: 'MOMENTUM_RECHECK_INTERVAL_MINUTES cannot be negative' });
   }
+  const momentumRecheckIntervalMs = Math.round(momentumRecheckIntervalMinutes * 60000);
 
   const momentumMaxChecks = requireNumber('MOMENTUM_MAX_CHECKS', 5);
   if (momentumMaxChecks < 1) {
@@ -385,13 +390,15 @@ export function validateConfig(): ValidatedConfig {
   }
 
   // === SMOKE TEST (applies when BOT_MODE=smoke) ===
-  const smokeTestTimeoutMs = requireNumber('SMOKE_TEST_TIMEOUT_MS', 300000);
-  if (smokeTestTimeoutMs < 30000) {
-    errors.push({ variable: 'SMOKE_TEST_TIMEOUT_MS', message: 'SMOKE_TEST_TIMEOUT_MS must be at least 30000 (30 seconds)' });
+  const smokeTestTimeoutMinutes = requireNumber('SMOKE_TEST_TIMEOUT_MINUTES', 5);
+  if (smokeTestTimeoutMinutes < 0.5) {
+    errors.push({ variable: 'SMOKE_TEST_TIMEOUT_MINUTES', message: 'SMOKE_TEST_TIMEOUT_MINUTES must be at least 0.5 (30 seconds)' });
   }
+  const smokeTestTimeoutMs = Math.round(smokeTestTimeoutMinutes * 60000);
 
   // === A/B TEST (applies when BOT_MODE=ab) ===
-  const abTestDurationMs = requireNumber('AB_TEST_DURATION_MS', 14400000); // 4 hours default
+  const abTestDurationMinutes = requireNumber('AB_TEST_DURATION_MINUTES', 240); // 4 hours default
+  const abTestDurationMs = Math.round(abTestDurationMinutes * 60000);
   const abConfigA = getEnv('AB_CONFIG_A', '');
   const abConfigB = getEnv('AB_CONFIG_B', '');
 

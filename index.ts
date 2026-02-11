@@ -173,8 +173,8 @@ function printDetails(wallet: Keypair, bot: Bot) {
 
   logger.info('- Position Management -');
   logger.info(`Max open positions: ${botConfig.maxOpenPositions}`);
-  logger.info(`Max hold duration: ${botConfig.maxHoldDurationMs > 0 ? `${botConfig.maxHoldDurationMs / 1000}s` : 'disabled'}`);
-  logger.info(`Price check interval: ${POSITION_CHECK_INTERVAL_MS}ms`);
+  logger.info(`Max hold duration: ${botConfig.maxHoldDurationMs > 0 ? `${(botConfig.maxHoldDurationMs / 60000).toFixed(4)} min` : 'disabled'}`);
+  logger.info(`Price check interval: ${(POSITION_CHECK_INTERVAL_MS / 60000).toFixed(4)} min`);
 
   logger.info('- Risk Controls -');
   logger.info(`Max total exposure: ${MAX_TOTAL_EXPOSURE_SOL} SOL`);
@@ -473,10 +473,10 @@ const runListener = async () => {
     paperTracker.start();
     logger.info(
       {
-        checkInterval: `${POSITION_CHECK_INTERVAL_MS}ms`,
+        checkInterval: `${(POSITION_CHECK_INTERVAL_MS / 60000).toFixed(4)} min`,
         takeProfit: `${TAKE_PROFIT}%`,
         stopLoss: `${STOP_LOSS}%`,
-        maxHoldDuration: `${botConfig.maxHoldDurationMs / 1000}s`,
+        maxHoldDuration: `${(botConfig.maxHoldDurationMs / 60000).toFixed(4)} min`,
       },
       '[paper-trade] Paper trade tracker initialized'
     );

@@ -88,14 +88,14 @@ export class ABReportGenerator {
     const cB = report.variantB.config;
     lines.push(this.tableRow('Take Profit', `${cA.takeProfit}%`, `${cB.takeProfit}%`));
     lines.push(this.tableRow('Stop Loss', `${cA.stopLoss}%`, `${cB.stopLoss}%`));
-    lines.push(this.tableRow('Max Hold Duration', `${cA.maxHoldDurationMs}ms`, `${cB.maxHoldDurationMs}ms`));
-    lines.push(this.tableRow('Price Check Interval', `${cA.priceCheckIntervalMs}ms`, `${cB.priceCheckIntervalMs}ms`));
+    lines.push(this.tableRow('Max Hold Duration', `${(cA.maxHoldDurationMs / 60000).toFixed(4)} min`, `${(cB.maxHoldDurationMs / 60000).toFixed(4)} min`));
+    lines.push(this.tableRow('Price Check Interval', `${(cA.priceCheckIntervalMs / 60000).toFixed(4)} min`, `${(cB.priceCheckIntervalMs / 60000).toFixed(4)} min`));
     lines.push(this.tableRow('Min Buys (Momentum)', String(cA.momentumMinTotalBuys), String(cB.momentumMinTotalBuys)));
     lines.push(this.tableRow('Min SOL in Curve', String(cA.pumpfunMinSolInCurve), String(cB.pumpfunMinSolInCurve)));
     lines.push(this.tableRow('Max SOL in Curve', String(cA.pumpfunMaxSolInCurve), String(cB.pumpfunMaxSolInCurve)));
     lines.push(this.tableRow('Max Token Age', `${cA.maxTokenAgeSeconds}s`, `${cB.maxTokenAgeSeconds}s`));
-    lines.push(this.tableRow('Mom. Initial Delay', `${cA.momentumInitialDelayMs}ms`, `${cB.momentumInitialDelayMs}ms`));
-    lines.push(this.tableRow('Mom. Recheck Interval', `${cA.momentumRecheckIntervalMs}ms`, `${cB.momentumRecheckIntervalMs}ms`));
+    lines.push(this.tableRow('Mom. Initial Delay', `${(cA.momentumInitialDelayMs / 60000).toFixed(4)} min`, `${(cB.momentumInitialDelayMs / 60000).toFixed(4)} min`));
+    lines.push(this.tableRow('Mom. Recheck Interval', `${(cA.momentumRecheckIntervalMs / 60000).toFixed(4)} min`, `${(cB.momentumRecheckIntervalMs / 60000).toFixed(4)} min`));
     lines.push(this.tableRow('Mom. Max Checks', String(cA.momentumMaxChecks), String(cB.momentumMaxChecks)));
     lines.push(this.tableRow('Buy Slippage', `${cA.buySlippage}%`, `${cB.buySlippage}%`));
     lines.push(this.tableRow('Sell Slippage', `${cA.sellSlippage}%`, `${cB.sellSlippage}%`));
