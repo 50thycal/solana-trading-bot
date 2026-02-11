@@ -151,6 +151,27 @@ function setupGracefulShutdown(): void {
 }
 
 /**
+ * Start the dashboard server so the proxy has something to forward to.
+ * Used in smoke/ab test modes where runListener() is not called.
+ */
+async function startDashboard(): Promise<void> {
+  const dashboardEnabled = (process.env.DASHBOARD_ENABLED || 'true').toLowerCase() === 'true';
+  if (!dashboardEnabled) {
+    log('info', 'Dashboard disabled via DASHBOARD_ENABLED=false');
+    return;
+  }
+
+  try {
+    const { startDashboardServer } = await import('./dashboard/server');
+    const pollInterval = parseInt(process.env.DASHBOARD_POLL_INTERVAL || '5000', 10);
+    await startDashboardServer({ port: DASHBOARD_PORT, pollInterval });
+    log('info', 'Dashboard server started', { port: DASHBOARD_PORT });
+  } catch (error) {
+    log('error', 'Failed to start dashboard server', { error: String(error) });
+  }
+}
+
+/**
  * Main bootstrap function
  */
 async function bootstrap(): Promise<void> {
@@ -187,12 +208,14 @@ async function bootstrap(): Promise<void> {
     startupState = 'loading';
     log('info', 'Smoke test mode detected - running smoke test...');
 
+    // Start dashboard so users can view results via the UI
+    await startDashboard();
+
     try {
       const { runSmokeTest } = await import('./smoke-test');
       const report = await runSmokeTest();
 
       startupState = 'ready';
-      // Keep server running briefly so Railway logs flush and report is accessible
       log('info', `Smoke test complete: ${report.overallResult}`, {
         passed: report.passedCount,
         failed: report.failedCount,
@@ -200,10 +223,8 @@ async function bootstrap(): Promise<void> {
         durationMs: report.totalDurationMs,
       });
 
-      // Wait 10 seconds for logs to flush and for the user to see the report
-      await new Promise(resolve => setTimeout(resolve, 10_000));
-
-      process.exit(report.overallResult === 'PASS' ? 0 : 1);
+      // Keep the server running so the dashboard stays accessible for viewing results
+      log('info', 'Smoke test finished - dashboard remains available for viewing results');
     } catch (error) {
       startupState = 'failed';
       startupError = error instanceof Error ? error.message : String(error);
@@ -215,6 +236,9 @@ async function bootstrap(): Promise<void> {
   } else if (botMode === 'ab') {
     startupState = 'loading';
     log('info', 'A/B test mode detected - running A/B paper trade test...');
+
+    // Start dashboard so users can view A/B test results via the UI
+    await startDashboard();
 
     try {
       const { runABTest } = await import('./ab-test');
@@ -228,9 +252,8 @@ async function bootstrap(): Promise<void> {
         durationMs: report.durationMs,
       });
 
-      // Wait for logs to flush
-      await new Promise(resolve => setTimeout(resolve, 10_000));
-      process.exit(0);
+      // Keep the server running so the dashboard stays accessible for reviewing results
+      log('info', 'A/B test finished - dashboard remains available for viewing results');
     } catch (error) {
       startupState = 'failed';
       startupError = error instanceof Error ? error.message : String(error);
