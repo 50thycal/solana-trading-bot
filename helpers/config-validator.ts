@@ -16,7 +16,8 @@ export interface ValidatedConfig {
   commitmentLevel: Commitment;
 
   // Mode
-  dryRun: boolean;
+  botMode: 'production' | 'dry_run' | 'smoke' | 'ab' | 'standby';
+  dryRun: boolean;       // derived from botMode
   logLevel: string;
   logFormat: 'pretty' | 'compact';
 
@@ -84,16 +85,16 @@ export interface ValidatedConfig {
   momentumRecheckIntervalMs: number;
   momentumMaxChecks: number;
 
-  // Test Mode
-  testMode: '' | 'smoke' | 'ab';
+  // Smoke Test (applies when botMode='smoke')
   smokeTestTimeoutMs: number;
 
-  // A/B Test
+  // A/B Test (applies when botMode='ab')
   abTestDurationMs: number;
   abConfigA: string;
   abConfigB: string;
 
-  // Bot Control
+  // Derived from botMode (for backward compatibility)
+  testMode: '' | 'smoke' | 'ab';
   runBot: boolean;
 
   // Production Time Limit
@@ -221,8 +222,22 @@ export function validateConfig(): ValidatedConfig {
     });
   }
 
-  // === MODE ===
-  const dryRun = requireBoolean('DRY_RUN', false);
+  // === BOT MODE ===
+  const VALID_BOT_MODES = ['production', 'dry_run', 'smoke', 'ab', 'standby'] as const;
+  const botModeRaw = getEnv('BOT_MODE', 'production').toLowerCase();
+  if (!VALID_BOT_MODES.includes(botModeRaw as any)) {
+    errors.push({
+      variable: 'BOT_MODE',
+      message: `Invalid BOT_MODE: "${botModeRaw}". Must be one of: ${VALID_BOT_MODES.join(', ')}`
+    });
+  }
+  const botMode = botModeRaw as 'production' | 'dry_run' | 'smoke' | 'ab' | 'standby';
+
+  // Derive legacy flags from botMode
+  const dryRun = botMode === 'dry_run' || botMode === 'ab';
+  const runBot = botMode !== 'standby';
+  const testMode: '' | 'smoke' | 'ab' = botMode === 'smoke' ? 'smoke' : botMode === 'ab' ? 'ab' : '';
+
   const logLevel = getEnv('LOG_LEVEL', 'info');
   const logFormatRaw = getEnv('LOG_FORMAT', 'pretty').toLowerCase();
   const logFormat = (logFormatRaw === 'compact' ? 'compact' : 'pretty') as 'pretty' | 'compact';
@@ -369,19 +384,13 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'MOMENTUM_MAX_CHECKS', message: 'MOMENTUM_MAX_CHECKS must be at least 1' });
   }
 
-  // === TEST MODE ===
-  const testModeRaw = getEnv('TEST_MODE', '').toLowerCase();
-  const testMode = testModeRaw as '' | 'smoke' | 'ab';
-  if (testModeRaw && testModeRaw !== 'smoke' && testModeRaw !== 'ab') {
-    errors.push({ variable: 'TEST_MODE', message: `Invalid TEST_MODE: "${testModeRaw}". Must be "smoke", "ab", or empty` });
-  }
-
+  // === SMOKE TEST (applies when BOT_MODE=smoke) ===
   const smokeTestTimeoutMs = requireNumber('SMOKE_TEST_TIMEOUT_MS', 300000);
   if (smokeTestTimeoutMs < 30000) {
     errors.push({ variable: 'SMOKE_TEST_TIMEOUT_MS', message: 'SMOKE_TEST_TIMEOUT_MS must be at least 30000 (30 seconds)' });
   }
 
-  // === A/B TEST ===
+  // === A/B TEST (applies when BOT_MODE=ab) ===
   const abTestDurationMs = requireNumber('AB_TEST_DURATION_MS', 14400000); // 4 hours default
   const abConfigA = getEnv('AB_CONFIG_A', '');
   const abConfigB = getEnv('AB_CONFIG_B', '');
@@ -395,9 +404,6 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'PRODUCTION_TIME_LIMIT_MINUTES', message: 'PRODUCTION_TIME_LIMIT_MINUTES must be at least 1 minute when set, or 0 to disable' });
   }
   const productionTimeLimitMs = productionTimeLimitMinutes * 60000;
-
-  // === BOT CONTROL ===
-  const runBot = requireBoolean('RUN_BOT', true);
 
   // Validate private key format (base58)
   if (privateKey) {
@@ -449,6 +455,7 @@ export function validateConfig(): ValidatedConfig {
     rpcWebsocketEndpoint,
     rpcBackupEndpoints,
     commitmentLevel,
+    botMode,
     dryRun,
     logLevel,
     logFormat,
@@ -507,9 +514,15 @@ export function validateConfig(): ValidatedConfig {
     productionTimeLimitMs,
   };
 
-  // Log dry run mode warning
-  if (config.dryRun) {
-    logger.warn('DRY_RUN mode is enabled - transactions will be logged but NOT executed');
+  // Log mode info
+  if (config.botMode === 'dry_run') {
+    logger.warn('BOT_MODE=dry_run - transactions will be logged but NOT executed');
+  } else if (config.botMode === 'standby') {
+    logger.warn('BOT_MODE=standby - bot will not connect to Solana or consume RPC credits');
+  } else if (config.botMode === 'smoke') {
+    logger.info('BOT_MODE=smoke - will run a single end-to-end test cycle and exit');
+  } else if (config.botMode === 'ab') {
+    logger.info('BOT_MODE=ab - will run A/B paper trade comparison and exit');
   }
 
   return config;

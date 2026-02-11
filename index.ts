@@ -301,16 +301,16 @@ const runListener = async () => {
     }
   }
 
-  // === RUN_BOT Gate ===
-  // When RUN_BOT=false, skip all RPC-consuming work. The dashboard/health
+  // === Standby Gate ===
+  // When BOT_MODE=standby, skip all RPC-consuming work. The dashboard/health
   // server stays alive so Railway doesn't restart the service.
   if (!RUN_BOT) {
-    logger.info('RUN_BOT is set to false - bot is in standby mode');
-    logger.info('Set RUN_BOT=true and restart to resume trading.');
+    logger.info('BOT_MODE=standby - bot is in standby mode');
+    logger.info('Set BOT_MODE to production or dry_run and restart to resume trading.');
     if (!dashboardServer) {
       // Keep the process alive even without dashboard, so Railway doesn't restart
       setInterval(() => {
-        logger.debug('Standby heartbeat - RUN_BOT=false');
+        logger.debug('Standby heartbeat - BOT_MODE=standby');
       }, 60_000);
     }
     return;

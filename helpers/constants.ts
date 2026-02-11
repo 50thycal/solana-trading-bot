@@ -21,6 +21,7 @@ export const RPC_BACKUP_ENDPOINTS = config.rpcBackupEndpoints;
 // ============================================================================
 // MODE
 // ============================================================================
+export const BOT_MODE = config.botMode;
 export const DRY_RUN = config.dryRun;
 export const LOG_LEVEL = config.logLevel;
 export const RUN_BOT = config.runBot;

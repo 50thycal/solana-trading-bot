@@ -579,6 +579,7 @@ export class DashboardServer {
     // Return only safe, non-sensitive values
     return {
       mode: {
+        botMode: config.botMode,
         dryRun: config.dryRun,
         logLevel: config.logLevel,
       },

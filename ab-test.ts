@@ -1,12 +1,12 @@
 /**
  * A/B Test Entry Point
  *
- * Invoked via TEST_MODE=ab. Runs two variant configurations in parallel
+ * Invoked via BOT_MODE=ab. Runs two variant configurations in parallel
  * on the same token stream using paper trading. Generates a comparison
  * report when the test duration expires.
  *
  * Usage:
- *   TEST_MODE=ab AB_TEST_DURATION_MS=14400000 \
+ *   BOT_MODE=ab AB_TEST_DURATION_MS=14400000 \
  *   AB_CONFIG_A='{"takeProfit":40,"stopLoss":20}' \
  *   AB_CONFIG_B='{"takeProfit":60,"stopLoss":15}' \
  *   npx ts-node bootstrap.ts

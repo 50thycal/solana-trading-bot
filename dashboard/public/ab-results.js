@@ -78,7 +78,7 @@ function showNoData() {
   const msg = `
     <div class="no-data-message">
       <h3>No A/B Test Results Yet</h3>
-      <p>Run your first A/B test and results will appear here automatically. Set TEST_MODE=ab with your variant configs and start the bot.</p>
+      <p>Run your first A/B test and results will appear here automatically. Set BOT_MODE=ab with your variant configs and start the bot.</p>
     </div>
   `;
   document.getElementById('session-list').innerHTML = msg;

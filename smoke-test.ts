@@ -15,7 +15,7 @@
  *   6. When exit trigger fires -> sell (retry up to 3 times)
  *   7. After sell -> print report, graceful shutdown
  *
- * Set TEST_MODE=smoke to trigger this instead of the normal bot.
+ * Set BOT_MODE=smoke to trigger this instead of the normal bot.
  * Uses real mainnet transactions with the configured QUOTE_AMOUNT.
  * Exits with code 0 (pass) or 1 (fail) when done.
  *
