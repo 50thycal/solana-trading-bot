@@ -84,8 +84,11 @@ function createServer(): http.Server {
         uptime,
       };
 
-      // Return 200 for all states except failed - Railway needs 200 during startup
-      const httpStatus = startupState === 'failed' ? 503 : 200;
+      // Always return 200 - the bootstrap server IS alive and responding.
+      // Returning 503 on failure causes Railway to reject deployments entirely,
+      // hiding the actual error. The response body contains the real state.
+      // Use /ready for strict readiness checks instead.
+      const httpStatus = 200;
       res.writeHead(httpStatus, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(response, null, 2));
       return;
