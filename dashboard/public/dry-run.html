@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dry Run - Pipeline Monitor</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Navigation -->
+    <nav id="nav-bar" class="nav-bar"></nav>
+
+    <!-- Header -->
+    <header class="page-header">
+      <div class="header-left">
+        <h1>Dry Run</h1>
+        <span class="header-badge">Pipeline Monitor</span>
+      </div>
+    </header>
+
+    <!-- Overview Cards -->
+    <section class="overview-cards">
+      <div class="card">
+        <div class="card-label">Tokens Detected</div>
+        <div class="card-value" id="tokens-detected">0</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Tokens Bought</div>
+        <div class="card-value positive" id="tokens-bought">0</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Buy Rate</div>
+        <div class="card-value" id="buy-rate">0%</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Avg Pipeline Time</div>
+        <div class="card-value" id="avg-pipeline-time">0ms</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Wallet Balance</div>
+        <div class="card-value" id="wallet-balance">-- SOL</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Uptime</div>
+        <div class="card-value" id="uptime">--</div>
+      </div>
+    </section>
+
+    <!-- Pipeline Funnel -->
+    <section class="panel pipeline-funnel-panel">
+      <div class="panel-header">
+        <h2>Pipeline Funnel</h2>
+        <div class="panel-actions">
+          <button class="btn btn-secondary btn-small" id="reset-stats-btn">Reset Stats</button>
+        </div>
+      </div>
+      <div class="pipeline-funnel" id="pipeline-funnel">
+        <div class="funnel-stage" id="funnel-detected">
+          <div class="funnel-label">Detected</div>
+          <div class="funnel-value">0</div>
+        </div>
+        <div class="funnel-arrow">&rarr;</div>
+        <div class="funnel-stage" id="funnel-cheap-gates">
+          <div class="funnel-label">Cheap Gates</div>
+          <div class="funnel-value">0</div>
+        </div>
+        <div class="funnel-arrow">&rarr;</div>
+        <div class="funnel-stage" id="funnel-deep-filters">
+          <div class="funnel-label">Deep Filters</div>
+          <div class="funnel-value">0</div>
+        </div>
+        <div class="funnel-arrow">&rarr;</div>
+        <div class="funnel-stage" id="funnel-momentum-gate">
+          <div class="funnel-label">Momentum Gate</div>
+          <div class="funnel-value">0</div>
+        </div>
+        <div class="funnel-arrow">&rarr;</div>
+        <div class="funnel-stage funnel-stage-success" id="funnel-bought">
+          <div class="funnel-label">Bought</div>
+          <div class="funnel-value">0</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Paper P&L Panel -->
+    <section class="panel paper-pnl-panel" id="paper-pnl-panel" style="display: none;">
+      <div class="panel-header">
+        <h2>Paper P&L</h2>
+        <span class="dry-run-badge">DRY RUN</span>
+        <div class="panel-actions">
+          <span class="paper-trade-count" id="paper-trade-count">0 trades</span>
+          <button class="btn btn-primary btn-small" id="check-paper-pnl-btn">Check P&L</button>
+          <button class="btn btn-secondary btn-small" id="copy-paper-pnl-btn" title="Copy full log for AI analysis">Copy Log</button>
+          <button class="btn btn-secondary btn-small" id="clear-paper-trades-btn">Clear</button>
+        </div>
+      </div>
+      <div class="paper-pnl-content">
+        <div class="paper-pnl-summary" id="paper-pnl-summary">
+          <div class="empty-state">Click "Check P&L" to calculate paper trading results</div>
+        </div>
+        <div class="paper-trades-list" id="paper-trades-list">
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Content Grid -->
+    <div class="main-grid">
+      <!-- Left Column: Gate Stats -->
+      <div class="left-column">
+        <section class="panel gate-stats-panel">
+          <div class="panel-header">
+            <h2>Cheap Gates</h2>
+            <span class="panel-subtitle">Fast pre-checks (minimal RPC)</span>
+          </div>
+          <div class="gate-stats-list" id="cheap-gates-stats">
+            <div class="loading">Loading stats...</div>
+          </div>
+        </section>
+
+        <section class="panel gate-stats-panel">
+          <div class="panel-header">
+            <h2>Deep Filters</h2>
+            <span class="panel-subtitle">On-chain validation</span>
+          </div>
+          <div class="gate-stats-list" id="deep-filters-stats">
+            <div class="loading">Loading stats...</div>
+          </div>
+        </section>
+
+        <section class="panel gate-stats-panel">
+          <div class="panel-header">
+            <h2>Momentum Gate</h2>
+            <span class="panel-subtitle">Buy activity validation</span>
+          </div>
+          <div class="gate-stats-list" id="momentum-gate-stats">
+            <div class="loading">Loading stats...</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Top Rejection Reasons</h2>
+          </div>
+          <div class="rejection-list" id="rejection-list">
+            <div class="empty-state">No data yet</div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Right Column: Token Activity -->
+      <div class="right-column">
+        <section class="panel tokens-panel">
+          <div class="panel-header">
+            <h2>Recent Tokens</h2>
+            <div class="filter-controls">
+              <select id="token-filter">
+                <option value="">All</option>
+                <option value="bought">Bought</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </div>
+          </div>
+          <div class="token-list" id="token-list">
+            <div class="empty-state">No tokens detected yet</div>
+          </div>
+        </section>
+
+        <section class="panel positions-panel">
+          <div class="panel-header">
+            <h2>Open Positions</h2>
+            <span class="position-count" id="position-count">0</span>
+          </div>
+          <div class="positions-list" id="positions-list">
+            <div class="empty-state">No open positions</div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- Token Detail Modal -->
+    <div class="modal" id="token-modal">
+      <div class="modal-backdrop" onclick="closeTokenModal()"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Token Details</h3>
+          <button class="modal-close" onclick="closeTokenModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="token-modal-body">
+        </div>
+      </div>
+    </div>
+
+    <!-- Reset Stats Confirmation Modal -->
+    <div class="modal" id="reset-modal">
+      <div class="modal-backdrop" onclick="closeResetModal()"></div>
+      <div class="modal-content modal-small">
+        <div class="modal-header">
+          <h3>Reset Statistics</h3>
+          <button class="modal-close" onclick="closeResetModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-message">Are you sure you want to reset all pipeline statistics? This action cannot be undone.</p>
+          <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="closeResetModal()">Cancel</button>
+            <button class="btn btn-danger" id="confirm-reset-btn">Reset Stats</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/nav.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

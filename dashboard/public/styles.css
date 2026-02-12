@@ -1087,7 +1087,564 @@ body {
   text-align: center;
 }
 
-/* Responsive */
+/* ============================================================
+   NAVIGATION BAR
+   ============================================================ */
+
+.nav-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 1.5rem;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.nav-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.nav-title {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.nav-mode-badge {
+  background: linear-gradient(135deg, var(--accent-purple), var(--accent-blue));
+  padding: 0.2rem 0.6rem;
+  border-radius: 10px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.nav-links {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.nav-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.875rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.nav-link:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.nav-link-active {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.nav-mode-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  box-shadow: 0 0 6px var(--accent-green);
+}
+
+.nav-right {
+  display: flex;
+  align-items: center;
+}
+
+/* ============================================================
+   PAGE HEADER (used by mode pages)
+   ============================================================ */
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0 1rem 0;
+}
+
+.page-header h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+/* ============================================================
+   OVERVIEW HEADER (home page)
+   ============================================================ */
+
+.overview-header {
+  margin-bottom: 1.5rem;
+}
+
+.overview-title {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.overview-title h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.overview-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+.overview-meta .separator {
+  color: var(--border-color);
+}
+
+/* Mode badge */
+.mode-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+}
+
+.mode-badge.mode-production {
+  background: rgba(255, 82, 82, 0.15);
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}
+
+.mode-badge.mode-dry_run {
+  background: rgba(255, 193, 7, 0.15);
+  border-color: var(--accent-yellow);
+  color: var(--accent-yellow);
+}
+
+.mode-badge.mode-ab {
+  background: rgba(33, 150, 243, 0.15);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+.mode-badge.mode-smoke {
+  background: rgba(156, 39, 176, 0.15);
+  border-color: var(--accent-purple);
+  color: var(--accent-purple);
+}
+
+.mode-badge.mode-standby {
+  background: rgba(139, 152, 165, 0.15);
+  border-color: var(--text-muted);
+  color: var(--text-muted);
+}
+
+/* Status value */
+.status-value {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+}
+
+.status-value.status-running {
+  color: var(--accent-green);
+}
+
+.status-value.status-disconnected {
+  color: var(--accent-red);
+}
+
+.status-value.status-standby {
+  color: var(--text-muted);
+}
+
+/* Card accents */
+.card-highlight {
+  border-left: 3px solid var(--accent-blue);
+}
+
+.card-accent {
+  background: linear-gradient(135deg, rgba(33, 150, 243, 0.08), rgba(156, 39, 176, 0.08));
+  border: 1px solid var(--border-color);
+}
+
+.card-value.big {
+  font-size: 1.75rem;
+}
+
+/* ============================================================
+   HOME PAGE GRID
+   ============================================================ */
+
+.home-grid {
+  display: grid;
+  grid-template-columns: 1fr 400px;
+  gap: 1.5rem;
+}
+
+.home-left, .home-right {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+@media (max-width: 1024px) {
+  .home-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================================
+   STAT GRID (used in panels)
+   ============================================================ */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0;
+}
+
+.stat-item {
+  padding: 1rem 1.25rem;
+  border-right: 1px solid var(--border-color);
+  text-align: center;
+}
+
+.stat-item:last-child {
+  border-right: none;
+}
+
+.stat-label {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.25rem;
+}
+
+.stat-value {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.stat-value.positive {
+  color: var(--accent-green);
+}
+
+.stat-value.negative {
+  color: var(--accent-red);
+}
+
+/* ============================================================
+   INFRASTRUCTURE COSTS
+   ============================================================ */
+
+.infra-panel {
+  border-left: 3px solid var(--accent-yellow);
+}
+
+.infra-summary {
+  padding: 1rem 1.25rem;
+}
+
+.infra-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  font-size: 0.9rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.infra-summary-row:last-child {
+  border-bottom: none;
+}
+
+.infra-highlight {
+  font-weight: 700;
+  color: var(--accent-yellow);
+  font-size: 1.1rem;
+}
+
+.infra-breakdown {
+  padding: 0 1.25rem 0.75rem;
+}
+
+.infra-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.infra-name {
+  flex: 1;
+}
+
+.infra-cost {
+  min-width: 80px;
+  text-align: right;
+  color: var(--text-muted);
+}
+
+.infra-total {
+  min-width: 80px;
+  text-align: right;
+  font-weight: 600;
+}
+
+.cost-vs-pnl {
+  padding: 0 1.25rem 1rem;
+}
+
+.cost-comparison {
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.cost-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.35rem 0;
+  font-size: 0.85rem;
+}
+
+.cost-goal {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-color);
+  font-size: 0.75rem;
+  color: var(--accent-yellow);
+  text-align: center;
+  font-weight: 600;
+}
+
+/* ============================================================
+   MODE STATS
+   ============================================================ */
+
+.mode-stats-content {
+  padding: 0.5rem 1.25rem 1rem;
+}
+
+.mode-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  font-size: 0.875rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.mode-stat-row:last-child {
+  border-bottom: none;
+}
+
+.mode-action {
+  margin-top: 0.75rem;
+  text-align: center;
+}
+
+/* ============================================================
+   RUN HISTORY LIST
+   ============================================================ */
+
+.run-history-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.run-history-item {
+  display: grid;
+  grid-template-columns: 80px 1fr 80px 70px;
+  align-items: center;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.85rem;
+}
+
+.run-history-item:last-child {
+  border-bottom: none;
+}
+
+.run-mode {
+  font-weight: 600;
+  color: var(--accent-blue);
+}
+
+.run-summary {
+  color: var(--text-secondary);
+}
+
+.run-status {
+  text-align: center;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.run-time {
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+/* ============================================================
+   TRADE LIST (production page)
+   ============================================================ */
+
+.trade-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.trade-item {
+  display: grid;
+  grid-template-columns: 50px 1fr 100px 70px 60px;
+  align-items: center;
+  padding: 0.6rem 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.85rem;
+}
+
+.trade-item:last-child {
+  border-bottom: none;
+}
+
+.trade-type {
+  font-weight: 700;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.trade-token {
+  font-family: monospace;
+  color: var(--text-secondary);
+}
+
+.trade-amount {
+  text-align: right;
+}
+
+.trade-status {
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.trade-time {
+  text-align: right;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+/* ============================================================
+   SMOKE TEST STEPS
+   ============================================================ */
+
+.steps-list {
+  padding: 0;
+}
+
+.step-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.step-item:last-child {
+  border-bottom: none;
+}
+
+.step-number {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.step-icon {
+  font-size: 1.25rem;
+  flex-shrink: 0;
+  width: 24px;
+  text-align: center;
+}
+
+.step-passed .step-icon {
+  color: var(--accent-green);
+}
+
+.step-passed .step-number {
+  background: rgba(0, 200, 83, 0.15);
+  color: var(--accent-green);
+}
+
+.step-failed .step-icon {
+  color: var(--accent-red);
+}
+
+.step-failed .step-number {
+  background: rgba(255, 82, 82, 0.15);
+  color: var(--accent-red);
+}
+
+.step-running .step-icon {
+  color: var(--accent-yellow);
+}
+
+.step-info {
+  flex: 1;
+}
+
+.step-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.step-details {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 0.15rem;
+}
+
+.step-duration {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
 @media (max-width: 768px) {
   .overview-cards {
     grid-template-columns: repeat(2, 1fr);
@@ -1105,6 +1662,24 @@ body {
   .funnel-stage {
     min-width: calc(50% - 0.5rem);
   }
+
+  .nav-bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .run-history-item {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.25rem;
+  }
+
+  .trade-item {
+    grid-template-columns: 50px 1fr 80px;
+  }
+
+  .trade-status, .trade-time {
+    display: none;
+  }
 }
 
 @media (max-width: 480px) {
@@ -1116,5 +1691,18 @@ body {
 
   .overview-cards {
     grid-template-columns: 1fr;
+  }
+
+  .stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stat-item {
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .stat-item:last-child {
+    border-bottom: none;
   }
 }
