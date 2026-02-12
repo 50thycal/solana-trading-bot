@@ -71,7 +71,10 @@ async function updateNavStatus() {
       if (info.websocket?.connected) {
         statusEl.classList.add('connected');
         statusEl.classList.remove('disconnected');
-        statusEl.querySelector('.status-text').textContent = 'Connected';
+        const modeLabel = info.botMode === 'ab' ? 'A/B Test Active'
+          : info.botMode === 'smoke' ? 'Smoke Test Active'
+          : 'Connected';
+        statusEl.querySelector('.status-text').textContent = modeLabel;
       } else if (info.botMode === 'standby') {
         statusEl.classList.remove('connected');
         statusEl.classList.remove('disconnected');

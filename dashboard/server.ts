@@ -9,6 +9,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { URL } from 'url';
+import { Connection, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 import { logger } from '../helpers';
 import { getStateStore } from '../persistence';
 import { getPnlTracker, getExposureManager, getPumpFunPositionMonitor } from '../risk';
@@ -69,6 +70,11 @@ export class DashboardServer {
   private isRpcHealthy: boolean = true;
   private rpcEndpoint: string = '';
   private publicDir: string;
+  /** Cached RPC connection for wallet balance fallback when exposureManager is unavailable */
+  private cachedConnection: Connection | null = null;
+  private cachedWalletPublicKey: PublicKey | null = null;
+  /** Cached AB store to avoid re-opening the database on every poll */
+  private cachedAbStore: ABTestStore | null = null;
 
   constructor(private readonly config: DashboardConfig) {
     this.startTime = new Date();
@@ -104,6 +110,12 @@ export class DashboardServer {
    * Stop the dashboard server
    */
   public stop(): Promise<void> {
+    // Close cached AB store
+    if (this.cachedAbStore) {
+      try { this.cachedAbStore.close(); } catch { /* ignore */ }
+      this.cachedAbStore = null;
+    }
+
     return new Promise((resolve) => {
       if (this.server) {
         this.server.close(() => {
@@ -418,18 +430,32 @@ export class DashboardServer {
     const exposureStats = exposureManager?.getStats();
     const pumpFunMonitorStats = pumpFunMonitor?.getStats();
 
-    // Fetch actual wallet balance from chain
-    const walletBalance = exposureManager ? await exposureManager.getWalletBalance() : null;
+    // Fetch actual wallet balance from chain (with fallback for AB/smoke modes)
+    const walletBalance = exposureManager
+      ? await exposureManager.getWalletBalance()
+      : await this.getWalletBalanceFallback();
 
     // Calculate unrealized PnL from pump.fun positions
     const totalUnrealizedPnl = pumpFunMonitorStats?.unrealizedPnl || 0;
 
+    // Determine bot mode for status logic
+    let currentBotMode = 'unknown';
+    try {
+      const { getConfig } = require('../helpers/config-validator');
+      currentBotMode = getConfig().botMode;
+    } catch { /* ignore */ }
+
+    // In AB/smoke modes, the test runner manages its own connection
+    const isConnected = this.isWebSocketConnected
+      || currentBotMode === 'ab'
+      || currentBotMode === 'smoke';
+
     return {
-      status: this.isWebSocketConnected ? 'running' : 'disconnected',
+      status: isConnected ? 'running' : 'disconnected',
       uptime: uptimeSeconds,
       uptimeFormatted: this.formatUptime(uptimeSeconds),
       websocket: {
-        connected: this.isWebSocketConnected,
+        connected: isConnected,
         lastActivity: this.lastWebSocketActivity?.toISOString(),
       },
       rpc: {
@@ -475,6 +501,12 @@ export class DashboardServer {
       // Config may not be loaded yet
     }
 
+    // In AB/smoke modes, the test runner manages its own websocket connection
+    // so report connected=true when those modes are active
+    const wsConnected = this.isWebSocketConnected
+      || botMode === 'ab'
+      || botMode === 'smoke';
+
     return {
       version,
       botMode,
@@ -483,7 +515,7 @@ export class DashboardServer {
       uptimeFormatted: this.formatUptime(Math.floor((Date.now() - this.startTime.getTime()) / 1000)),
       startTime: this.startTime.toISOString(),
       websocket: {
-        connected: this.isWebSocketConnected,
+        connected: wsConnected,
         lastActivity: this.lastWebSocketActivity?.toISOString(),
       },
       rpc: {
@@ -514,8 +546,10 @@ export class DashboardServer {
       // Config may not be loaded yet
     }
 
-    // Wallet balance
-    const walletBalance = exposureManager ? await exposureManager.getWalletBalance() : null;
+    // Wallet balance (with fallback for AB/smoke modes)
+    const walletBalance = exposureManager
+      ? await exposureManager.getWalletBalance()
+      : await this.getWalletBalanceFallback();
 
     // Real P&L
     const pnlSummary = pnlTracker?.getSessionSummary();
@@ -536,7 +570,6 @@ export class DashboardServer {
       try {
         abSessionCount = abStore.getAllSessions().length;
       } catch { /* no sessions */ }
-      abStore.close();
     }
 
     // Smoke test report
@@ -554,7 +587,10 @@ export class DashboardServer {
       version,
       uptime: Math.floor((Date.now() - this.startTime.getTime()) / 1000),
       uptimeFormatted: this.formatUptime(Math.floor((Date.now() - this.startTime.getTime()) / 1000)),
-      status: this.isWebSocketConnected ? 'running' : (botMode === 'standby' ? 'standby' : 'disconnected'),
+      status: this.isWebSocketConnected ? 'running'
+        : (botMode === 'standby' ? 'standby'
+          : (botMode === 'ab' || botMode === 'smoke') ? 'running'
+            : 'disconnected'),
       walletBalance,
       realPnl: pnlSummary ? {
         realized: pnlSummary.realizedPnlSol,
@@ -621,7 +657,6 @@ export class DashboardServer {
           });
         }
       } catch { /* no sessions */ }
-      abStore.close();
     }
 
     // Smoke test report (current/last)
@@ -667,6 +702,33 @@ export class DashboardServer {
         totalSpent: Math.round((item.monthlyCost * totalMonths) * 100) / 100,
       })),
     };
+  }
+
+  /**
+   * Fallback wallet balance fetcher for modes where exposureManager is not initialized
+   * (e.g., AB test, smoke test). Creates a cached RPC connection using config values.
+   */
+  private async getWalletBalanceFallback(): Promise<number | null> {
+    try {
+      if (!this.cachedConnection || !this.cachedWalletPublicKey) {
+        const { getConfig } = require('../helpers/config-validator');
+        const config = getConfig();
+        const { getWallet } = require('../helpers/wallet');
+
+        this.cachedConnection = new Connection(config.rpcEndpoint, {
+          wsEndpoint: config.rpcWebsocketEndpoint,
+          commitment: config.commitmentLevel,
+        });
+        const wallet = getWallet(config.privateKey.trim());
+        this.cachedWalletPublicKey = wallet.publicKey;
+      }
+
+      const balance = await this.cachedConnection.getBalance(this.cachedWalletPublicKey);
+      return balance / LAMPORTS_PER_SOL;
+    } catch (error) {
+      logger.error({ error }, 'Failed to get wallet balance via fallback');
+      return null;
+    }
   }
 
   /**
@@ -1187,16 +1249,20 @@ export class DashboardServer {
   // ============================================================
 
   /**
-   * Open a read-only ABTestStore connection.
+   * Get a cached ABTestStore connection.
+   * Reuses the same instance to avoid re-opening the database on every poll.
    * Returns null if no AB test database exists yet.
    */
   private openAbStore(): ABTestStore | null {
+    if (this.cachedAbStore) return this.cachedAbStore;
+
     try {
       const { getConfig } = require('../helpers/config-validator');
       const config = getConfig();
-      const dbPath = require('path').join(config.dataDir, 'ab-test.db');
-      if (!require('fs').existsSync(dbPath)) return null;
-      return new ABTestStore(config.dataDir);
+      const dbPath = path.join(config.dataDir, 'ab-test.db');
+      if (!fs.existsSync(dbPath)) return null;
+      this.cachedAbStore = new ABTestStore(config.dataDir);
+      return this.cachedAbStore;
     } catch {
       return null;
     }
@@ -1211,12 +1277,8 @@ export class DashboardServer {
       return { error: 'No A/B test data found', totalSessions: 0 };
     }
 
-    try {
-      const analyzer = new ABAnalyzer(store);
-      return analyzer.analyze();
-    } finally {
-      store.close();
-    }
+    const analyzer = new ABAnalyzer(store);
+    return analyzer.analyze();
   }
 
   /**
@@ -1228,11 +1290,7 @@ export class DashboardServer {
       return { sessions: [] };
     }
 
-    try {
-      return { sessions: store.getAllSessions() };
-    } finally {
-      store.close();
-    }
+    return { sessions: store.getAllSessions() };
   }
 
   /**
@@ -1249,8 +1307,6 @@ export class DashboardServer {
       return reportGen.generate(sessionId);
     } catch (err) {
       return { error: err instanceof Error ? err.message : 'Session not found' };
-    } finally {
-      store.close();
     }
   }
 
