@@ -207,7 +207,7 @@ function updateGateStats(containerId, gates) {
       const passRate = total > 0 ? (gate.passed / total) * 100 : 0;
       return `
         <div class="gate-stat-item">
-          <span class="gate-stat-name">${gate.displayName}</span>
+          <span class="gate-stat-name">${escapeHtml(gate.displayName)}</span>
           <div class="gate-stat-values">
             <span class="gate-stat-passed">${gate.passed}</span>
             <span class="gate-stat-failed">${gate.failed}</span>
@@ -231,7 +231,7 @@ function updateRejectionReasons(reasons) {
   }
   el.innerHTML = reasons.slice(0, 8).map(item => `
     <div class="rejection-item">
-      <span class="rejection-name">${formatRejectionReason(item.reason)}</span>
+      <span class="rejection-name">${escapeHtml(formatRejectionReason(item.reason))}</span>
       <span class="rejection-count">${item.count}</span>
     </div>
   `).join('');
@@ -292,7 +292,7 @@ async function updateTrades() {
         <span class="trade-type ${typeClass}">${trade.type.toUpperCase()}</span>
         <span class="trade-token">${shortenAddress(trade.tokenMint)}</span>
         <span class="trade-amount">${trade.amountSol.toFixed(4)} SOL</span>
-        <span class="trade-status">${trade.status}</span>
+        <span class="trade-status">${escapeHtml(trade.status)}</span>
         <span class="trade-time">${time}</span>
       </div>
     `;
@@ -324,7 +324,7 @@ function updateTokenList() {
     const symbol = token.symbol ? `($${token.symbol})` : '';
     let metaHtml = `<div class="token-time">${time}</div>`;
     if (token.outcome === 'rejected' && token.rejectionReason) {
-      metaHtml += `<div class="token-rejection">${formatRejectionReason(token.rejectionReason)}</div>`;
+      metaHtml += `<div class="token-rejection">${escapeHtml(formatRejectionReason(token.rejectionReason))}</div>`;
     }
     metaHtml += `<div class="token-duration">${token.pipelineDurationMs}ms</div>`;
 

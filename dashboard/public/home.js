@@ -76,6 +76,12 @@ function pnlClass(value) {
   return value >= 0 ? 'positive' : 'negative';
 }
 
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
 function formatTimeAgo(timestamp) {
   if (!timestamp) return '--';
   const seconds = Math.floor((Date.now() - timestamp) / 1000);
@@ -178,7 +184,7 @@ async function updateOverview() {
     if (el.infraBreakdown) {
       el.infraBreakdown.innerHTML = infra.breakdown.map(item =>
         `<div class="infra-item">
-          <span class="infra-name">${item.name}</span>
+          <span class="infra-name">${escapeHtml(item.name)}</span>
           <span class="infra-cost">$${item.monthlyCost}/mo</span>
           <span class="infra-total">$${item.totalSpent.toFixed(2)}</span>
         </div>`
@@ -308,9 +314,9 @@ async function updateRunHistory() {
 
     return `
       <div class="run-history-item">
-        <div class="run-mode">${modeLabel}</div>
-        <div class="run-summary">${run.summary || '--'}</div>
-        <div class="run-status ${statusClass}">${run.status}</div>
+        <div class="run-mode">${escapeHtml(modeLabel)}</div>
+        <div class="run-summary">${escapeHtml(run.summary || '--')}</div>
+        <div class="run-status ${statusClass}">${escapeHtml(run.status)}</div>
         <div class="run-time">${time}</div>
       </div>
     `;

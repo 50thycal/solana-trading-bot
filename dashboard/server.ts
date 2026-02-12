@@ -361,16 +361,37 @@ export class DashboardServer {
   }
 
   /**
-   * Handle POST requests to API endpoints
+   * Handle POST requests to API endpoints.
+   * POST endpoints are state-mutating so we restrict to same-origin requests
+   * by checking the Origin header against the Host header.
    */
   private async handlePostRequest(
     pathname: string,
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): Promise<void> {
+    // Restrict POST to same-origin: reject cross-origin requests
+    const origin = req.headers['origin'];
+    const host = req.headers['host'];
+    if (origin && host) {
+      try {
+        const originHost = new URL(origin).host;
+        if (originHost !== host) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Cross-origin POST not allowed' }));
+          return;
+        }
+      } catch {
+        // Malformed origin header — reject
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid origin' }));
+        return;
+      }
+    }
+
     try {
-      // Parse request body
-      const body = await this.parseRequestBody(req);
+      // Drain request body (none of the current handlers use it)
+      await this.drainRequestBody(req);
 
       switch (pathname) {
         case '/api/pipeline-stats/reset':
@@ -397,13 +418,29 @@ export class DashboardServer {
   }
 
   /**
-   * Parse JSON request body
+   * Drain a request body without parsing it
+   */
+  private drainRequestBody(req: http.IncomingMessage): Promise<void> {
+    return new Promise((resolve) => {
+      req.on('data', () => { /* discard */ });
+      req.on('end', resolve);
+      req.on('error', resolve);
+    });
+  }
+
+  /**
+   * Parse JSON request body (with 1 MB size limit)
    */
   private parseRequestBody(req: http.IncomingMessage): Promise<any> {
+    const MAX_BODY_SIZE = 1024 * 1024; // 1 MB
     return new Promise((resolve, reject) => {
       let body = '';
       req.on('data', (chunk) => {
         body += chunk.toString();
+        if (body.length > MAX_BODY_SIZE) {
+          req.destroy();
+          reject(new Error('Request body too large'));
+        }
       });
       req.on('end', () => {
         try {
