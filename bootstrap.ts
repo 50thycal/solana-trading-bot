@@ -24,6 +24,17 @@ let mainAppStartTime: Date | null = null;
 let healthServer: http.Server | null = null;
 
 /**
+ * Escape a string for safe embedding in HTML
+ */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
  * Simple logger that works without dependencies
  */
 function log(level: string, message: string, data?: Record<string, unknown>): void {
@@ -120,8 +131,8 @@ function createServer(): http.Server {
 body{font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0}
 .box{text-align:center;padding:2rem;border:1px solid #333;border-radius:8px;max-width:400px}
 h2{margin-top:0}p{color:#999}
-</style></head><body><div class="box"><h2>${statusLabel}</h2>
-<p>State: ${startupState}</p><p>This page will auto-refresh every 5 seconds.</p></div></body></html>`);
+</style></head><body><div class="box"><h2>${escapeHtml(statusLabel)}</h2>
+<p>State: ${escapeHtml(startupState)}</p><p>This page will auto-refresh every 5 seconds.</p></div></body></html>`);
       return;
     }
 

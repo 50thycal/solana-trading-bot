@@ -148,6 +148,12 @@
       } catch { return null; }
     }
 
+    function escapeHtml(text) {
+      var div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
     async function refresh() {
       // Compact report
       const compact = await fetchText('/api/diagnostic/compact');
@@ -186,7 +192,7 @@
             return '<tr' + cls + '>' +
               '<td>' + time + '</td>' +
               '<td>' + r.type.toUpperCase() + '</td>' +
-              '<td>' + (r.tokenSymbol || r.tokenMint.substring(0, 8) + '...') + '</td>' +
+              '<td>' + escapeHtml(r.tokenSymbol || r.tokenMint.substring(0, 8) + '...') + '</td>' +
               '<td>' + r.intendedAmountSol + '</td>' +
               '<td>' + actualSol + '</td>' +
               '<td>' + tokens + '</td>' +

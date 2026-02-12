@@ -33,6 +33,12 @@ function formatTimeAgo(timestamp) {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
 async function updateSmokeTestReport() {
   const report = await fetchApi('/api/smoke-test-report');
 
@@ -92,8 +98,8 @@ async function updateSmokeTestReport() {
           <div class="step-number">${index + 1}</div>
           <div class="step-icon">${statusIcon}</div>
           <div class="step-info">
-            <div class="step-name">${step.name}</div>
-            <div class="step-details">${step.details || ''}</div>
+            <div class="step-name">${escapeHtml(step.name)}</div>
+            <div class="step-details">${escapeHtml(step.details || '')}</div>
           </div>
           <div class="step-duration">${duration}</div>
         </div>
@@ -122,8 +128,8 @@ async function updateHistory() {
     return `
       <div class="run-history-item">
         <div class="run-mode">Smoke Test</div>
-        <div class="run-summary">${run.summary || '--'}</div>
-        <div class="run-status ${statusClass}">${run.status}</div>
+        <div class="run-summary">${escapeHtml(run.summary || '--')}</div>
+        <div class="run-status ${statusClass}">${escapeHtml(run.status)}</div>
         <div class="run-time">${formatTimeAgo(run.startedAt)}</div>
       </div>
     `;
