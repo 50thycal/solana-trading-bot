@@ -7,8 +7,8 @@
  *
  * Usage:
  *   BOT_MODE=ab AB_TEST_DURATION_MINUTES=240 \
- *   AB_CONFIG_A='{"takeProfit":40,"stopLoss":20}' \
- *   AB_CONFIG_B='{"takeProfit":60,"stopLoss":15}' \
+ *   AB_CONFIG_A='{"takeProfit":40,"stopLoss":20,"maxHoldDurationSeconds":20,"priceCheckIntervalSeconds":2,"momentumInitialDelaySeconds":0.1,"momentumRecheckIntervalSeconds":0.1}' \
+ *   AB_CONFIG_B='{"takeProfit":60,"stopLoss":15,"maxHoldDurationSeconds":30,"priceCheckIntervalSeconds":1,"momentumInitialDelaySeconds":0.2,"momentumRecheckIntervalSeconds":0.2}' \
  *   npx ts-node bootstrap.ts
  */
 

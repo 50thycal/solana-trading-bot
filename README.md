@@ -63,7 +63,7 @@ You should see the following output:
   - If you want to manually sell bought tokens, disable this option.
 - `MAX_SELL_RETRIES` - Maximum number of retries for selling a token.
 - `AUTO_SELL_DELAY` - Delay in milliseconds before auto-selling a token.
-- `PRICE_CHECK_INTERVAL_MINUTES` - Interval in minutes for checking the take profit and stop loss conditions.
+- `PRICE_CHECK_INTERVAL_SECONDS` - Interval in seconds for checking the take profit and stop loss conditions.
   - Set to zero to disable take profit and stop loss.
 - `PRICE_CHECK_DURATION_MINUTES` - Time in minutes to wait for stop loss/take profit conditions.
   - If you don't reach profit or loss bot will auto sell after this time.
