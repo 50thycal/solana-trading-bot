@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smoke Test Results</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Navigation -->
+    <nav id="nav-bar" class="nav-bar"></nav>
+
+    <!-- Header -->
+    <header class="page-header">
+      <div class="header-left">
+        <h1>Smoke Test</h1>
+        <span class="header-badge" id="smoke-badge">Results</span>
+      </div>
+    </header>
+
+    <!-- Result Summary Cards -->
+    <section class="overview-cards" id="summary-cards">
+      <div class="card">
+        <div class="card-label">Overall Result</div>
+        <div class="card-value" id="overall-result">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Steps Passed</div>
+        <div class="card-value positive" id="steps-passed">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Steps Failed</div>
+        <div class="card-value" id="steps-failed">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Duration</div>
+        <div class="card-value" id="duration">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Wallet Before</div>
+        <div class="card-value" id="wallet-before">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Net Cost</div>
+        <div class="card-value" id="net-cost">--</div>
+      </div>
+    </section>
+
+    <!-- Test Steps -->
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Test Steps</h2>
+      </div>
+      <div id="steps-list" class="steps-list">
+        <div class="empty-state" id="smoke-loading">Loading smoke test report...</div>
+      </div>
+    </section>
+
+    <!-- Run History -->
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Smoke Test History</h2>
+      </div>
+      <div id="history-list" class="run-history-list">
+        <div class="empty-state">No previous smoke tests</div>
+      </div>
+    </section>
+  </div>
+
+  <script src="/nav.js"></script>
+  <script src="/smoke-test.js"></script>
+</body>
+</html>

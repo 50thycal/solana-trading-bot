@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Production - Live Trading</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Navigation -->
+    <nav id="nav-bar" class="nav-bar"></nav>
+
+    <!-- Header -->
+    <header class="page-header">
+      <div class="header-left">
+        <h1>Production</h1>
+        <span class="header-badge" style="background: linear-gradient(135deg, #ff5252, #ff8a80);">Live Trading</span>
+      </div>
+    </header>
+
+    <!-- Key Metrics -->
+    <section class="overview-cards">
+      <div class="card card-highlight">
+        <div class="card-label">Wallet Balance</div>
+        <div class="card-value" id="wallet-balance">-- SOL</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Realized P&L</div>
+        <div class="card-value" id="realized-pnl">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Unrealized P&L</div>
+        <div class="card-value" id="unrealized-pnl">--</div>
+      </div>
+      <div class="card card-accent">
+        <div class="card-label">Total P&L</div>
+        <div class="card-value big" id="total-pnl">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Open Positions</div>
+        <div class="card-value" id="open-positions">0</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Exposure</div>
+        <div class="card-value" id="current-exposure" style="font-size:1rem">--</div>
+      </div>
+    </section>
+
+    <!-- Pipeline Funnel -->
+    <section class="panel pipeline-funnel-panel">
+      <div class="panel-header">
+        <h2>Pipeline Funnel</h2>
+        <div class="panel-actions">
+          <button class="btn btn-secondary btn-small" id="reset-stats-btn">Reset Stats</button>
+        </div>
+      </div>
+      <div class="pipeline-funnel" id="pipeline-funnel">
+        <div class="funnel-stage" id="funnel-detected">
+          <div class="funnel-label">Detected</div>
+          <div class="funnel-value">0</div>
+        </div>
+        <div class="funnel-arrow">&rarr;</div>
+        <div class="funnel-stage" id="funnel-cheap-gates">
+          <div class="funnel-label">Cheap Gates</div>
+          <div class="funnel-value">0</div>
+        </div>
+        <div class="funnel-arrow">&rarr;</div>
+        <div class="funnel-stage" id="funnel-deep-filters">
+          <div class="funnel-label">Deep Filters</div>
+          <div class="funnel-value">0</div>
+        </div>
+        <div class="funnel-arrow">&rarr;</div>
+        <div class="funnel-stage" id="funnel-momentum-gate">
+          <div class="funnel-label">Momentum Gate</div>
+          <div class="funnel-value">0</div>
+        </div>
+        <div class="funnel-arrow">&rarr;</div>
+        <div class="funnel-stage funnel-stage-success" id="funnel-bought">
+          <div class="funnel-label">Bought</div>
+          <div class="funnel-value">0</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Content Grid -->
+    <div class="main-grid">
+      <!-- Left Column -->
+      <div class="left-column">
+        <!-- P&L Detail -->
+        <section class="panel">
+          <div class="panel-header">
+            <h2>P&L Details</h2>
+          </div>
+          <div class="stat-grid">
+            <div class="stat-item">
+              <div class="stat-label">Total Buys</div>
+              <div class="stat-value" id="total-buys">0</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Total Sells</div>
+              <div class="stat-value" id="total-sells">0</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Win Rate</div>
+              <div class="stat-value" id="win-rate">--</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Trades/Hour</div>
+              <div class="stat-value" id="trades-per-hour">--</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Trade Audit Summary -->
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Trade Audit</h2>
+            <span class="panel-subtitle">Slippage & verification</span>
+          </div>
+          <div class="stat-grid" id="audit-stats">
+            <div class="stat-item">
+              <div class="stat-label">Audited</div>
+              <div class="stat-value" id="audit-total">0</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Mismatches</div>
+              <div class="stat-value" id="audit-mismatches">0</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Avg Slippage</div>
+              <div class="stat-value" id="audit-avg-slippage">--</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Gate Stats -->
+        <section class="panel gate-stats-panel">
+          <div class="panel-header">
+            <h2>Cheap Gates</h2>
+          </div>
+          <div class="gate-stats-list" id="cheap-gates-stats">
+            <div class="loading">Loading stats...</div>
+          </div>
+        </section>
+
+        <section class="panel gate-stats-panel">
+          <div class="panel-header">
+            <h2>Deep Filters</h2>
+          </div>
+          <div class="gate-stats-list" id="deep-filters-stats">
+            <div class="loading">Loading stats...</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Top Rejection Reasons</h2>
+          </div>
+          <div class="rejection-list" id="rejection-list">
+            <div class="empty-state">No data yet</div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Right Column -->
+      <div class="right-column">
+        <!-- Open Positions -->
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Open Positions</h2>
+            <span class="position-count" id="position-count">0</span>
+          </div>
+          <div class="positions-list" id="positions-list">
+            <div class="empty-state">No open positions</div>
+          </div>
+        </section>
+
+        <!-- Recent Trades -->
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Recent Trades</h2>
+          </div>
+          <div class="trade-list" id="trade-list">
+            <div class="empty-state">No trades yet</div>
+          </div>
+        </section>
+
+        <!-- Recent Tokens -->
+        <section class="panel tokens-panel">
+          <div class="panel-header">
+            <h2>Recent Tokens</h2>
+            <div class="filter-controls">
+              <select id="token-filter">
+                <option value="">All</option>
+                <option value="bought">Bought</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </div>
+          </div>
+          <div class="token-list" id="token-list">
+            <div class="empty-state">No tokens detected yet</div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- Reset Stats Modal -->
+    <div class="modal" id="reset-modal">
+      <div class="modal-backdrop" onclick="closeResetModal()"></div>
+      <div class="modal-content modal-small">
+        <div class="modal-header">
+          <h3>Reset Statistics</h3>
+          <button class="modal-close" onclick="closeResetModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-message">Are you sure you want to reset all pipeline statistics?</p>
+          <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="closeResetModal()">Cancel</button>
+            <button class="btn btn-danger" id="confirm-reset-btn">Reset Stats</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/nav.js"></script>
+  <script src="/production.js"></script>
+</body>
+</html>

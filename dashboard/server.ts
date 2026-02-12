@@ -21,6 +21,20 @@ import { getLogSummarizer } from '../helpers/log-summarizer';
 import { ABTestStore } from '../ab-test/ab-store';
 import { ABReportGenerator } from '../ab-test/ab-report';
 import { ABAnalyzer } from '../ab-test/ab-analyzer';
+import { version } from '../package.json';
+
+/**
+ * Infrastructure cost configuration
+ * Tracks monthly costs for bot infrastructure
+ */
+const INFRA_COSTS = {
+  startDate: '2026-01-01',
+  items: [
+    { name: 'Claude Code', monthlyCost: 130 },
+    { name: 'Helius', monthlyCost: 50 },
+    { name: 'Railway', monthlyCost: 5 },
+  ],
+};
 
 /**
  * Dashboard server configuration
@@ -220,6 +234,18 @@ export class DashboardServer {
       let data: any;
 
       switch (pathname) {
+        case '/api/bot-info':
+          data = this.getApiBotInfo();
+          break;
+
+        case '/api/overview':
+          data = await this.getApiOverview();
+          break;
+
+        case '/api/run-history':
+          data = this.getApiRunHistory();
+          break;
+
         case '/api/status':
           data = await this.getApiStatus();
           break;
@@ -431,6 +457,215 @@ export class DashboardServer {
           }
         : null,
       timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * GET /api/bot-info - Basic bot info that always works regardless of state
+   */
+  private getApiBotInfo() {
+    let botMode = 'unknown';
+    let dryRun = false;
+    try {
+      const { getConfig } = require('../helpers/config-validator');
+      const config = getConfig();
+      botMode = config.botMode;
+      dryRun = config.dryRun;
+    } catch {
+      // Config may not be loaded yet
+    }
+
+    return {
+      version,
+      botMode,
+      dryRun,
+      uptime: Math.floor((Date.now() - this.startTime.getTime()) / 1000),
+      uptimeFormatted: this.formatUptime(Math.floor((Date.now() - this.startTime.getTime()) / 1000)),
+      startTime: this.startTime.toISOString(),
+      websocket: {
+        connected: this.isWebSocketConnected,
+        lastActivity: this.lastWebSocketActivity?.toISOString(),
+      },
+      rpc: {
+        healthy: this.isRpcHealthy,
+      },
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * GET /api/overview - Homepage overview data
+   */
+  private async getApiOverview() {
+    const stateStore = getStateStore();
+    const pnlTracker = getPnlTracker();
+    const exposureManager = getExposureManager();
+    const pumpFunMonitor = getPumpFunPositionMonitor();
+    const paperTracker = getPaperTradeTracker();
+
+    let botMode = 'unknown';
+    let dryRun = false;
+    try {
+      const { getConfig } = require('../helpers/config-validator');
+      const config = getConfig();
+      botMode = config.botMode;
+      dryRun = config.dryRun;
+    } catch {
+      // Config may not be loaded yet
+    }
+
+    // Wallet balance
+    const walletBalance = exposureManager ? await exposureManager.getWalletBalance() : null;
+
+    // Real P&L
+    const pnlSummary = pnlTracker?.getSessionSummary();
+    const pumpFunMonitorStats = pumpFunMonitor?.getStats();
+    const unrealizedPnl = pumpFunMonitorStats?.unrealizedPnl || 0;
+
+    // Paper P&L
+    const paperSummaryStats = paperTracker?.getSummaryStats();
+
+    // Trade stats from DB
+    const dbStats = stateStore?.getStats();
+    const poolStats = stateStore?.getPoolDetectionStats();
+
+    // A/B test session count
+    let abSessionCount = 0;
+    const abStore = this.openAbStore();
+    if (abStore) {
+      try {
+        abSessionCount = abStore.getAllSessions().length;
+      } catch { /* no sessions */ }
+      abStore.close();
+    }
+
+    // Smoke test report
+    const smokeReport = getSmokeTestReport();
+
+    // Infrastructure costs
+    const infraCosts = this.calculateInfraCosts();
+
+    // Exposure stats
+    const exposureStats = exposureManager?.getStats();
+
+    return {
+      botMode,
+      dryRun,
+      version,
+      uptime: Math.floor((Date.now() - this.startTime.getTime()) / 1000),
+      uptimeFormatted: this.formatUptime(Math.floor((Date.now() - this.startTime.getTime()) / 1000)),
+      status: this.isWebSocketConnected ? 'running' : (botMode === 'standby' ? 'standby' : 'disconnected'),
+      walletBalance,
+      realPnl: pnlSummary ? {
+        realized: pnlSummary.realizedPnlSol,
+        unrealized: unrealizedPnl,
+        total: pnlSummary.realizedPnlSol + unrealizedPnl,
+        totalBuys: pnlSummary.totalBuys,
+        totalSells: pnlSummary.totalSells,
+        winRate: pnlSummary.winRate,
+      } : null,
+      paperPnl: paperSummaryStats ? {
+        realizedPnlSol: paperSummaryStats.realizedPnlSol,
+        totalTrades: paperSummaryStats.activeTrades + paperSummaryStats.closedTrades,
+        activeTrades: paperSummaryStats.activeTrades,
+        closedTrades: paperSummaryStats.closedTrades,
+        monitoringEnabled: paperSummaryStats.monitoringEnabled,
+      } : null,
+      exposure: exposureStats ? {
+        currentExposure: exposureStats.totalExposure,
+        maxExposure: exposureStats.maxExposure,
+        tradesThisHour: exposureStats.tradesThisHour,
+        maxTradesPerHour: exposureStats.maxTradesPerHour,
+      } : null,
+      positions: {
+        open: stateStore?.getOpenPositions().length || 0,
+        monitored: pumpFunMonitorStats?.positionCount || 0,
+      },
+      pipeline: poolStats ? {
+        totalDetected: poolStats.totalDetected,
+        totalBought: poolStats.totalBought,
+        totalFiltered: poolStats.totalFiltered,
+        buyRate: poolStats.totalDetected > 0
+          ? ((poolStats.totalBought / poolStats.totalDetected) * 100)
+          : 0,
+      } : null,
+      trainingRuns: {
+        abSessions: abSessionCount,
+        smokeTestCompleted: smokeReport ? true : false,
+        smokeTestResult: smokeReport?.overallResult || null,
+      },
+      infraCosts,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * GET /api/run-history - History of runs across modes
+   */
+  private getApiRunHistory() {
+    const history: any[] = [];
+
+    // A/B test sessions
+    const abStore = this.openAbStore();
+    if (abStore) {
+      try {
+        const sessions = abStore.getAllSessions();
+        for (const session of sessions) {
+          history.push({
+            mode: 'ab',
+            id: session.sessionId,
+            startedAt: session.startedAt,
+            status: session.status,
+            tokensDetected: session.totalTokensDetected,
+            summary: session.status === 'completed' ? 'Completed' : 'In progress',
+          });
+        }
+      } catch { /* no sessions */ }
+      abStore.close();
+    }
+
+    // Smoke test report (current/last)
+    const smokeReport = getSmokeTestReport();
+    if (smokeReport) {
+      history.push({
+        mode: 'smoke',
+        id: `smoke-${smokeReport.startedAt}`,
+        startedAt: smokeReport.startedAt,
+        completedAt: smokeReport.completedAt,
+        status: smokeReport.overallResult === 'PASS' ? 'completed' : 'failed',
+        summary: `${smokeReport.overallResult} (${smokeReport.passedCount}/${smokeReport.totalSteps} steps)`,
+      });
+    }
+
+    // Sort by start time descending
+    history.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+
+    return { runs: history };
+  }
+
+  /**
+   * Calculate infrastructure costs from start date to now
+   */
+  private calculateInfraCosts() {
+    const startDate = new Date(INFRA_COSTS.startDate);
+    const now = new Date();
+    const msPerDay = 86400000;
+    const totalDays = Math.max(0, (now.getTime() - startDate.getTime()) / msPerDay);
+    const totalMonths = totalDays / 30.44; // Average days per month
+
+    const monthlyTotal = INFRA_COSTS.items.reduce((sum, item) => sum + item.monthlyCost, 0);
+    const totalSpent = monthlyTotal * totalMonths;
+
+    return {
+      monthlyTotal,
+      totalSpent: Math.round(totalSpent * 100) / 100,
+      startDate: INFRA_COSTS.startDate,
+      daysSinceStart: Math.floor(totalDays),
+      breakdown: INFRA_COSTS.items.map(item => ({
+        name: item.name,
+        monthlyCost: item.monthlyCost,
+        totalSpent: Math.round((item.monthlyCost * totalMonths) * 100) / 100,
+      })),
     };
   }
 
@@ -1025,9 +1260,15 @@ export class DashboardServer {
 
   private async handleStaticFile(pathname: string, res: http.ServerResponse): Promise<void> {
     // Default to index.html for root, and handle known page routes
-    let filePath = pathname === '/' ? '/index.html'
-      : pathname === '/ab-results' ? '/ab-results.html'
-      : pathname;
+    const pageRoutes: Record<string, string> = {
+      '/': '/index.html',
+      '/dry-run': '/dry-run.html',
+      '/production': '/production.html',
+      '/smoke-test': '/smoke-test.html',
+      '/ab-test': '/ab-results.html',
+      '/ab-results': '/ab-results.html',
+    };
+    let filePath = pageRoutes[pathname] || pathname;
 
     // Security: prevent directory traversal
     filePath = path.normalize(filePath).replace(/^(\.\.[\/\\])+/, '');

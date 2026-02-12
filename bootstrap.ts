@@ -211,11 +211,14 @@ async function bootstrap(): Promise<void> {
     // Start dashboard so users can view results via the UI
     await startDashboard();
 
+    // Mark as ready immediately so the dashboard proxy works while the test runs
+    startupState = 'ready';
+    log('info', 'Dashboard ready - smoke test running in background');
+
     try {
       const { runSmokeTest } = await import('./smoke-test');
       const report = await runSmokeTest();
 
-      startupState = 'ready';
       log('info', `Smoke test complete: ${report.overallResult}`, {
         passed: report.passedCount,
         failed: report.failedCount,
@@ -226,7 +229,6 @@ async function bootstrap(): Promise<void> {
       // Keep the server running so the dashboard stays accessible for viewing results
       log('info', 'Smoke test finished - dashboard remains available for viewing results');
     } catch (error) {
-      startupState = 'failed';
       startupError = error instanceof Error ? error.message : String(error);
       log('error', 'Smoke test failed with error', { error: startupError });
 
@@ -240,11 +242,14 @@ async function bootstrap(): Promise<void> {
     // Start dashboard so users can view A/B test results via the UI
     await startDashboard();
 
+    // Mark as ready immediately so the dashboard proxy works while the test runs
+    startupState = 'ready';
+    log('info', 'Dashboard ready - A/B test running in background');
+
     try {
       const { runABTest } = await import('./ab-test');
       const report = await runABTest();
 
-      startupState = 'ready';
       log('info', `A/B test complete: Winner=${report.winner}`, {
         variantA_pnl: report.variantA.realizedPnlSol,
         variantB_pnl: report.variantB.realizedPnlSol,
@@ -255,7 +260,6 @@ async function bootstrap(): Promise<void> {
       // Keep the server running so the dashboard stays accessible for reviewing results
       log('info', 'A/B test finished - dashboard remains available for viewing results');
     } catch (error) {
-      startupState = 'failed';
       startupError = error instanceof Error ? error.message : String(error);
       log('error', 'A/B test failed with error', { error: startupError });
 
