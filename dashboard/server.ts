@@ -725,6 +725,7 @@ export class DashboardServer {
 
       const conn = this.cachedConnection;
       const pubkey = this.cachedWalletPublicKey;
+      if (!conn || !pubkey) return null;
       const balance = await conn.getBalance(pubkey);
       return balance / LAMPORTS_PER_SOL;
     } catch (error) {
