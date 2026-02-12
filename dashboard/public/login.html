@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard Login</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: #0f1419;
+      color: #e7e9ea;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .login-box {
+      background: #1a1f26;
+      border: 1px solid #2f3336;
+      border-radius: 12px;
+      padding: 2.5rem;
+      width: 100%;
+      max-width: 380px;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+    }
+    .login-box h1 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+      text-align: center;
+    }
+    .login-box .subtitle {
+      color: #8b98a5;
+      text-align: center;
+      margin-bottom: 1.5rem;
+      font-size: 0.9rem;
+    }
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 0.5rem;
+      color: #8b98a5;
+      font-size: 0.85rem;
+    }
+    .form-group input {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      background: #242b33;
+      border: 1px solid #2f3336;
+      border-radius: 8px;
+      color: #e7e9ea;
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .form-group input:focus {
+      border-color: #2196f3;
+    }
+    .btn {
+      width: 100%;
+      padding: 0.75rem;
+      background: #2196f3;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn:hover { background: #1976d2; }
+    .btn:disabled { background: #333; cursor: not-allowed; }
+    .error {
+      color: #ff5252;
+      text-align: center;
+      margin-top: 1rem;
+      font-size: 0.85rem;
+      min-height: 1.2em;
+    }
+    .error.locked {
+      color: #ffc107;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-box">
+    <h1>Trading Bot</h1>
+    <p class="subtitle">Enter password to access the dashboard</p>
+    <form id="login-form">
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" placeholder="Enter dashboard password" autofocus required>
+      </div>
+      <button type="submit" class="btn" id="submit-btn">Log In</button>
+      <div class="error" id="error-msg"></div>
+    </form>
+  </div>
+
+  <script>
+    const form = document.getElementById('login-form');
+    const errorMsg = document.getElementById('error-msg');
+    const submitBtn = document.getElementById('submit-btn');
+    const passwordInput = document.getElementById('password');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorMsg.textContent = '';
+      errorMsg.className = 'error';
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Logging in...';
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: passwordInput.value }),
+        });
+
+        const data = await res.json();
+
+        if (data.success) {
+          window.location.href = '/';
+        } else {
+          if (data.attemptsLeft === 0) {
+            errorMsg.className = 'error locked';
+            errorMsg.textContent = data.error;
+            submitBtn.disabled = true;
+          } else {
+            errorMsg.textContent = data.error;
+            if (data.attemptsLeft !== undefined) {
+              errorMsg.textContent += ' (' + data.attemptsLeft + ' attempts remaining)';
+            }
+            submitBtn.disabled = false;
+          }
+          submitBtn.textContent = 'Log In';
+          passwordInput.value = '';
+          passwordInput.focus();
+        }
+      } catch (err) {
+        errorMsg.textContent = 'Connection error. Please try again.';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Log In';
+      }
+    });
+  </script>
+</body>
+</html>

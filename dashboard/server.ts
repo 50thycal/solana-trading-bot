@@ -6,6 +6,7 @@
  */
 
 import http from 'http';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { URL } from 'url';
@@ -75,6 +76,10 @@ export class DashboardServer {
   private cachedWalletPublicKey: PublicKey | null = null;
   /** Cached AB store to avoid re-opening the database on every poll */
   private cachedAbStore: ABTestStore | null = null;
+  /** Auth secret for signing session cookies - regenerated each startup */
+  private readonly authSecret = crypto.randomBytes(32).toString('hex');
+  /** Rate limiting: track failed login attempts by IP */
+  private readonly loginAttempts = new Map<string, { count: number; lockedUntil: number | null }>();
 
   constructor(private readonly config: DashboardConfig) {
     this.startTime = new Date();
@@ -100,7 +105,10 @@ export class DashboardServer {
       });
 
       this.server.listen(this.config.port, () => {
-        logger.info({ port: this.config.port }, 'Dashboard server started');
+        logger.info(
+          { port: this.config.port, authEnabled: this.requiresAuth() },
+          `Dashboard server started${this.requiresAuth() ? ' (password auth enabled)' : ' (no auth - set DASHBOARD_PASSWORD to enable)'}`,
+        );
         resolve();
       });
     });
@@ -144,6 +152,25 @@ export class DashboardServer {
       res.writeHead(204);
       res.end();
       return;
+    }
+
+    // Authentication check
+    if (this.requiresAuth()) {
+      const isHealthEndpoint = pathname === '/health' || pathname === '/healthz'
+        || pathname === '/ready' || pathname === '/readyz'
+        || pathname === '/live' || pathname === '/livez';
+      const isLoginRoute = pathname === '/login' || pathname === '/api/auth/login';
+
+      if (!isHealthEndpoint && !isLoginRoute && !this.isAuthenticated(req)) {
+        if (pathname.startsWith('/api/')) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Unauthorized' }));
+        } else {
+          res.writeHead(302, { 'Location': '/login' });
+          res.end();
+        }
+        return;
+      }
     }
 
     // Handle POST requests to API
@@ -373,6 +400,10 @@ export class DashboardServer {
       const body = await this.parseRequestBody(req);
 
       switch (pathname) {
+        case '/api/auth/login':
+          await this.handleLogin(body, req, res);
+          break;
+
         case '/api/pipeline-stats/reset':
           await this.handleResetPipelineStats(res);
           break;
@@ -1321,6 +1352,7 @@ export class DashboardServer {
     // Default to index.html for root, and handle known page routes
     const pageRoutes: Record<string, string> = {
       '/': '/index.html',
+      '/login': '/login.html',
       '/dry-run': '/dry-run.html',
       '/production': '/production.html',
       '/smoke-test': '/smoke-test.html',
@@ -1390,6 +1422,147 @@ export class DashboardServer {
 
   public isHealthy(): boolean {
     return this.isWebSocketConnected && this.isRpcHealthy;
+  }
+
+  // ============================================================
+  // AUTHENTICATION
+  // ============================================================
+
+  private requiresAuth(): boolean {
+    return !!process.env.DASHBOARD_PASSWORD;
+  }
+
+  private isAuthenticated(req: http.IncomingMessage): boolean {
+    const cookies = this.parseCookies(req);
+    const token = cookies['dashboard_session'];
+    if (!token) return false;
+    return this.validateSessionToken(token);
+  }
+
+  private createSessionToken(): string {
+    const timestamp = Date.now().toString();
+    const hmac = crypto.createHmac('sha256', this.authSecret).update(timestamp).digest('hex');
+    return `${timestamp}.${hmac}`;
+  }
+
+  private validateSessionToken(token: string): boolean {
+    const dotIndex = token.indexOf('.');
+    if (dotIndex === -1) return false;
+
+    const timestamp = token.substring(0, dotIndex);
+    const hmac = token.substring(dotIndex + 1);
+
+    // Check expiry (7 days)
+    const age = Date.now() - parseInt(timestamp, 10);
+    if (isNaN(age) || age < 0 || age > 7 * 24 * 60 * 60 * 1000) return false;
+
+    // Verify HMAC with timing-safe comparison
+    const expectedHmac = crypto.createHmac('sha256', this.authSecret).update(timestamp).digest('hex');
+    try {
+      return crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(expectedHmac));
+    } catch {
+      return false;
+    }
+  }
+
+  private async handleLogin(
+    body: any,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ): Promise<void> {
+    const dashboardPassword = process.env.DASHBOARD_PASSWORD;
+    if (!dashboardPassword) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Authentication not configured' }));
+      return;
+    }
+
+    const clientIp = this.getClientIp(req);
+
+    // Check rate limit
+    const attempt = this.loginAttempts.get(clientIp);
+    if (attempt?.lockedUntil && Date.now() < attempt.lockedUntil) {
+      const remainingHours = Math.ceil((attempt.lockedUntil - Date.now()) / (1000 * 60 * 60));
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: false,
+        error: `Too many failed attempts. Locked out for ${remainingHours} hour(s).`,
+        attemptsLeft: 0,
+      }));
+      return;
+    }
+
+    // Reset expired lockouts
+    if (attempt?.lockedUntil && Date.now() >= attempt.lockedUntil) {
+      this.loginAttempts.delete(clientIp);
+    }
+
+    const { password } = body;
+
+    // Constant-time password comparison via hashing (fixed-length buffers)
+    const hashStr = (s: string) => crypto.createHash('sha256').update(s).digest();
+    const isCorrect = typeof password === 'string'
+      && crypto.timingSafeEqual(hashStr(password), hashStr(dashboardPassword));
+
+    if (!isCorrect) {
+      const record = this.loginAttempts.get(clientIp) || { count: 0, lockedUntil: null };
+      record.count++;
+      if (record.count >= 10) {
+        record.lockedUntil = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+      }
+      this.loginAttempts.set(clientIp, record);
+
+      const attemptsLeft = record.lockedUntil ? 0 : 10 - record.count;
+      logger.warn({ ip: clientIp, attemptsLeft }, 'Failed dashboard login attempt');
+
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: false,
+        error: record.lockedUntil ? 'Too many failed attempts. Locked out for 24 hours.' : 'Invalid password',
+        attemptsLeft,
+      }));
+      return;
+    }
+
+    // Success - reset attempts and set session cookie
+    this.loginAttempts.delete(clientIp);
+    logger.info({ ip: clientIp }, 'Successful dashboard login');
+
+    const token = this.createSessionToken();
+    const isSecure = req.headers['x-forwarded-proto'] === 'https';
+    const cookie = `dashboard_session=${token}; HttpOnly; ${isSecure ? 'Secure; ' : ''}SameSite=Strict; Path=/; Max-Age=604800`;
+
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Set-Cookie': cookie,
+    });
+    res.end(JSON.stringify({ success: true }));
+  }
+
+  private parseCookies(req: http.IncomingMessage): Record<string, string> {
+    const cookies: Record<string, string> = {};
+    const header = req.headers.cookie;
+    if (!header) return cookies;
+
+    header.split(';').forEach(cookie => {
+      const eqIndex = cookie.indexOf('=');
+      if (eqIndex > 0) {
+        const name = cookie.substring(0, eqIndex).trim();
+        const value = cookie.substring(eqIndex + 1).trim();
+        cookies[name] = value;
+      }
+    });
+
+    return cookies;
+  }
+
+  private getClientIp(req: http.IncomingMessage): string {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) {
+      const ip = Array.isArray(forwarded) ? forwarded[0] : forwarded.split(',')[0];
+      return ip.trim();
+    }
+    return req.socket.remoteAddress || 'unknown';
   }
 
   // ============================================================
