@@ -723,7 +723,9 @@ export class DashboardServer {
         this.cachedWalletPublicKey = wallet.publicKey;
       }
 
-      const balance = await this.cachedConnection.getBalance(this.cachedWalletPublicKey);
+      const conn = this.cachedConnection;
+      const pubkey = this.cachedWalletPublicKey;
+      const balance = await conn.getBalance(pubkey);
       return balance / LAMPORTS_PER_SOL;
     } catch (error) {
       logger.error({ error }, 'Failed to get wallet balance via fallback');
