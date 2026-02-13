@@ -417,14 +417,17 @@ export class DashboardServer {
     }
 
     try {
-      // Drain request body (none of the current handlers use it)
+      // Login endpoint needs the request body; other handlers don't
+      if (pathname === '/api/auth/login') {
+        const body = await this.parseRequestBody(req);
+        await this.handleLogin(body, req, res);
+        return;
+      }
+
+      // Drain request body (other handlers don't use it)
       await this.drainRequestBody(req);
 
       switch (pathname) {
-        case '/api/auth/login':
-          await this.handleLogin(body, req, res);
-          break;
-
         case '/api/pipeline-stats/reset':
           await this.handleResetPipelineStats(res);
           break;
