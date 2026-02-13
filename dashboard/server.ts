@@ -18,7 +18,7 @@ import { PoolAction, PoolType } from '../persistence/models';
 import { getPipelineStats, resetPipelineStats } from '../pipeline';
 import { getPaperTradeTracker } from '../risk';
 import { getTradeAuditManager } from '../helpers/trade-audit';
-import { getSmokeTestReport } from '../smoke-test';
+import { getSmokeTestReport, getAllSmokeTestReports } from '../smoke-test';
 import { getLogSummarizer } from '../helpers/log-summarizer';
 import { ABTestStore } from '../ab-test/ab-store';
 import { ABReportGenerator } from '../ab-test/ab-report';
@@ -339,6 +339,10 @@ export class DashboardServer {
           data = getSmokeTestReport() || { status: 'no_report', message: 'No smoke test has been run' };
           break;
 
+        case '/api/smoke-test-reports':
+          data = { reports: getAllSmokeTestReports() };
+          break;
+
         case '/api/diagnostic':
           data = this.getApiDiagnostic();
           break;
@@ -366,6 +370,13 @@ export class DashboardServer {
           if (pathname.startsWith('/api/ab-results/session/')) {
             const sessionId = pathname.substring('/api/ab-results/session/'.length);
             data = this.getAbResultsSessionDetail(sessionId);
+          }
+          // Check for /api/smoke-test-reports/:id pattern
+          else if (pathname.startsWith('/api/smoke-test-reports/')) {
+            const reportId = pathname.substring('/api/smoke-test-reports/'.length);
+            const allReports = getAllSmokeTestReports();
+            const report = allReports.find(r => String(r.startedAt) === reportId);
+            data = report || { error: 'Smoke test report not found' };
           }
           // Check for /api/pools/:id pattern
           else if (pathname.startsWith('/api/pools/')) {
@@ -643,8 +654,9 @@ export class DashboardServer {
       } catch { /* no sessions */ }
     }
 
-    // Smoke test report
+    // Smoke test reports
     const smokeReport = getSmokeTestReport();
+    const allSmokeReports = getAllSmokeTestReports();
 
     // Infrastructure costs
     const infraCosts = this.calculateInfraCosts();
@@ -700,6 +712,10 @@ export class DashboardServer {
         abSessions: abSessionCount,
         smokeTestCompleted: smokeReport ? true : false,
         smokeTestResult: smokeReport?.overallResult || null,
+        smokeTestCount: allSmokeReports.length || (smokeReport ? 1 : 0),
+        smokeTestTotalPnlSol: allSmokeReports.length > 0
+          ? allSmokeReports.reduce((sum, r) => sum + (-r.netCostSol), 0)
+          : (smokeReport ? -smokeReport.netCostSol : 0),
       },
       infraCosts,
       timestamp: new Date().toISOString(),
@@ -730,17 +746,46 @@ export class DashboardServer {
       } catch { /* no sessions */ }
     }
 
-    // Smoke test report (current/last)
-    const smokeReport = getSmokeTestReport();
-    if (smokeReport) {
+    // Smoke test reports (all persisted + current in-memory)
+    const allSmokeReports = getAllSmokeTestReports();
+    const currentSmokeReport = getSmokeTestReport();
+
+    // Build a set of known report IDs from persisted reports
+    const seenSmokeIds = new Set<string>();
+
+    for (const report of allSmokeReports) {
+      const id = `smoke-${report.startedAt}`;
+      seenSmokeIds.add(id);
+      // netCostSol = walletBefore - walletAfter; negative means profit
+      const pnlSol = -report.netCostSol;
       history.push({
         mode: 'smoke',
-        id: `smoke-${smokeReport.startedAt}`,
-        startedAt: smokeReport.startedAt,
-        completedAt: smokeReport.completedAt,
-        status: smokeReport.overallResult === 'PASS' ? 'completed' : 'failed',
-        summary: `${smokeReport.overallResult} (${smokeReport.passedCount}/${smokeReport.totalSteps} steps)`,
+        id,
+        startedAt: report.startedAt,
+        completedAt: report.completedAt,
+        status: report.overallResult === 'PASS' ? 'completed' : 'failed',
+        summary: `${report.overallResult} (${report.passedCount}/${report.totalSteps} steps)`,
+        pnlSol,
+        exitTrigger: report.exitTrigger,
       });
+    }
+
+    // Include current in-memory report if not already persisted
+    if (currentSmokeReport) {
+      const id = `smoke-${currentSmokeReport.startedAt}`;
+      if (!seenSmokeIds.has(id)) {
+        const pnlSol = -currentSmokeReport.netCostSol;
+        history.push({
+          mode: 'smoke',
+          id,
+          startedAt: currentSmokeReport.startedAt,
+          completedAt: currentSmokeReport.completedAt,
+          status: currentSmokeReport.overallResult === 'PASS' ? 'completed' : 'failed',
+          summary: `${currentSmokeReport.overallResult} (${currentSmokeReport.passedCount}/${currentSmokeReport.totalSteps} steps)`,
+          pnlSol,
+          exitTrigger: currentSmokeReport.exitTrigger,
+        });
+      }
     }
 
     // Sort by start time descending

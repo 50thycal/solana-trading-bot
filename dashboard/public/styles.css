@@ -1476,8 +1476,9 @@ body {
 
 .run-history-item {
   display: grid;
-  grid-template-columns: 80px 1fr 80px 70px;
+  grid-template-columns: 80px 1fr auto auto 80px 70px;
   align-items: center;
+  gap: 0.5rem;
   padding: 0.75rem 1.25rem;
   border-bottom: 1px solid var(--border-color);
   font-size: 0.85rem;
@@ -1494,6 +1495,18 @@ body {
 
 .run-summary {
   color: var(--text-secondary);
+}
+
+.run-pnl {
+  font-weight: 600;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.run-exit {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
 }
 
 .run-status {
@@ -1620,6 +1633,19 @@ body {
   color: var(--accent-yellow);
 }
 
+.step-skipped .step-icon {
+  color: var(--text-muted);
+}
+
+.step-skipped .step-number {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.step-skipped .step-name {
+  color: var(--text-muted);
+}
+
 .step-info {
   flex: 1;
 }
@@ -1671,6 +1697,10 @@ body {
   .run-history-item {
     grid-template-columns: 1fr 1fr;
     gap: 0.25rem;
+  }
+
+  .run-exit {
+    display: none;
   }
 
   .trade-item {
