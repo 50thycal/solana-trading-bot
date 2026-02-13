@@ -1,9 +1,12 @@
 /**
  * Smoke Test Results Page
- * Shows smoke test report and step-by-step results
+ * Shows smoke test report with full step-by-step detail and clickable history
  */
 
 const POLL_INTERVAL = 5000;
+
+// Track whether the user is viewing a historical report (null = current)
+let viewingReportId = null;
 
 async function fetchApi(endpoint) {
   try {
@@ -33,19 +36,34 @@ function formatTimeAgo(timestamp) {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+function formatDate(timestamp) {
+  if (!timestamp) return '--';
+  return new Date(timestamp).toLocaleString();
+}
+
+function formatPnl(value) {
+  if (value === null || value === undefined) return '--';
+  const sign = value >= 0 ? '+' : '';
+  return `${sign}${value.toFixed(4)} SOL`;
+}
+
+function pnlClass(value) {
+  if (value === null || value === undefined) return '';
+  return value >= 0 ? 'positive' : 'negative';
+}
+
 function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
 }
 
-async function updateSmokeTestReport() {
-  const report = await fetchApi('/api/smoke-test-report');
-
+/**
+ * Render a smoke test report into the UI (works for both current and historical)
+ */
+function renderReport(report) {
   if (!report || report.status === 'no_report') {
     document.getElementById('smoke-loading').textContent = 'No smoke test report available. Run in smoke mode to generate one.';
-
-    // Update badge
     document.getElementById('smoke-badge').textContent = 'No Report';
     return;
   }
@@ -65,6 +83,16 @@ async function updateSmokeTestReport() {
   resultEl.textContent = report.overallResult;
   resultEl.className = `card-value ${report.overallResult === 'PASS' ? 'positive' : 'negative'}`;
 
+  // P&L (computed from net cost)
+  const pnlEl = document.getElementById('pnl-value');
+  if (report.netCostSol !== undefined) {
+    const pnl = -report.netCostSol; // negative netCost = profit
+    pnlEl.textContent = formatPnl(pnl);
+    pnlEl.className = `card-value big ${pnlClass(pnl)}`;
+  } else {
+    pnlEl.textContent = '--';
+  }
+
   const passedEl = document.getElementById('steps-passed');
   passedEl.textContent = `${report.passedCount}/${report.totalSteps}`;
 
@@ -73,6 +101,14 @@ async function updateSmokeTestReport() {
   failedEl.className = `card-value ${report.failedCount > 0 ? 'negative' : 'positive'}`;
 
   document.getElementById('duration').textContent = formatDuration(report.totalDurationMs);
+
+  // Exit trigger
+  const exitEl = document.getElementById('exit-trigger');
+  if (report.exitTrigger) {
+    exitEl.textContent = report.exitTrigger;
+  } else {
+    exitEl.textContent = '--';
+  }
 
   const walletBefore = document.getElementById('wallet-before');
   if (report.walletBalanceBefore !== undefined) {
@@ -89,8 +125,14 @@ async function updateSmokeTestReport() {
   const stepsList = document.getElementById('steps-list');
   if (report.steps && report.steps.length > 0) {
     stepsList.innerHTML = report.steps.map((step, index) => {
-      const statusClass = step.status === 'passed' ? 'step-passed' : step.status === 'failed' ? 'step-failed' : 'step-running';
-      const statusIcon = step.status === 'passed' ? '&#10003;' : step.status === 'failed' ? '&#10007;' : '&#8987;';
+      const statusClass = step.status === 'passed' ? 'step-passed'
+        : step.status === 'failed' ? 'step-failed'
+        : step.status === 'skipped' ? 'step-skipped'
+        : 'step-running';
+      const statusIcon = step.status === 'passed' ? '&#10003;'
+        : step.status === 'failed' ? '&#10007;'
+        : step.status === 'skipped' ? '&#8212;'
+        : '&#8987;';
       const duration = step.durationMs ? formatDuration(step.durationMs) : '--';
 
       return `
@@ -108,29 +150,124 @@ async function updateSmokeTestReport() {
   } else {
     stepsList.innerHTML = '<div class="empty-state">No steps recorded</div>';
   }
+
+  // Buy failures section
+  const buyFailuresPanel = document.getElementById('buy-failures-panel');
+  const buyFailuresList = document.getElementById('buy-failures-list');
+  const buyFailuresCount = document.getElementById('buy-failures-count');
+
+  if (report.buyFailures && report.buyFailures.length > 0) {
+    buyFailuresPanel.style.display = 'block';
+    buyFailuresCount.textContent = `${report.buyFailures.length} failed attempts before successful buy`;
+    buyFailuresList.innerHTML = report.buyFailures.map(f => {
+      return `
+        <div class="buy-failure-item">
+          <span class="buy-failure-mint">${escapeHtml((f.tokenSymbol || '') + ' ' + (f.tokenMint || '').substring(0, 12))}...</span>
+          <span class="buy-failure-reason">${escapeHtml(f.reason || 'Unknown')}</span>
+          <span>${formatTimeAgo(f.timestamp)}</span>
+        </div>
+      `;
+    }).join('');
+  } else {
+    buyFailuresPanel.style.display = 'none';
+  }
 }
 
-async function updateHistory() {
-  const data = await fetchApi('/api/run-history');
-  if (!data || !data.runs) return;
+/**
+ * Load and render the current (live) smoke test report
+ */
+async function updateSmokeTestReport() {
+  // Don't overwrite when viewing a historical report
+  if (viewingReportId !== null) return;
 
-  const smokeRuns = data.runs.filter(r => r.mode === 'smoke');
+  const report = await fetchApi('/api/smoke-test-report');
+  renderReport(report);
+}
+
+/**
+ * Load a specific historical report and display it
+ */
+async function viewReport(reportId) {
+  viewingReportId = reportId;
+
+  // Show the historical banner
+  const banner = document.getElementById('detail-banner');
+  const bannerText = document.getElementById('banner-text');
+  banner.classList.add('visible');
+  bannerText.textContent = `Viewing smoke test from ${formatDate(Number(reportId))}`;
+
+  // Fetch the specific report
+  const report = await fetchApi(`/api/smoke-test-reports/${reportId}`);
+  if (report && !report.error) {
+    renderReport(report);
+  }
+
+  // Highlight active row in history
+  document.querySelectorAll('.history-item-clickable').forEach(el => {
+    el.classList.toggle('active-report', el.dataset.reportId === reportId);
+  });
+}
+
+/**
+ * Go back to viewing the current/live report
+ */
+function backToCurrent() {
+  viewingReportId = null;
+
+  // Hide banner
+  document.getElementById('detail-banner').classList.remove('visible');
+
+  // Remove active highlights
+  document.querySelectorAll('.history-item-clickable').forEach(el => {
+    el.classList.remove('active-report');
+  });
+
+  // Reload current report
+  updateSmokeTestReport();
+}
+
+/**
+ * Load and render the history list with clickable entries
+ */
+async function updateHistory() {
+  const data = await fetchApi('/api/smoke-test-reports');
   const listEl = document.getElementById('history-list');
+  const countEl = document.getElementById('history-count');
   if (!listEl) return;
 
-  if (smokeRuns.length === 0) {
+  // Use persisted reports; fall back to run-history
+  let reports = (data && data.reports) ? data.reports : [];
+
+  // Sort newest first
+  reports.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+
+  if (countEl) countEl.textContent = `${reports.length} run${reports.length !== 1 ? 's' : ''}`;
+
+  if (reports.length === 0) {
     listEl.innerHTML = '<div class="empty-state">No previous smoke tests</div>';
     return;
   }
 
-  listEl.innerHTML = smokeRuns.map(run => {
-    const statusClass = run.status === 'completed' ? 'positive' : 'negative';
+  listEl.innerHTML = reports.map(report => {
+    const id = String(report.startedAt);
+    const pnl = -report.netCostSol;
+    const pnlValue = formatPnl(pnl);
+    const pnlCls = pnlClass(pnl);
+    const statusClass = report.overallResult === 'PASS' ? 'positive' : 'negative';
+    const isActive = viewingReportId === id;
+    const date = formatDate(report.startedAt);
+    const duration = formatDuration(report.totalDurationMs);
+    const exitTrigger = report.exitTrigger || '';
+
     return `
-      <div class="run-history-item">
-        <div class="run-mode">Smoke Test</div>
-        <div class="run-summary">${escapeHtml(run.summary || '--')}</div>
-        <div class="run-status ${statusClass}">${escapeHtml(run.status)}</div>
-        <div class="run-time">${formatTimeAgo(run.startedAt)}</div>
+      <div class="run-history-item history-item-clickable ${isActive ? 'active-report' : ''}"
+           data-report-id="${escapeHtml(id)}"
+           onclick="viewReport('${escapeHtml(id)}')">
+        <div class="run-mode">${escapeHtml(report.overallResult)}</div>
+        <div class="run-summary">${escapeHtml(date)} &middot; ${duration}${exitTrigger ? ' &middot; ' + escapeHtml(exitTrigger) : ''}</div>
+        <div class="run-pnl ${pnlCls}">${pnlValue}</div>
+        <div class="run-status ${statusClass}">${report.passedCount}/${report.totalSteps} steps</div>
+        <div class="run-time">${formatTimeAgo(report.startedAt)}</div>
       </div>
     `;
   }).join('');

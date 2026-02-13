@@ -5,6 +5,74 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Smoke Test Results</title>
   <link rel="stylesheet" href="/styles.css">
+  <style>
+    .smoke-detail-banner {
+      display: none;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.75rem 1.25rem;
+      margin-bottom: 1rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--accent-blue);
+      border-radius: 8px;
+    }
+    .smoke-detail-banner.visible { display: flex; }
+    .smoke-detail-banner .banner-text {
+      flex: 1;
+      color: var(--accent-blue);
+      font-weight: 600;
+    }
+    .smoke-detail-banner .btn {
+      flex-shrink: 0;
+    }
+    .history-item-clickable {
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .history-item-clickable:hover {
+      background: var(--bg-tertiary);
+    }
+    .history-item-clickable.active-report {
+      border-left: 3px solid var(--accent-blue);
+    }
+    .buy-failures-section {
+      margin-top: 1rem;
+    }
+    .buy-failure-item {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      padding: 0.5rem 1rem;
+      font-size: 0.8rem;
+      border-bottom: 1px solid var(--border-color);
+    }
+    .buy-failure-item:last-child { border-bottom: none; }
+    .buy-failure-mint { font-family: monospace; color: var(--text-secondary); }
+    .buy-failure-reason { color: var(--accent-red); }
+    .smoke-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.75rem;
+      margin-top: 0.75rem;
+      padding: 0.75rem;
+      background: var(--bg-tertiary);
+      border-radius: 6px;
+      font-size: 0.85rem;
+    }
+    .smoke-meta-item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+    }
+    .smoke-meta-label {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+    }
+    .smoke-meta-value {
+      font-weight: 600;
+    }
+  </style>
 </head>
 <body>
   <div class="container">
@@ -19,11 +87,21 @@
       </div>
     </header>
 
+    <!-- Historical report banner (shows when viewing a past report) -->
+    <div class="smoke-detail-banner" id="detail-banner">
+      <span class="banner-text" id="banner-text">Viewing historical report</span>
+      <button class="btn btn-primary btn-small" onclick="backToCurrent()">Back to Current</button>
+    </div>
+
     <!-- Result Summary Cards -->
     <section class="overview-cards" id="summary-cards">
       <div class="card">
         <div class="card-label">Overall Result</div>
         <div class="card-value" id="overall-result">--</div>
+      </div>
+      <div class="card card-accent">
+        <div class="card-label">P&L</div>
+        <div class="card-value big" id="pnl-value">--</div>
       </div>
       <div class="card">
         <div class="card-label">Steps Passed</div>
@@ -36,6 +114,10 @@
       <div class="card">
         <div class="card-label">Duration</div>
         <div class="card-value" id="duration">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Exit Trigger</div>
+        <div class="card-value" id="exit-trigger">--</div>
       </div>
       <div class="card">
         <div class="card-label">Wallet Before</div>
@@ -57,10 +139,20 @@
       </div>
     </section>
 
+    <!-- Buy Failures (if any) -->
+    <section class="panel" id="buy-failures-panel" style="display:none;">
+      <div class="panel-header">
+        <h2>Buy Failures</h2>
+        <span class="panel-subtitle" id="buy-failures-count"></span>
+      </div>
+      <div id="buy-failures-list"></div>
+    </section>
+
     <!-- Run History -->
     <section class="panel">
       <div class="panel-header">
         <h2>Smoke Test History</h2>
+        <span class="panel-subtitle" id="history-count"></span>
       </div>
       <div id="history-list" class="run-history-list">
         <div class="empty-state">No previous smoke tests</div>

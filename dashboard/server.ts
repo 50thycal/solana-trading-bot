@@ -339,6 +339,10 @@ export class DashboardServer {
           data = getSmokeTestReport() || { status: 'no_report', message: 'No smoke test has been run' };
           break;
 
+        case '/api/smoke-test-reports':
+          data = { reports: getAllSmokeTestReports() };
+          break;
+
         case '/api/diagnostic':
           data = this.getApiDiagnostic();
           break;
@@ -366,6 +370,13 @@ export class DashboardServer {
           if (pathname.startsWith('/api/ab-results/session/')) {
             const sessionId = pathname.substring('/api/ab-results/session/'.length);
             data = this.getAbResultsSessionDetail(sessionId);
+          }
+          // Check for /api/smoke-test-reports/:id pattern
+          else if (pathname.startsWith('/api/smoke-test-reports/')) {
+            const reportId = pathname.substring('/api/smoke-test-reports/'.length);
+            const allReports = getAllSmokeTestReports();
+            const report = allReports.find(r => String(r.startedAt) === reportId);
+            data = report || { error: 'Smoke test report not found' };
           }
           // Check for /api/pools/:id pattern
           else if (pathname.startsWith('/api/pools/')) {

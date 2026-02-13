@@ -1633,6 +1633,19 @@ body {
   color: var(--accent-yellow);
 }
 
+.step-skipped .step-icon {
+  color: var(--text-muted);
+}
+
+.step-skipped .step-number {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.step-skipped .step-name {
+  color: var(--text-muted);
+}
+
 .step-info {
   flex: 1;
 }
