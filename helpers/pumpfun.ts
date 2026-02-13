@@ -787,10 +787,24 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       maxRetries: 3,
     });
 
-    await connection.confirmTransaction(
+    const buyConfirmResult = await connection.confirmTransaction(
       { signature, blockhash, lastValidBlockHeight },
       'confirmed'
     );
+
+    // Check if transaction failed on-chain (e.g. slippage exceeded, insufficient funds)
+    if (buyConfirmResult.value.err) {
+      logger.error(
+        { mint: mint.toString(), signature, err: JSON.stringify(buyConfirmResult.value.err) },
+        'pump.fun buy transaction failed on-chain'
+      );
+      return {
+        success: false,
+        signature,
+        error: `Transaction failed on-chain: ${JSON.stringify(buyConfirmResult.value.err)}`,
+        actualVerified: false,
+      };
+    }
 
     // Verify actual tokens received
     const verification = await verifyBuyTransaction({
@@ -963,10 +977,24 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
       maxRetries: 3,
     });
 
-    await connection.confirmTransaction(
+    const confirmResult = await connection.confirmTransaction(
       { signature, blockhash, lastValidBlockHeight },
       'confirmed'
     );
+
+    // Check if transaction failed on-chain (e.g. insufficient tokens, slippage exceeded)
+    if (confirmResult.value.err) {
+      logger.error(
+        { mint: mint.toString(), signature, err: JSON.stringify(confirmResult.value.err) },
+        'pump.fun sell transaction failed on-chain'
+      );
+      return {
+        success: false,
+        signature,
+        error: `Transaction failed on-chain: ${JSON.stringify(confirmResult.value.err)}`,
+        actualVerified: false,
+      };
+    }
 
     // Verify actual SOL received
     // Note: expectedSol is in lamports (from calculateSellSolOut), but verifySellTransaction

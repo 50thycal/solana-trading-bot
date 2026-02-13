@@ -72,6 +72,7 @@ export interface PumpFunMonitorConfig {
  */
 export class PumpFunPositionMonitor extends EventEmitter {
   private positions: Map<string, PumpFunPosition> = new Map();
+  private sellingPositions: Set<string> = new Set();
   private isRunning: boolean = false;
   private monitorLoop: NodeJS.Timeout | null = null;
   private config: PumpFunMonitorConfig;
@@ -339,6 +340,27 @@ export class PumpFunPositionMonitor extends EventEmitter {
     triggerType: PumpFunTriggerEvent['type'],
     reason: string,
   ): Promise<void> {
+    // Guard: prevent concurrent sells for the same position
+    if (this.sellingPositions.has(position.tokenMint)) {
+      logger.debug({ mint: position.tokenMint }, '[pump.fun] Sell already in progress - skipping');
+      return;
+    }
+    this.sellingPositions.add(position.tokenMint);
+
+    try {
+      await this.executeSellInner(position, currentValueSol, pnlPercent, triggerType, reason);
+    } finally {
+      this.sellingPositions.delete(position.tokenMint);
+    }
+  }
+
+  private async executeSellInner(
+    position: PumpFunPosition,
+    currentValueSol: number,
+    pnlPercent: number,
+    triggerType: PumpFunTriggerEvent['type'],
+    reason: string,
+  ): Promise<void> {
     const mint = new PublicKey(position.tokenMint);
     const bondingCurve = new PublicKey(position.bondingCurve);
 
@@ -361,6 +383,13 @@ export class PumpFunPositionMonitor extends EventEmitter {
       reason,
     };
     this.emit('trigger', triggerEvent);
+
+    // If an external handler (e.g. smoke test) removed the position after the trigger,
+    // it intends to handle the sell itself — bail out to avoid a duplicate sell.
+    if (!this.positions.has(position.tokenMint)) {
+      logger.debug({ mint: position.tokenMint }, '[pump.fun] Position removed by external handler - skipping sell');
+      return;
+    }
 
     // Record sell attempt in log summarizer
     const summarizer = getLogSummarizer();
