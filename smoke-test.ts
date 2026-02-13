@@ -74,6 +74,10 @@ import {
 } from './risk/pumpfun-position-monitor';
 import { DetectedToken } from './types';
 import { sleep } from './helpers/promises';
+import { initStateStore, getStateStore } from './persistence';
+import { getPnlTracker } from './risk';
+import fs from 'fs';
+import path from 'path';
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -116,8 +120,63 @@ export interface SmokeTestReport {
 // Shared state for the report endpoint
 let lastReport: SmokeTestReport | null = null;
 
+/** File path for persisting smoke test reports across restarts */
+function getReportsFilePath(): string {
+  try {
+    const config = getConfig();
+    return path.join(config.dataDir, 'smoke-reports.json');
+  } catch {
+    return path.join(process.cwd(), 'data', 'smoke-reports.json');
+  }
+}
+
 export function getSmokeTestReport(): SmokeTestReport | null {
   return lastReport;
+}
+
+/**
+ * Get all persisted smoke test reports (current + historical)
+ */
+export function getAllSmokeTestReports(): SmokeTestReport[] {
+  try {
+    const filePath = getReportsFilePath();
+    if (!fs.existsSync(filePath)) return [];
+    const data = fs.readFileSync(filePath, 'utf-8');
+    return JSON.parse(data);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Persist a smoke test report to the reports file
+ */
+function persistReport(report: SmokeTestReport): void {
+  try {
+    const filePath = getReportsFilePath();
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    let reports: SmokeTestReport[] = [];
+    if (fs.existsSync(filePath)) {
+      try {
+        reports = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      } catch { /* start fresh */ }
+    }
+
+    reports.push(report);
+
+    // Keep last 50 reports
+    if (reports.length > 50) {
+      reports = reports.slice(-50);
+    }
+
+    fs.writeFileSync(filePath, JSON.stringify(reports, null, 2));
+  } catch (error) {
+    logger.warn({ error }, '[smoke-test] Failed to persist smoke test report');
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -202,6 +261,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     tokensReceived: number;
     actualSolSpent: number | undefined;
     sellSignature: string;
+    sellSolReceived: number;
     exitTrigger: string;
   } = {
     connection: null,
@@ -214,6 +274,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     tokensReceived: 0,
     actualSolSpent: undefined,
     sellSignature: '',
+    sellSolReceived: 0,
     exitTrigger: '',
   };
 
@@ -271,6 +332,11 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
   // STEP 3: BOOT_SYSTEMS
   // ─────────────────────────────────────────────────────────────────────
   const bootOk = await runStep(steps[2], async () => {
+    // Initialize persistence so smoke test trades are recorded and visible on dashboard
+    initStateStore();
+    const pnlTracker = getPnlTracker();
+    await pnlTracker.init();
+
     // Initialize filters
     initPumpFunFilters({
       minSolInCurve: PUMPFUN_MIN_SOL_IN_CURVE,
@@ -458,8 +524,8 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
 
       if (sellResult.success) {
         state.sellSignature = sellResult.signature || '';
-        const solReceived = sellResult.solReceived || 0;
-        return `Sold on attempt ${attempt}/${maxAttempts} for ${solReceived.toFixed(6)} SOL, sig: ${state.sellSignature.substring(0, 12)}...`;
+        state.sellSolReceived = sellResult.solReceived || 0;
+        return `Sold on attempt ${attempt}/${maxAttempts} for ${state.sellSolReceived.toFixed(6)} SOL, sig: ${state.sellSignature.substring(0, 12)}...`;
       }
 
       logger.warn(`[smoke-test] Sell attempt ${attempt} failed: ${sellResult.error}`);
@@ -509,6 +575,27 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     } catch { /* ignore */ }
   }
 
+  // Record the sell trade in persistence layer for dashboard P&L
+  if (state.passedToken && state.sellSignature && state.sellSolReceived > 0) {
+    const mintStr = state.passedToken.mint.toString();
+    const bondingCurveStr = state.passedBondingCurve!.toString();
+
+    const pnlTracker = getPnlTracker();
+    pnlTracker.recordSell({
+      tokenMint: mintStr,
+      tokenSymbol: state.passedToken.symbol,
+      amountSol: state.sellSolReceived,
+      amountToken: state.tokensReceived,
+      poolId: bondingCurveStr,
+      txSignature: state.sellSignature,
+    });
+
+    const stateStore = getStateStore();
+    if (stateStore) {
+      stateStore.closePosition(mintStr, `smoke_test_${state.exitTrigger || 'completed'}`);
+    }
+  }
+
   return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceAfter, state.exitTrigger, buyFailures, tokensEvaluated, tokensPipelinePassed, state.actualSolSpent, tradeAmount);
 }
 
@@ -534,6 +621,7 @@ async function runListenPipelineAndBuy(
     tokensReceived: number;
     actualSolSpent: number | undefined;
     sellSignature: string;
+    sellSolReceived: number;
     exitTrigger: string;
   },
   tradeAmount: number,
@@ -635,6 +723,34 @@ async function runListenPipelineAndBuy(
             buySucceeded = true;
 
             clearTimeout(overallTimeout);
+
+            // Record real money buy in persistence layer for dashboard P&L
+            const stateStore = getStateStore();
+            const mintStr = token.mint.toString();
+            const bondingCurveStr = token.bondingCurve!.toString();
+            const solSpent = state.actualSolSpent ?? tradeAmount;
+
+            if (stateStore) {
+              const tokensRcvd = state.tokensReceived;
+              const entryPrice = tokensRcvd > 0 ? solSpent / tokensRcvd : 0;
+              stateStore.createPosition({
+                tokenMint: mintStr,
+                poolId: bondingCurveStr,
+                amountSol: solSpent,
+                amountToken: tokensRcvd,
+                entryPrice,
+              });
+            }
+
+            const pnlTracker = getPnlTracker();
+            pnlTracker.recordBuy({
+              tokenMint: mintStr,
+              tokenSymbol: token.symbol,
+              amountSol: solSpent,
+              amountToken: state.tokensReceived,
+              poolId: bondingCurveStr,
+              txSignature: state.buySignature,
+            });
 
             // Mark buy step as passed too
             steps[4].status = 'passed';
@@ -746,8 +862,9 @@ function buildReport(
     buyOverheadSol: buyOverhead,
   };
 
-  // Store for dashboard retrieval
+  // Store for dashboard retrieval (in-memory + persisted to file)
   lastReport = report;
+  persistReport(report);
 
   // Print the formatted report
   const totalSecs = (report.totalDurationMs / 1000).toFixed(1);

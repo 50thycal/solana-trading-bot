@@ -218,7 +218,14 @@ async function updateOverview() {
   if (data.trainingRuns) {
     if (el.abSessions) el.abSessions.textContent = data.trainingRuns.abSessions || 0;
     if (el.smokeTestStatus) {
-      el.smokeTestStatus.textContent = data.trainingRuns.smokeTestResult || 'None';
+      const count = data.trainingRuns.smokeTestCount || 0;
+      const result = data.trainingRuns.smokeTestResult || 'None';
+      const totalPnl = data.trainingRuns.smokeTestTotalPnlSol;
+      let statusText = count > 0 ? `${result} (${count} runs)` : result;
+      if (totalPnl !== undefined && totalPnl !== 0) {
+        statusText += ` | P&L: ${formatPnl(totalPnl)}`;
+      }
+      el.smokeTestStatus.textContent = statusText;
       el.smokeTestStatus.className = `stat-value ${data.trainingRuns.smokeTestResult === 'PASS' ? 'positive' : ''}`;
     }
   }
@@ -307,15 +314,30 @@ async function updateRunHistory() {
     return;
   }
 
-  el.runHistoryList.innerHTML = data.runs.slice(0, 10).map(run => {
+  el.runHistoryList.innerHTML = data.runs.slice(0, 20).map(run => {
     const modeLabel = run.mode === 'ab' ? 'A/B Test' : run.mode === 'smoke' ? 'Smoke Test' : run.mode;
     const statusClass = run.status === 'completed' ? 'positive' : run.status === 'failed' ? 'negative' : '';
     const time = formatTimeAgo(run.startedAt);
+
+    // Show P&L for smoke test runs that have real money data
+    let pnlHtml = '';
+    if (run.pnlSol !== undefined && run.pnlSol !== null) {
+      const pnlValue = formatPnl(run.pnlSol);
+      const pnlCls = pnlClass(run.pnlSol);
+      pnlHtml = `<div class="run-pnl ${pnlCls}">${pnlValue}</div>`;
+    }
+
+    let exitHtml = '';
+    if (run.exitTrigger) {
+      exitHtml = `<div class="run-exit">${escapeHtml(run.exitTrigger)}</div>`;
+    }
 
     return `
       <div class="run-history-item">
         <div class="run-mode">${escapeHtml(modeLabel)}</div>
         <div class="run-summary">${escapeHtml(run.summary || '--')}</div>
+        ${pnlHtml}
+        ${exitHtml}
         <div class="run-status ${statusClass}">${escapeHtml(run.status)}</div>
         <div class="run-time">${time}</div>
       </div>
