@@ -311,6 +311,11 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     exitTrigger: '',
   };
 
+  // Wrap the entire test body in try/finally to guarantee liveProgress is
+  // cleared even if an unexpected error propagates (e.g. null assertion failure).
+  // Without this, the dashboard would show the test as perpetually "Running...".
+  try {
+
   // ─────────────────────────────────────────────────────────────────────
   // STEP 1: CONFIG_CHECK
   // ─────────────────────────────────────────────────────────────────────
@@ -338,7 +343,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     return `Balance: ${balanceSol.toFixed(4)} SOL, Wallet: ${state.wallet!.publicKey.toString().substring(0, 8)}...`;
   });
 
-  if (!configOk) { liveProgress = null; return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed); }
+  if (!configOk) return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
 
   // Update progress with wallet balance
   if (liveProgress) {
@@ -365,7 +370,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     return `Slot: ${slot}, latency: ${latency}ms, block age: ${age}s`;
   });
 
-  if (!rpcOk) { liveProgress = null; return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed); }
+  if (!rpcOk) return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
   if (liveProgress) liveProgress.currentStep = 'BOOT_SYSTEMS';
 
   // ─────────────────────────────────────────────────────────────────────
@@ -423,7 +428,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     return `Pipeline, position monitor (TP:${TAKE_PROFIT}%/SL:${STOP_LOSS}%/Hold:${maxHoldMs / 1000}s), and listener initialized`;
   });
 
-  if (!bootOk) { liveProgress = null; return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed); }
+  if (!bootOk) return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
   if (liveProgress) liveProgress.currentStep = 'LISTEN_AND_PIPELINE';
 
   // ─────────────────────────────────────────────────────────────────────
@@ -457,7 +462,6 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     try {
       walletBalanceAfter = (await state.connection!.getBalance(state.wallet!.publicKey, 'confirmed')) / LAMPORTS_PER_SOL;
     } catch { /* ignore */ }
-    liveProgress = null;
     return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceAfter, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
   }
 
@@ -657,10 +661,12 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     }
   }
 
-  // Clear live progress - test is complete
-  liveProgress = null;
-
   return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceAfter, state.exitTrigger, buyFailures, tokensEvaluated, tokensPipelinePassed, state.actualSolSpent, tradeAmount);
+
+  } finally {
+    // Always clear live progress so the dashboard never shows a stale "Running..." state
+    liveProgress = null;
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
