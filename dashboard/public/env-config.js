@@ -7,6 +7,7 @@
 let categories = [];
 let currentValues = {};
 let editedValues = {};   // user overrides: { VAR_NAME: 'value' }
+let userModifiedVars = new Set();  // vars the user actually touched in this session
 let collapsedCategories = new Set();
 let showChangedOnly = false;
 let showDescriptions = true;
@@ -231,6 +232,7 @@ function handleInputChange(e) {
 
   const value = e.target.value;
   editedValues[varName] = value;
+  userModifiedVars.add(varName);
 
   // Re-render to update changed state
   render();
@@ -352,25 +354,22 @@ function showToast(message) {
 // ============================================================
 
 pushRailwayBtn.addEventListener('click', async () => {
-  // Collect all non-sensitive edited values that differ from defaults
+  // Only push variables the user actually modified in this session
   const variables = {};
-  for (const cat of categories) {
-    for (const v of cat.vars) {
-      if (v.sensitive) continue;
-      const value = getEffectiveValue(v);
-      if (value) {
-        variables[v.name] = value;
-      }
+  for (const varName of userModifiedVars) {
+    const value = editedValues[varName];
+    if (value !== undefined && value !== '') {
+      variables[varName] = value;
     }
   }
 
   const count = Object.keys(variables).length;
   if (count === 0) {
-    showToast('No variables to push');
+    showToast('No changed variables to push');
     return;
   }
 
-  if (!confirm(`Push ${count} variable${count > 1 ? 's' : ''} to Railway? This will stage changes on your Railway service.`)) return;
+  if (!confirm(`Push ${count} changed variable${count > 1 ? 's' : ''} to Railway? This will update only the variables you modified.`)) return;
 
   pushRailwayBtn.disabled = true;
   pushRailwayBtn.textContent = 'Pushing...';
@@ -441,7 +440,7 @@ function escapeHtml(text) {
 }
 
 function escapeAttr(text) {
-  return text.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // ============================================================

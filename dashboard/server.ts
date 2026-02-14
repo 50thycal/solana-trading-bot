@@ -24,7 +24,7 @@ import { ABTestStore } from '../ab-test/ab-store';
 import { ABReportGenerator } from '../ab-test/ab-report';
 import { ABAnalyzer } from '../ab-test/ab-analyzer';
 import { version } from '../package.json';
-import { ENV_CATEGORIES, getCurrentEnvValues } from '../helpers/env-metadata';
+import { ENV_CATEGORIES, getCurrentEnvValues, getAllowedPushVarNames } from '../helpers/env-metadata';
 import { isRailwayConfigured, pushVariablesToRailway, redeployRailwayService } from '../helpers/railway-api';
 
 /**
@@ -82,6 +82,11 @@ export class DashboardServer {
   private readonly authSecret = crypto.randomBytes(32).toString('hex');
   /** Rate limiting: track failed login attempts by IP */
   private readonly loginAttempts = new Map<string, { count: number; lockedUntil: number | null }>();
+  /** Cooldown timestamps for Railway endpoints */
+  private lastRailwayPushAt: number = 0;
+  private lastRailwayRestartAt: number = 0;
+  private static readonly RAILWAY_PUSH_COOLDOWN_MS = 10_000;    // 10 seconds
+  private static readonly RAILWAY_RESTART_COOLDOWN_MS = 60_000; // 60 seconds
 
   constructor(private readonly config: DashboardConfig) {
     this.startTime = new Date();
@@ -1461,15 +1466,53 @@ export class DashboardServer {
   /**
    * POST /api/railway/push - Push env variables to Railway
    * Accepts { variables: { KEY: "value", ... } }
+   * Server-side enforcement: only known, non-sensitive variable names are accepted.
    */
   private async handleRailwayPush(body: any, res: http.ServerResponse): Promise<void> {
+    // Cooldown check
+    const elapsed = Date.now() - this.lastRailwayPushAt;
+    if (elapsed < DashboardServer.RAILWAY_PUSH_COOLDOWN_MS) {
+      const wait = Math.ceil((DashboardServer.RAILWAY_PUSH_COOLDOWN_MS - elapsed) / 1000);
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: `Please wait ${wait}s before pushing again` }));
+      return;
+    }
+
     if (!body || !body.variables || typeof body.variables !== 'object') {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'Missing "variables" object in request body' }));
       return;
     }
 
-    const result = await pushVariablesToRailway(body.variables);
+    // Server-side allowlist: only permit known, non-sensitive variable names with string values
+    const allowed = getAllowedPushVarNames();
+    const sanitized: Record<string, string> = {};
+    const rejected: string[] = [];
+
+    for (const [key, value] of Object.entries(body.variables)) {
+      if (!allowed.has(key)) {
+        rejected.push(key);
+        continue;
+      }
+      if (typeof value !== 'string') {
+        rejected.push(key);
+        continue;
+      }
+      sanitized[key] = value;
+    }
+
+    if (rejected.length > 0) {
+      logger.warn({ rejected }, 'Railway push rejected disallowed variable names');
+    }
+
+    if (Object.keys(sanitized).length === 0) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'No valid variables to push', rejected }));
+      return;
+    }
+
+    this.lastRailwayPushAt = Date.now();
+    const result = await pushVariablesToRailway(sanitized);
     const status = result.success ? 200 : 500;
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
@@ -1479,6 +1522,16 @@ export class DashboardServer {
    * POST /api/railway/restart - Trigger a Railway service redeploy (restarts the bot)
    */
   private async handleRailwayRestart(res: http.ServerResponse): Promise<void> {
+    // Cooldown check
+    const elapsed = Date.now() - this.lastRailwayRestartAt;
+    if (elapsed < DashboardServer.RAILWAY_RESTART_COOLDOWN_MS) {
+      const wait = Math.ceil((DashboardServer.RAILWAY_RESTART_COOLDOWN_MS - elapsed) / 1000);
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: `Please wait ${wait}s before restarting again` }));
+      return;
+    }
+
+    this.lastRailwayRestartAt = Date.now();
     const result = await redeployRailwayService();
     const status = result.success ? 200 : 500;
     res.writeHead(status, { 'Content-Type': 'application/json' });
