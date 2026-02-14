@@ -257,6 +257,9 @@ async function updateSmokeTestReport() {
 
   const report = await fetchApi('/api/smoke-test-report');
 
+  // Re-check after await: user may have clicked a history item while fetch was in-flight
+  if (viewingReportId !== null) return;
+
   // If a completed report exists, render it
   if (report && report.status !== 'no_report') {
     renderReport(report);
@@ -265,6 +268,10 @@ async function updateSmokeTestReport() {
 
   // No report yet - check if a smoke test is running
   const progress = await fetchApi('/api/smoke-test-progress');
+
+  // Re-check again after second await
+  if (viewingReportId !== null) return;
+
   if (progress && progress.running) {
     renderProgress(progress);
     return;
@@ -370,8 +377,10 @@ async function updateAll() {
   ]);
 }
 
-// Initial load
-updateAll();
-
-// Poll for updates (useful when smoke test is running)
-setInterval(updateAll, POLL_INTERVAL);
+// Initial load, then schedule next poll only after the current one finishes.
+// This prevents overlapping requests when the server is slow.
+async function pollLoop() {
+  await updateAll();
+  setTimeout(pollLoop, POLL_INTERVAL);
+}
+pollLoop();

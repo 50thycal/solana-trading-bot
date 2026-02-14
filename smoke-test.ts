@@ -156,16 +156,30 @@ export function getSmokeTestProgress(): SmokeTestProgress | null {
 }
 
 /**
- * Get all persisted smoke test reports (current + historical)
+ * In-memory cache for persisted smoke test reports.
+ * Avoids blocking the event loop with fs.readFileSync on every dashboard request.
+ */
+let reportsCache: SmokeTestReport[] | null = null;
+
+/**
+ * Get all persisted smoke test reports (current + historical).
+ * Reads from disk only on first call; subsequent calls serve from memory.
+ * Cache is invalidated when persistReport() writes new data.
  */
 export function getAllSmokeTestReports(): SmokeTestReport[] {
+  if (reportsCache !== null) return reportsCache;
   try {
     const filePath = getReportsFilePath();
-    if (!fs.existsSync(filePath)) return [];
+    if (!fs.existsSync(filePath)) {
+      reportsCache = [];
+      return reportsCache;
+    }
     const data = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(data);
+    reportsCache = JSON.parse(data);
+    return reportsCache!;
   } catch {
-    return [];
+    reportsCache = [];
+    return reportsCache;
   }
 }
 
@@ -195,6 +209,9 @@ function persistReport(report: SmokeTestReport): void {
     }
 
     fs.writeFileSync(filePath, JSON.stringify(reports, null, 2));
+
+    // Update in-memory cache so dashboard reads don't hit disk
+    reportsCache = reports;
   } catch (error) {
     logger.warn({ error }, '[smoke-test] Failed to persist smoke test report');
   }
