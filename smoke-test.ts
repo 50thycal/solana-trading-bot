@@ -156,16 +156,30 @@ export function getSmokeTestProgress(): SmokeTestProgress | null {
 }
 
 /**
- * Get all persisted smoke test reports (current + historical)
+ * In-memory cache for persisted smoke test reports.
+ * Avoids blocking the event loop with fs.readFileSync on every dashboard request.
+ */
+let reportsCache: SmokeTestReport[] | null = null;
+
+/**
+ * Get all persisted smoke test reports (current + historical).
+ * Reads from disk only on first call; subsequent calls serve from memory.
+ * Cache is invalidated when persistReport() writes new data.
  */
 export function getAllSmokeTestReports(): SmokeTestReport[] {
+  if (reportsCache !== null) return reportsCache;
   try {
     const filePath = getReportsFilePath();
-    if (!fs.existsSync(filePath)) return [];
+    if (!fs.existsSync(filePath)) {
+      reportsCache = [];
+      return reportsCache;
+    }
     const data = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(data);
+    reportsCache = JSON.parse(data);
+    return reportsCache!;
   } catch {
-    return [];
+    reportsCache = [];
+    return reportsCache;
   }
 }
 
@@ -195,6 +209,9 @@ function persistReport(report: SmokeTestReport): void {
     }
 
     fs.writeFileSync(filePath, JSON.stringify(reports, null, 2));
+
+    // Update in-memory cache so dashboard reads don't hit disk
+    reportsCache = reports;
   } catch (error) {
     logger.warn({ error }, '[smoke-test] Failed to persist smoke test report');
   }
@@ -311,6 +328,11 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     exitTrigger: '',
   };
 
+  // Wrap the entire test body in try/finally to guarantee liveProgress is
+  // cleared even if an unexpected error propagates (e.g. null assertion failure).
+  // Without this, the dashboard would show the test as perpetually "Running...".
+  try {
+
   // ─────────────────────────────────────────────────────────────────────
   // STEP 1: CONFIG_CHECK
   // ─────────────────────────────────────────────────────────────────────
@@ -338,7 +360,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     return `Balance: ${balanceSol.toFixed(4)} SOL, Wallet: ${state.wallet!.publicKey.toString().substring(0, 8)}...`;
   });
 
-  if (!configOk) { liveProgress = null; return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed); }
+  if (!configOk) return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
 
   // Update progress with wallet balance
   if (liveProgress) {
@@ -365,7 +387,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     return `Slot: ${slot}, latency: ${latency}ms, block age: ${age}s`;
   });
 
-  if (!rpcOk) { liveProgress = null; return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed); }
+  if (!rpcOk) return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
   if (liveProgress) liveProgress.currentStep = 'BOOT_SYSTEMS';
 
   // ─────────────────────────────────────────────────────────────────────
@@ -423,7 +445,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     return `Pipeline, position monitor (TP:${TAKE_PROFIT}%/SL:${STOP_LOSS}%/Hold:${maxHoldMs / 1000}s), and listener initialized`;
   });
 
-  if (!bootOk) { liveProgress = null; return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed); }
+  if (!bootOk) return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
   if (liveProgress) liveProgress.currentStep = 'LISTEN_AND_PIPELINE';
 
   // ─────────────────────────────────────────────────────────────────────
@@ -457,7 +479,6 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     try {
       walletBalanceAfter = (await state.connection!.getBalance(state.wallet!.publicKey, 'confirmed')) / LAMPORTS_PER_SOL;
     } catch { /* ignore */ }
-    liveProgress = null;
     return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceAfter, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
   }
 
@@ -657,10 +678,12 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     }
   }
 
-  // Clear live progress - test is complete
-  liveProgress = null;
-
   return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceAfter, state.exitTrigger, buyFailures, tokensEvaluated, tokensPipelinePassed, state.actualSolSpent, tradeAmount);
+
+  } finally {
+    // Always clear live progress so the dashboard never shows a stale "Running..." state
+    liveProgress = null;
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

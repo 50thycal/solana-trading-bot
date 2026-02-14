@@ -378,8 +378,10 @@ async function updateAll() {
   ]);
 }
 
-// Initial load
-updateAll();
-
-// Polling
-setInterval(updateAll, POLL_INTERVAL);
+// Initial load, then schedule next poll only after the current one finishes.
+// This prevents overlapping requests when the server is slow.
+async function pollLoop() {
+  await updateAll();
+  setTimeout(pollLoop, POLL_INTERVAL);
+}
+pollLoop();
