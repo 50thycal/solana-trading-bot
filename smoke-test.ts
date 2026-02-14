@@ -629,23 +629,31 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
   }
 
   // Record the sell trade in persistence layer for dashboard P&L
+  // Wrapped in try-catch so persistence errors never block the report
   if (state.passedToken && state.sellSignature && state.sellSolReceived > 0) {
-    const mintStr = state.passedToken.mint.toString();
-    const bondingCurveStr = state.passedBondingCurve!.toString();
+    try {
+      const mintStr = state.passedToken.mint.toString();
+      const bondingCurveStr = state.passedBondingCurve!.toString();
 
-    const pnlTracker = getPnlTracker();
-    pnlTracker.recordSell({
-      tokenMint: mintStr,
-      tokenSymbol: state.passedToken.symbol,
-      amountSol: state.sellSolReceived,
-      amountToken: state.tokensReceived,
-      poolId: bondingCurveStr,
-      txSignature: state.sellSignature,
-    });
+      const pnlTracker = getPnlTracker();
+      pnlTracker.recordSell({
+        tokenMint: mintStr,
+        tokenSymbol: state.passedToken.symbol,
+        amountSol: state.sellSolReceived,
+        amountToken: state.tokensReceived,
+        poolId: bondingCurveStr,
+        txSignature: state.sellSignature,
+      });
 
-    const stateStore = getStateStore();
-    if (stateStore) {
-      stateStore.closePosition(mintStr, `smoke_test_${state.exitTrigger || 'completed'}`);
+      const stateStore = getStateStore();
+      if (stateStore) {
+        stateStore.closePosition(mintStr, `smoke_test_${state.exitTrigger || 'completed'}`);
+      }
+    } catch (persistError) {
+      logger.warn(
+        { error: persistError instanceof Error ? persistError.message : String(persistError) },
+        '[smoke-test] Failed to record sell in persistence layer (non-fatal)'
+      );
     }
   }
 
@@ -781,32 +789,40 @@ async function runListenPipelineAndBuy(
             clearTimeout(overallTimeout);
 
             // Record real money buy in persistence layer for dashboard P&L
-            const stateStore = getStateStore();
-            const mintStr = token.mint.toString();
-            const bondingCurveStr = token.bondingCurve!.toString();
-            const solSpent = state.actualSolSpent ?? tradeAmount;
+            // Wrapped in try-catch so persistence errors never block the sell flow
+            try {
+              const stateStore = getStateStore();
+              const mintStr = token.mint.toString();
+              const bondingCurveStr = token.bondingCurve!.toString();
+              const solSpent = state.actualSolSpent ?? tradeAmount;
 
-            if (stateStore) {
-              const tokensRcvd = state.tokensReceived;
-              const entryPrice = tokensRcvd > 0 ? solSpent / tokensRcvd : 0;
-              stateStore.createPosition({
+              if (stateStore) {
+                const tokensRcvd = state.tokensReceived;
+                const entryPrice = tokensRcvd > 0 ? solSpent / tokensRcvd : 0;
+                stateStore.createPosition({
+                  tokenMint: mintStr,
+                  poolId: bondingCurveStr,
+                  amountSol: solSpent,
+                  amountToken: tokensRcvd,
+                  entryPrice,
+                });
+              }
+
+              const pnlTracker = getPnlTracker();
+              pnlTracker.recordBuy({
                 tokenMint: mintStr,
-                poolId: bondingCurveStr,
+                tokenSymbol: token.symbol,
                 amountSol: solSpent,
-                amountToken: tokensRcvd,
-                entryPrice,
+                amountToken: state.tokensReceived,
+                poolId: bondingCurveStr,
+                txSignature: state.buySignature,
               });
+            } catch (persistError) {
+              logger.warn(
+                { error: persistError instanceof Error ? persistError.message : String(persistError) },
+                '[smoke-test] Failed to record buy in persistence layer (non-fatal - sell will still proceed)'
+              );
             }
-
-            const pnlTracker = getPnlTracker();
-            pnlTracker.recordBuy({
-              tokenMint: mintStr,
-              tokenSymbol: token.symbol,
-              amountSol: solSpent,
-              amountToken: state.tokensReceived,
-              poolId: bondingCurveStr,
-              txSignature: state.buySignature,
-            });
 
             // Mark buy step as passed too
             steps[4].status = 'passed';
