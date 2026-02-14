@@ -626,6 +626,23 @@ export function getAllEnvVarNames(): string[] {
 }
 
 /**
+ * Get the set of non-sensitive variable names that are allowed
+ * to be pushed to Railway via the dashboard. Sensitive variables
+ * (private keys, API tokens, passwords) are excluded.
+ */
+export function getAllowedPushVarNames(): Set<string> {
+  const allowed = new Set<string>();
+  for (const cat of ENV_CATEGORIES) {
+    for (const v of cat.vars) {
+      if (!v.sensitive) {
+        allowed.add(v.name);
+      }
+    }
+  }
+  return allowed;
+}
+
+/**
  * Get current values for all non-sensitive env vars.
  * Sensitive variables (keys, passwords, RPC endpoints with API keys)
  * are completely excluded - never sent to the client.
