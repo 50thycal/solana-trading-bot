@@ -10,6 +10,7 @@ const NAV_LINKS = [
   { path: '/smoke-test', label: 'Smoke Test', modes: ['smoke'] },
   { path: '/ab-test', label: 'A/B Test', modes: ['ab'] },
   { path: '/diagnostic.html', label: 'Diagnostics' },
+  { path: '/env-config', label: 'Config' },
 ];
 
 /**

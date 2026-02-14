@@ -24,6 +24,7 @@ import { ABTestStore } from '../ab-test/ab-store';
 import { ABReportGenerator } from '../ab-test/ab-report';
 import { ABAnalyzer } from '../ab-test/ab-analyzer';
 import { version } from '../package.json';
+import { ENV_CATEGORIES, getCurrentEnvValues } from '../helpers/env-metadata';
 
 /**
  * Infrastructure cost configuration
@@ -345,6 +346,10 @@ export class DashboardServer {
 
         case '/api/smoke-test-progress':
           data = getSmokeTestProgress() || { running: false };
+          break;
+
+        case '/api/env-reference':
+          data = this.getApiEnvReference();
           break;
 
         case '/api/diagnostic':
@@ -1435,6 +1440,22 @@ export class DashboardServer {
   }
 
   // ============================================================
+  // ENV REFERENCE ENDPOINT
+  // ============================================================
+
+  /**
+   * GET /api/env-reference - Environment variable metadata and current values
+   * Returns categorized variable definitions and current (masked) values
+   */
+  private getApiEnvReference() {
+    const currentValues = getCurrentEnvValues(true);
+    return {
+      categories: ENV_CATEGORIES,
+      currentValues,
+    };
+  }
+
+  // ============================================================
   // STATIC FILE SERVING
   // ============================================================
 
@@ -1448,6 +1469,7 @@ export class DashboardServer {
       '/smoke-test': '/smoke-test.html',
       '/ab-test': '/ab-results.html',
       '/ab-results': '/ab-results.html',
+      '/env-config': '/env-config.html',
     };
     let filePath = pageRoutes[pathname] || pathname;
 

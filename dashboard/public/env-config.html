@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pump.fun Trading Bot - Environment Config</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Navigation -->
+    <nav id="nav-bar" class="nav-bar"></nav>
+
+    <!-- Page Header -->
+    <section class="page-header">
+      <h1>Environment Config</h1>
+    </section>
+
+    <!-- Toolbar -->
+    <section class="env-toolbar">
+      <div class="env-toolbar-left">
+        <label class="env-toggle">
+          <input type="checkbox" id="show-changed-only">
+          <span>Changed only</span>
+        </label>
+        <label class="env-toggle">
+          <input type="checkbox" id="show-descriptions" checked>
+          <span>Descriptions</span>
+        </label>
+      </div>
+      <div class="env-toolbar-right">
+        <button class="btn btn-secondary btn-small" id="reset-all-btn" title="Reset all values to defaults">Reset All</button>
+        <button class="btn btn-primary" id="copy-all-btn">Copy All for Railway</button>
+      </div>
+    </section>
+
+    <!-- Copy feedback toast -->
+    <div class="env-toast" id="copy-toast">Copied to clipboard!</div>
+
+    <!-- Categories -->
+    <div id="env-categories" class="env-categories">
+      <div class="loading">Loading configuration...</div>
+    </div>
+  </div>
+
+  <script src="/nav.js"></script>
+  <script src="/env-config.js"></script>
+</body>
+</html>
