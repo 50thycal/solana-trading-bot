@@ -24,6 +24,8 @@ import { ABTestStore } from '../ab-test/ab-store';
 import { ABReportGenerator } from '../ab-test/ab-report';
 import { ABAnalyzer } from '../ab-test/ab-analyzer';
 import { version } from '../package.json';
+import { ENV_CATEGORIES, getCurrentEnvValues } from '../helpers/env-metadata';
+import { isRailwayConfigured, pushVariablesToRailway, redeployRailwayService } from '../helpers/railway-api';
 
 /**
  * Infrastructure cost configuration
@@ -347,6 +349,14 @@ export class DashboardServer {
           data = getSmokeTestProgress() || { running: false };
           break;
 
+        case '/api/env-reference':
+          data = this.getApiEnvReference();
+          break;
+
+        case '/api/railway/status':
+          data = { configured: isRailwayConfigured() };
+          break;
+
         case '/api/diagnostic':
           data = this.getApiDiagnostic();
           break;
@@ -432,10 +442,16 @@ export class DashboardServer {
     }
 
     try {
-      // Login endpoint needs the request body; other handlers don't
+      // Endpoints that need the request body
       if (pathname === '/api/auth/login') {
         const body = await this.parseRequestBody(req);
         await this.handleLogin(body, req, res);
+        return;
+      }
+
+      if (pathname === '/api/railway/push') {
+        const body = await this.parseRequestBody(req);
+        await this.handleRailwayPush(body, res);
         return;
       }
 
@@ -453,6 +469,10 @@ export class DashboardServer {
 
         case '/api/paper-trades/clear':
           await this.handleClearPaperTrades(res);
+          break;
+
+        case '/api/railway/restart':
+          await this.handleRailwayRestart(res);
           break;
 
         default:
@@ -1435,6 +1455,59 @@ export class DashboardServer {
   }
 
   // ============================================================
+  // RAILWAY DEPLOYMENT ENDPOINTS
+  // ============================================================
+
+  /**
+   * POST /api/railway/push - Push env variables to Railway
+   * Accepts { variables: { KEY: "value", ... } }
+   */
+  private async handleRailwayPush(body: any, res: http.ServerResponse): Promise<void> {
+    if (!body || !body.variables || typeof body.variables !== 'object') {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Missing "variables" object in request body' }));
+      return;
+    }
+
+    const result = await pushVariablesToRailway(body.variables);
+    const status = result.success ? 200 : 500;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /**
+   * POST /api/railway/restart - Trigger a Railway service redeploy (restarts the bot)
+   */
+  private async handleRailwayRestart(res: http.ServerResponse): Promise<void> {
+    const result = await redeployRailwayService();
+    const status = result.success ? 200 : 500;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  // ============================================================
+  // ENV REFERENCE ENDPOINT
+  // ============================================================
+
+  /**
+   * GET /api/env-reference - Environment variable metadata and current values
+   * Returns categorized variable definitions and current (masked) values
+   */
+  private getApiEnvReference() {
+    // Filter out sensitive vars entirely - they never leave the server
+    const safeCategories = ENV_CATEGORIES.map(cat => ({
+      ...cat,
+      vars: cat.vars.filter(v => !v.sensitive),
+    })).filter(cat => cat.vars.length > 0);
+
+    const currentValues = getCurrentEnvValues();
+    return {
+      categories: safeCategories,
+      currentValues,
+    };
+  }
+
+  // ============================================================
   // STATIC FILE SERVING
   // ============================================================
 
@@ -1448,6 +1521,7 @@ export class DashboardServer {
       '/smoke-test': '/smoke-test.html',
       '/ab-test': '/ab-results.html',
       '/ab-results': '/ab-results.html',
+      '/env-config': '/env-config.html',
     };
     let filePath = pageRoutes[pathname] || pathname;
 
