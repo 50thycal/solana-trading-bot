@@ -65,6 +65,7 @@ export const ENV_CATEGORIES: EnvCategory[] = [
         defaultValue: '',
         description: 'HTTPS RPC endpoint (Helius recommended)',
         required: true,
+        sensitive: true,
         placeholder: 'https://mainnet.helius-rpc.com/?api-key=YOUR_KEY',
       },
       {
@@ -74,6 +75,7 @@ export const ENV_CATEGORIES: EnvCategory[] = [
         defaultValue: '',
         description: 'WebSocket RPC endpoint for real-time data',
         required: true,
+        sensitive: true,
         placeholder: 'wss://mainnet.helius-rpc.com/?api-key=YOUR_KEY',
       },
       {
@@ -82,6 +84,7 @@ export const ENV_CATEGORIES: EnvCategory[] = [
         type: 'string',
         defaultValue: '',
         description: 'Comma-separated fallback RPC endpoints',
+        sensitive: true,
         placeholder: 'https://backup1.example.com,https://backup2.example.com',
       },
       {
@@ -583,19 +586,18 @@ export function getAllEnvVarNames(): string[] {
 }
 
 /**
- * Get current values for all env vars (masking sensitive ones)
+ * Get current values for all non-sensitive env vars.
+ * Sensitive variables (keys, passwords, RPC endpoints with API keys)
+ * are completely excluded - never sent to the client.
  */
-export function getCurrentEnvValues(maskSensitive = true): Record<string, string> {
+export function getCurrentEnvValues(): Record<string, string> {
   const values: Record<string, string> = {};
   for (const cat of ENV_CATEGORIES) {
     for (const v of cat.vars) {
+      if (v.sensitive) continue; // completely exclude sensitive vars
       const raw = process.env[v.name];
       if (raw !== undefined && raw !== '') {
-        if (maskSensitive && v.sensitive) {
-          values[v.name] = '••••••••';
-        } else {
-          values[v.name] = raw;
-        }
+        values[v.name] = raw;
       }
     }
   }

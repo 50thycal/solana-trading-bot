@@ -276,12 +276,8 @@ function generateEnvBlock(filterCatId) {
   for (const cat of categories) {
     if (filterCatId && cat.id !== filterCatId) continue;
 
-    const vars = cat.vars.filter(v => {
-      // Always skip sensitive vars with no user value
-      if (v.sensitive && !editedValues[v.name]) return false;
-      if (v.sensitive && editedValues[v.name] === '••••••••') return false;
-      return true;
-    });
+    // Sensitive vars are already excluded by the API, but double-check
+    const vars = cat.vars.filter(v => !v.sensitive);
 
     if (vars.length === 0) continue;
 

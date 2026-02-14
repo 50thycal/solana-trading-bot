@@ -1448,9 +1448,15 @@ export class DashboardServer {
    * Returns categorized variable definitions and current (masked) values
    */
   private getApiEnvReference() {
-    const currentValues = getCurrentEnvValues(true);
+    // Filter out sensitive vars entirely - they never leave the server
+    const safeCategories = ENV_CATEGORIES.map(cat => ({
+      ...cat,
+      vars: cat.vars.filter(v => !v.sensitive),
+    })).filter(cat => cat.vars.length > 0);
+
+    const currentValues = getCurrentEnvValues();
     return {
-      categories: ENV_CATEGORIES,
+      categories: safeCategories,
       currentValues,
     };
   }
