@@ -570,6 +570,46 @@ export const ENV_CATEGORIES: EnvCategory[] = [
       },
     ],
   },
+  {
+    id: 'railway',
+    label: 'Railway Deployment',
+    description: 'Railway API credentials for pushing config updates and restarting the bot from the dashboard',
+    vars: [
+      {
+        name: 'RAILWAY_API_TOKEN',
+        label: 'Railway API Token',
+        type: 'string',
+        defaultValue: '',
+        description: 'API token from Railway (Account Settings > Tokens)',
+        sensitive: true,
+        placeholder: 'your-railway-api-token',
+      },
+      {
+        name: 'RAILWAY_PROJECT_ID',
+        label: 'Railway Project ID',
+        type: 'string',
+        defaultValue: '',
+        description: 'Project ID (from Railway dashboard URL or Settings)',
+        placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+      },
+      {
+        name: 'RAILWAY_ENVIRONMENT_ID',
+        label: 'Railway Environment ID',
+        type: 'string',
+        defaultValue: '',
+        description: 'Environment ID (from Railway dashboard URL)',
+        placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+      },
+      {
+        name: 'RAILWAY_SERVICE_ID',
+        label: 'Railway Service ID',
+        type: 'string',
+        defaultValue: '',
+        description: 'Service ID (from Railway dashboard URL)',
+        placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+      },
+    ],
+  },
 ];
 
 /**

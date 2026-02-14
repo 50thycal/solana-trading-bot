@@ -15,16 +15,23 @@ let showDescriptions = true;
 const categoriesContainer = document.getElementById('env-categories');
 const copyAllBtn = document.getElementById('copy-all-btn');
 const resetAllBtn = document.getElementById('reset-all-btn');
+const pushRailwayBtn = document.getElementById('push-railway-btn');
+const restartBotBtn = document.getElementById('restart-bot-btn');
 const showChangedOnlyCheckbox = document.getElementById('show-changed-only');
 const showDescriptionsCheckbox = document.getElementById('show-descriptions');
 const copyToast = document.getElementById('copy-toast');
+let railwayConfigured = false;
 
 // ============================================================
 // INITIALIZATION
 // ============================================================
 
 async function init() {
-  const data = await fetchApi('/api/env-reference');
+  const [data, railwayStatus] = await Promise.all([
+    fetchApi('/api/env-reference'),
+    fetchApi('/api/railway/status'),
+  ]);
+
   if (!data) {
     categoriesContainer.innerHTML = '<div class="error-state">Failed to load configuration</div>';
     return;
@@ -33,14 +40,21 @@ async function init() {
   categories = data.categories;
   currentValues = data.currentValues || {};
 
-  // Initialize editedValues from currentValues (non-masked only)
+  // Initialize editedValues from currentValues
   for (const cat of categories) {
     for (const v of cat.vars) {
       const cur = currentValues[v.name];
-      if (cur && cur !== '••••••••') {
+      if (cur) {
         editedValues[v.name] = cur;
       }
     }
+  }
+
+  // Show Railway buttons if API is configured
+  if (railwayStatus && railwayStatus.configured) {
+    railwayConfigured = true;
+    pushRailwayBtn.style.display = '';
+    restartBotBtn.style.display = '';
   }
 
   render();
@@ -332,6 +346,78 @@ function showToast(message) {
     copyToast.classList.remove('show');
   }, 2000);
 }
+
+// ============================================================
+// RAILWAY PUSH & RESTART
+// ============================================================
+
+pushRailwayBtn.addEventListener('click', async () => {
+  // Collect all non-sensitive edited values that differ from defaults
+  const variables = {};
+  for (const cat of categories) {
+    for (const v of cat.vars) {
+      if (v.sensitive) continue;
+      const value = getEffectiveValue(v);
+      if (value) {
+        variables[v.name] = value;
+      }
+    }
+  }
+
+  const count = Object.keys(variables).length;
+  if (count === 0) {
+    showToast('No variables to push');
+    return;
+  }
+
+  if (!confirm(`Push ${count} variable${count > 1 ? 's' : ''} to Railway? This will stage changes on your Railway service.`)) return;
+
+  pushRailwayBtn.disabled = true;
+  pushRailwayBtn.textContent = 'Pushing...';
+
+  try {
+    const res = await fetch('/api/railway/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ variables }),
+    });
+    const result = await res.json();
+
+    if (result.success) {
+      showToast(`Pushed ${result.updatedCount} variable${result.updatedCount > 1 ? 's' : ''} to Railway!`);
+    } else {
+      showToast(`Error: ${result.error}`);
+    }
+  } catch (err) {
+    showToast('Failed to reach the server');
+  } finally {
+    pushRailwayBtn.disabled = false;
+    pushRailwayBtn.textContent = 'Push to Railway';
+  }
+});
+
+restartBotBtn.addEventListener('click', async () => {
+  if (!confirm('Restart the bot on Railway? This will trigger a full redeploy with the latest variables.')) return;
+
+  restartBotBtn.disabled = true;
+  restartBotBtn.textContent = 'Restarting...';
+
+  try {
+    const res = await fetch('/api/railway/restart', { method: 'POST' });
+    const result = await res.json();
+
+    if (result.success) {
+      showToast('Bot restart triggered! Railway is redeploying now.');
+    } else {
+      showToast(`Error: ${result.error}`);
+    }
+  } catch (err) {
+    showToast('Failed to reach the server');
+  } finally {
+    restartBotBtn.disabled = false;
+    restartBotBtn.textContent = 'Restart Bot';
+  }
+});
 
 // ============================================================
 // UTILITIES

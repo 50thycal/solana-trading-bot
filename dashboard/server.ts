@@ -25,6 +25,7 @@ import { ABReportGenerator } from '../ab-test/ab-report';
 import { ABAnalyzer } from '../ab-test/ab-analyzer';
 import { version } from '../package.json';
 import { ENV_CATEGORIES, getCurrentEnvValues } from '../helpers/env-metadata';
+import { isRailwayConfigured, pushVariablesToRailway, redeployRailwayService } from '../helpers/railway-api';
 
 /**
  * Infrastructure cost configuration
@@ -352,6 +353,10 @@ export class DashboardServer {
           data = this.getApiEnvReference();
           break;
 
+        case '/api/railway/status':
+          data = { configured: isRailwayConfigured() };
+          break;
+
         case '/api/diagnostic':
           data = this.getApiDiagnostic();
           break;
@@ -437,10 +442,16 @@ export class DashboardServer {
     }
 
     try {
-      // Login endpoint needs the request body; other handlers don't
+      // Endpoints that need the request body
       if (pathname === '/api/auth/login') {
         const body = await this.parseRequestBody(req);
         await this.handleLogin(body, req, res);
+        return;
+      }
+
+      if (pathname === '/api/railway/push') {
+        const body = await this.parseRequestBody(req);
+        await this.handleRailwayPush(body, res);
         return;
       }
 
@@ -458,6 +469,10 @@ export class DashboardServer {
 
         case '/api/paper-trades/clear':
           await this.handleClearPaperTrades(res);
+          break;
+
+        case '/api/railway/restart':
+          await this.handleRailwayRestart(res);
           break;
 
         default:
@@ -1437,6 +1452,37 @@ export class DashboardServer {
     } catch (err) {
       return { error: err instanceof Error ? err.message : 'Session not found' };
     }
+  }
+
+  // ============================================================
+  // RAILWAY DEPLOYMENT ENDPOINTS
+  // ============================================================
+
+  /**
+   * POST /api/railway/push - Push env variables to Railway
+   * Accepts { variables: { KEY: "value", ... } }
+   */
+  private async handleRailwayPush(body: any, res: http.ServerResponse): Promise<void> {
+    if (!body || !body.variables || typeof body.variables !== 'object') {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Missing "variables" object in request body' }));
+      return;
+    }
+
+    const result = await pushVariablesToRailway(body.variables);
+    const status = result.success ? 200 : 500;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /**
+   * POST /api/railway/restart - Trigger a Railway service redeploy (restarts the bot)
+   */
+  private async handleRailwayRestart(res: http.ServerResponse): Promise<void> {
+    const result = await redeployRailwayService();
+    const status = result.success ? 200 : 500;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
   }
 
   // ============================================================
