@@ -221,12 +221,19 @@ async function updateOverview() {
       const count = data.trainingRuns.smokeTestCount || 0;
       const result = data.trainingRuns.smokeTestResult || 'None';
       const totalPnl = data.trainingRuns.smokeTestTotalPnlSol;
-      let statusText = count > 0 ? `${result} (${count} runs)` : result;
+      const isRunning = data.trainingRuns.smokeTestRunning;
+      let statusText;
+      if (isRunning && !data.trainingRuns.smokeTestResult) {
+        statusText = 'Running...';
+        if (count > 0) statusText += ` (${count} previous runs)`;
+      } else {
+        statusText = count > 0 ? `${result} (${count} runs)` : result;
+      }
       if (totalPnl !== undefined && totalPnl !== 0) {
         statusText += ` | P&L: ${formatPnl(totalPnl)}`;
       }
       el.smokeTestStatus.textContent = statusText;
-      el.smokeTestStatus.className = `stat-value ${data.trainingRuns.smokeTestResult === 'PASS' ? 'positive' : ''}`;
+      el.smokeTestStatus.className = `stat-value ${isRunning ? '' : (data.trainingRuns.smokeTestResult === 'PASS' ? 'positive' : '')}`;
     }
   }
 
@@ -299,10 +306,29 @@ function buildAbStats(data) {
 }
 
 function buildSmokeStats(data) {
-  return `
-    <div class="mode-stat-row"><span>Last Result</span><span>${data.trainingRuns?.smokeTestResult || 'Running...'}</span></div>
-    <div class="mode-action"><a href="/smoke-test" class="btn btn-primary btn-small">View Smoke Test</a></div>
-  `;
+  const isRunning = data.trainingRuns?.smokeTestRunning;
+  const result = data.trainingRuns?.smokeTestResult;
+  const count = data.trainingRuns?.smokeTestCount || 0;
+  const totalPnl = data.trainingRuns?.smokeTestTotalPnlSol;
+
+  let rows = '';
+  if (isRunning) {
+    rows += '<div class="mode-stat-row"><span>Status</span><span>Running...</span></div>';
+  }
+  if (result) {
+    rows += `<div class="mode-stat-row"><span>Last Result</span><span>${result}</span></div>`;
+  }
+  if (count > 0) {
+    rows += `<div class="mode-stat-row"><span>Total Runs</span><span>${count}</span></div>`;
+  }
+  if (totalPnl !== undefined && totalPnl !== 0) {
+    rows += `<div class="mode-stat-row"><span>Total P&L</span><span class="${pnlClass(totalPnl)}">${formatPnl(totalPnl)}</span></div>`;
+  }
+  if (!rows) {
+    rows = '<div class="mode-stat-row"><span>Status</span><span>Running...</span></div>';
+  }
+  rows += '<div class="mode-action"><a href="/smoke-test" class="btn btn-primary btn-small">View Smoke Test</a></div>';
+  return rows;
 }
 
 async function updateRunHistory() {

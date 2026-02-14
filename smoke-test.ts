@@ -120,6 +120,20 @@ export interface SmokeTestReport {
 // Shared state for the report endpoint
 let lastReport: SmokeTestReport | null = null;
 
+/** Live progress state so the dashboard can show what's happening mid-test */
+interface SmokeTestProgress {
+  running: boolean;
+  startedAt: number;
+  currentStep: string;
+  walletBalanceBefore: number;
+  tokensEvaluated: number;
+  tokensPipelinePassed: number;
+  buyFailures: number;
+  steps: SmokeTestStep[];
+}
+
+let liveProgress: SmokeTestProgress | null = null;
+
 /** File path for persisting smoke test reports across restarts */
 function getReportsFilePath(): string {
   try {
@@ -132,6 +146,13 @@ function getReportsFilePath(): string {
 
 export function getSmokeTestReport(): SmokeTestReport | null {
   return lastReport;
+}
+
+/**
+ * Get live progress of a currently running smoke test (null if not running)
+ */
+export function getSmokeTestProgress(): SmokeTestProgress | null {
+  return liveProgress;
 }
 
 /**
@@ -249,6 +270,18 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
   let tokensEvaluated = 0;
   let tokensPipelinePassed = 0;
 
+  // Initialize live progress so the dashboard shows real-time status
+  liveProgress = {
+    running: true,
+    startedAt,
+    currentStep: 'CONFIG_CHECK',
+    walletBalanceBefore: 0,
+    tokensEvaluated: 0,
+    tokensPipelinePassed: 0,
+    buyFailures: 0,
+    steps,
+  };
+
   // Mutable state holder
   const state: {
     connection: Connection | null;
@@ -305,7 +338,13 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     return `Balance: ${balanceSol.toFixed(4)} SOL, Wallet: ${state.wallet!.publicKey.toString().substring(0, 8)}...`;
   });
 
-  if (!configOk) return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
+  if (!configOk) { liveProgress = null; return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed); }
+
+  // Update progress with wallet balance
+  if (liveProgress) {
+    liveProgress.walletBalanceBefore = walletBalanceBefore;
+    liveProgress.currentStep = 'RPC_CHECK';
+  }
 
   // ─────────────────────────────────────────────────────────────────────
   // STEP 2: RPC_CHECK
@@ -326,7 +365,8 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     return `Slot: ${slot}, latency: ${latency}ms, block age: ${age}s`;
   });
 
-  if (!rpcOk) return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
+  if (!rpcOk) { liveProgress = null; return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed); }
+  if (liveProgress) liveProgress.currentStep = 'BOOT_SYSTEMS';
 
   // ─────────────────────────────────────────────────────────────────────
   // STEP 3: BOOT_SYSTEMS
@@ -383,7 +423,8 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     return `Pipeline, position monitor (TP:${TAKE_PROFIT}%/SL:${STOP_LOSS}%/Hold:${maxHoldMs / 1000}s), and listener initialized`;
   });
 
-  if (!bootOk) return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
+  if (!bootOk) { liveProgress = null; return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed); }
+  if (liveProgress) liveProgress.currentStep = 'LISTEN_AND_PIPELINE';
 
   // ─────────────────────────────────────────────────────────────────────
   // STEP 4 + 5: LISTEN_AND_PIPELINE -> BUY_EXECUTE (loop until success)
@@ -397,8 +438,14 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     timeoutMs,
     startedAt,
     buyFailures,
-    (count) => { tokensEvaluated = count; },
-    (count) => { tokensPipelinePassed = count; },
+    (count) => {
+      tokensEvaluated = count;
+      if (liveProgress) liveProgress.tokensEvaluated = count;
+    },
+    (count) => {
+      tokensPipelinePassed = count;
+      if (liveProgress) liveProgress.tokensPipelinePassed = count;
+    },
   );
 
   // Stop listener after we're done with detection
@@ -410,8 +457,11 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     try {
       walletBalanceAfter = (await state.connection!.getBalance(state.wallet!.publicKey, 'confirmed')) / LAMPORTS_PER_SOL;
     } catch { /* ignore */ }
+    liveProgress = null;
     return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceAfter, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
   }
+
+  if (liveProgress) liveProgress.currentStep = 'BUY_VERIFY';
 
   // ─────────────────────────────────────────────────────────────────────
   // STEP 6: BUY_VERIFY
@@ -447,6 +497,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
   // ─────────────────────────────────────────────────────────────────────
   // STEP 7: POSITION_MONITOR - Real SL/TP/max hold monitoring
   // ─────────────────────────────────────────────────────────────────────
+  if (liveProgress) liveProgress.currentStep = 'POSITION_MONITOR';
   const monitorOk = await runStep(steps[6], async () => {
     const monitor = initPumpFunPositionMonitor(state.connection!, state.wallet!, {
       checkIntervalMs: 500,
@@ -503,6 +554,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
   // ─────────────────────────────────────────────────────────────────────
   // STEP 8: SELL_EXECUTE - with 3x retry
   // ─────────────────────────────────────────────────────────────────────
+  if (liveProgress) liveProgress.currentStep = 'SELL_EXECUTE';
   const sellOk = await runStep(steps[7], async () => {
     const smokeTestSlippageBps = Math.max(SELL_SLIPPAGE * 100, 5000); // At least 50% for smoke test
     const maxAttempts = 3;
@@ -542,6 +594,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
   // ─────────────────────────────────────────────────────────────────────
   // STEP 9: SELL_VERIFY
   // ─────────────────────────────────────────────────────────────────────
+  if (liveProgress) liveProgress.currentStep = 'SELL_VERIFY';
   if (sellOk && state.sellSignature) {
     await runStep(steps[8], async () => {
       await sleep(2000);
@@ -576,25 +629,36 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
   }
 
   // Record the sell trade in persistence layer for dashboard P&L
+  // Wrapped in try-catch so persistence errors never block the report
   if (state.passedToken && state.sellSignature && state.sellSolReceived > 0) {
-    const mintStr = state.passedToken.mint.toString();
-    const bondingCurveStr = state.passedBondingCurve!.toString();
+    try {
+      const mintStr = state.passedToken.mint.toString();
+      const bondingCurveStr = state.passedBondingCurve!.toString();
 
-    const pnlTracker = getPnlTracker();
-    pnlTracker.recordSell({
-      tokenMint: mintStr,
-      tokenSymbol: state.passedToken.symbol,
-      amountSol: state.sellSolReceived,
-      amountToken: state.tokensReceived,
-      poolId: bondingCurveStr,
-      txSignature: state.sellSignature,
-    });
+      const pnlTracker = getPnlTracker();
+      pnlTracker.recordSell({
+        tokenMint: mintStr,
+        tokenSymbol: state.passedToken.symbol,
+        amountSol: state.sellSolReceived,
+        amountToken: state.tokensReceived,
+        poolId: bondingCurveStr,
+        txSignature: state.sellSignature,
+      });
 
-    const stateStore = getStateStore();
-    if (stateStore) {
-      stateStore.closePosition(mintStr, `smoke_test_${state.exitTrigger || 'completed'}`);
+      const stateStore = getStateStore();
+      if (stateStore) {
+        stateStore.closePosition(mintStr, `smoke_test_${state.exitTrigger || 'completed'}`);
+      }
+    } catch (persistError) {
+      logger.warn(
+        { error: persistError instanceof Error ? persistError.message : String(persistError) },
+        '[smoke-test] Failed to record sell in persistence layer (non-fatal)'
+      );
     }
   }
+
+  // Clear live progress - test is complete
+  liveProgress = null;
 
   return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceAfter, state.exitTrigger, buyFailures, tokensEvaluated, tokensPipelinePassed, state.actualSolSpent, tradeAmount);
 }
@@ -725,32 +789,40 @@ async function runListenPipelineAndBuy(
             clearTimeout(overallTimeout);
 
             // Record real money buy in persistence layer for dashboard P&L
-            const stateStore = getStateStore();
-            const mintStr = token.mint.toString();
-            const bondingCurveStr = token.bondingCurve!.toString();
-            const solSpent = state.actualSolSpent ?? tradeAmount;
+            // Wrapped in try-catch so persistence errors never block the sell flow
+            try {
+              const stateStore = getStateStore();
+              const mintStr = token.mint.toString();
+              const bondingCurveStr = token.bondingCurve!.toString();
+              const solSpent = state.actualSolSpent ?? tradeAmount;
 
-            if (stateStore) {
-              const tokensRcvd = state.tokensReceived;
-              const entryPrice = tokensRcvd > 0 ? solSpent / tokensRcvd : 0;
-              stateStore.createPosition({
+              if (stateStore) {
+                const tokensRcvd = state.tokensReceived;
+                const entryPrice = tokensRcvd > 0 ? solSpent / tokensRcvd : 0;
+                stateStore.createPosition({
+                  tokenMint: mintStr,
+                  poolId: bondingCurveStr,
+                  amountSol: solSpent,
+                  amountToken: tokensRcvd,
+                  entryPrice,
+                });
+              }
+
+              const pnlTracker = getPnlTracker();
+              pnlTracker.recordBuy({
                 tokenMint: mintStr,
-                poolId: bondingCurveStr,
+                tokenSymbol: token.symbol,
                 amountSol: solSpent,
-                amountToken: tokensRcvd,
-                entryPrice,
+                amountToken: state.tokensReceived,
+                poolId: bondingCurveStr,
+                txSignature: state.buySignature,
               });
+            } catch (persistError) {
+              logger.warn(
+                { error: persistError instanceof Error ? persistError.message : String(persistError) },
+                '[smoke-test] Failed to record buy in persistence layer (non-fatal - sell will still proceed)'
+              );
             }
-
-            const pnlTracker = getPnlTracker();
-            pnlTracker.recordBuy({
-              tokenMint: mintStr,
-              tokenSymbol: token.symbol,
-              amountSol: solSpent,
-              amountToken: state.tokensReceived,
-              poolId: bondingCurveStr,
-              txSignature: state.buySignature,
-            });
 
             // Mark buy step as passed too
             steps[4].status = 'passed';
@@ -771,6 +843,7 @@ async function runListenPipelineAndBuy(
               reason: failReason,
               timestamp: Date.now(),
             });
+            if (liveProgress) liveProgress.buyFailures = buyFailures.length;
 
             logger.warn(
               { mint: token.mint.toString(), symbol: token.symbol, error: failReason },
@@ -787,6 +860,7 @@ async function runListenPipelineAndBuy(
             reason: failReason,
             timestamp: Date.now(),
           });
+          if (liveProgress) liveProgress.buyFailures = buyFailures.length;
 
           logger.warn(
             { mint: token.mint.toString(), error: failReason },

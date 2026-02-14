@@ -59,6 +59,81 @@ function escapeHtml(text) {
 }
 
 /**
+ * Render live progress of a running smoke test
+ */
+function renderProgress(progress) {
+  const badge = document.getElementById('smoke-badge');
+  badge.textContent = 'RUNNING';
+  badge.style.background = 'linear-gradient(135deg, #ff9800, #ffcc02)';
+
+  document.getElementById('overall-result').textContent = 'Running...';
+  document.getElementById('overall-result').className = 'card-value';
+
+  document.getElementById('pnl-value').textContent = '--';
+  document.getElementById('steps-passed').textContent = '--';
+  document.getElementById('steps-failed').textContent = '--';
+  document.getElementById('steps-failed').className = 'card-value';
+
+  const elapsed = Date.now() - progress.startedAt;
+  document.getElementById('duration').textContent = formatDuration(elapsed);
+  document.getElementById('exit-trigger').textContent = progress.currentStep;
+
+  const walletBefore = document.getElementById('wallet-before');
+  if (progress.walletBalanceBefore > 0) {
+    walletBefore.textContent = `${progress.walletBalanceBefore.toFixed(4)} SOL`;
+  } else {
+    walletBefore.textContent = '--';
+  }
+
+  document.getElementById('net-cost').textContent = '--';
+
+  // Steps list from live progress
+  const stepsList = document.getElementById('steps-list');
+  if (progress.steps && progress.steps.length > 0) {
+    stepsList.innerHTML = progress.steps.map((step, index) => {
+      const statusClass = step.status === 'passed' ? 'step-passed'
+        : step.status === 'failed' ? 'step-failed'
+        : step.status === 'running' ? 'step-running'
+        : 'step-pending';
+      const statusIcon = step.status === 'passed' ? '&#10003;'
+        : step.status === 'failed' ? '&#10007;'
+        : step.status === 'running' ? '&#9679;'
+        : '&#8943;';
+      const duration = step.durationMs ? formatDuration(step.durationMs) : '--';
+
+      return `
+        <div class="step-item ${statusClass}">
+          <div class="step-number">${index + 1}</div>
+          <div class="step-icon">${statusIcon}</div>
+          <div class="step-info">
+            <div class="step-name">${escapeHtml(step.name)}</div>
+            <div class="step-details">${escapeHtml(step.details || (step.status === 'running' ? 'In progress...' : ''))}</div>
+          </div>
+          <div class="step-duration">${duration}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Show tokens evaluated / pipeline passed in a status line
+  const tokensInfo = [];
+  if (progress.tokensEvaluated > 0) tokensInfo.push(`${progress.tokensEvaluated} tokens evaluated`);
+  if (progress.tokensPipelinePassed > 0) tokensInfo.push(`${progress.tokensPipelinePassed} passed pipeline`);
+  if (progress.buyFailures > 0) tokensInfo.push(`${progress.buyFailures} buy failures`);
+
+  if (tokensInfo.length > 0) {
+    const existingInfo = document.getElementById('progress-info');
+    if (existingInfo) {
+      existingInfo.textContent = tokensInfo.join(' | ');
+    }
+  }
+
+  // Hide buy failures panel during progress
+  const buyFailuresPanel = document.getElementById('buy-failures-panel');
+  if (buyFailuresPanel) buyFailuresPanel.style.display = 'none';
+}
+
+/**
  * Render a smoke test report into the UI (works for both current and historical)
  */
 function renderReport(report) {
@@ -174,13 +249,28 @@ function renderReport(report) {
 }
 
 /**
- * Load and render the current (live) smoke test report
+ * Load and render the current (live) smoke test report or in-progress status
  */
 async function updateSmokeTestReport() {
   // Don't overwrite when viewing a historical report
   if (viewingReportId !== null) return;
 
   const report = await fetchApi('/api/smoke-test-report');
+
+  // If a completed report exists, render it
+  if (report && report.status !== 'no_report') {
+    renderReport(report);
+    return;
+  }
+
+  // No report yet - check if a smoke test is running
+  const progress = await fetchApi('/api/smoke-test-progress');
+  if (progress && progress.running) {
+    renderProgress(progress);
+    return;
+  }
+
+  // No report and not running
   renderReport(report);
 }
 

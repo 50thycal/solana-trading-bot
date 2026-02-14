@@ -18,7 +18,7 @@ import { PoolAction, PoolType } from '../persistence/models';
 import { getPipelineStats, resetPipelineStats } from '../pipeline';
 import { getPaperTradeTracker } from '../risk';
 import { getTradeAuditManager } from '../helpers/trade-audit';
-import { getSmokeTestReport, getAllSmokeTestReports } from '../smoke-test';
+import { getSmokeTestReport, getAllSmokeTestReports, getSmokeTestProgress } from '../smoke-test';
 import { getLogSummarizer } from '../helpers/log-summarizer';
 import { ABTestStore } from '../ab-test/ab-store';
 import { ABReportGenerator } from '../ab-test/ab-report';
@@ -341,6 +341,10 @@ export class DashboardServer {
 
         case '/api/smoke-test-reports':
           data = { reports: getAllSmokeTestReports() };
+          break;
+
+        case '/api/smoke-test-progress':
+          data = getSmokeTestProgress() || { running: false };
           break;
 
         case '/api/diagnostic':
@@ -716,6 +720,7 @@ export class DashboardServer {
         smokeTestTotalPnlSol: allSmokeReports.length > 0
           ? allSmokeReports.reduce((sum, r) => sum + (-r.netCostSol), 0)
           : (smokeReport ? -smokeReport.netCostSol : 0),
+        smokeTestRunning: getSmokeTestProgress()?.running || false,
       },
       infraCosts,
       timestamp: new Date().toISOString(),
