@@ -411,6 +411,19 @@ export class PnlTracker {
   }
 
   /**
+   * Reset session stats (for dashboard reset)
+   */
+  resetSessionStats(): void {
+    this.sessionStats = {
+      startTime: Date.now(),
+      totalBuys: 0,
+      totalSells: 0,
+      realizedPnlSol: 0,
+    };
+    logger.info('P&L tracker session stats reset');
+  }
+
+  /**
    * Clear old trades (keep last N days)
    */
   async pruneOldTrades(daysToKeep: number = 7): Promise<number> {

@@ -169,6 +169,7 @@ function renderVar(v) {
     inputHtml = `<select class="env-select" data-var-name="${v.name}">${options}</select>`;
   } else {
     const inputType = isSensitive ? 'password' : 'text';
+    const inputModeAttr = v.type === 'number' ? ' inputmode="decimal"' : '';
     inputHtml = `
       <input
         type="${inputType}"
@@ -176,7 +177,7 @@ function renderVar(v) {
         data-var-name="${v.name}"
         value="${escapeAttr(value)}"
         placeholder="${escapeAttr(v.placeholder || v.defaultValue || '')}"
-        autocomplete="off"
+        autocomplete="off"${inputModeAttr}
       >
     `;
   }
@@ -217,6 +218,15 @@ function isChanged(v) {
   return effective !== (v.defaultValue || '');
 }
 
+function findVarByName(varName) {
+  for (const cat of categories) {
+    for (const v of cat.vars) {
+      if (v.name === varName) return v;
+    }
+  }
+  return null;
+}
+
 function getFilteredVars(cat) {
   if (!showChangedOnly) return cat.vars;
   return cat.vars.filter(v => isChanged(v) || v.required);
@@ -234,8 +244,30 @@ function handleInputChange(e) {
   editedValues[varName] = value;
   userModifiedVars.add(varName);
 
-  // Re-render to update changed state
-  render();
+  // Update the visual state of just this variable row without a full re-render.
+  // A full render() would rebuild all DOM elements and cause the input to lose focus,
+  // making it impossible to type multi-character values like "1.5".
+  const varRow = e.target.closest('.env-var');
+  if (varRow) {
+    const v = findVarByName(varName);
+    if (v) {
+      const changed = isChanged(v);
+      varRow.classList.toggle('env-var-changed', changed);
+
+      // Show/hide reset button
+      let resetBtn = varRow.querySelector('.env-var-reset');
+      if (changed && !resetBtn) {
+        resetBtn = document.createElement('button');
+        resetBtn.className = 'env-var-reset';
+        resetBtn.dataset.varName = varName;
+        resetBtn.title = 'Reset to default';
+        resetBtn.innerHTML = '&#x21A9;';
+        varRow.querySelector('.env-var-input-row').appendChild(resetBtn);
+      } else if (!changed && resetBtn) {
+        resetBtn.remove();
+      }
+    }
+  }
 }
 
 // Reset individual var

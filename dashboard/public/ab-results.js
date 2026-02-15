@@ -32,6 +32,11 @@ document.querySelectorAll('.ab-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     const tabName = tab.dataset.tab;
 
+    // Clear session report when leaving session detail tab
+    if (tabName !== 'session-detail') {
+      lastSessionReport = null;
+    }
+
     // Update tab buttons
     document.querySelectorAll('.ab-tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
@@ -342,6 +347,7 @@ async function viewSessionDetail(sessionId) {
 }
 
 function renderSessionDetail(report) {
+  lastSessionReport = report;
   const container = document.getElementById('session-detail-content');
   const cA = report.variantA.config;
   const cB = report.variantB.config;
@@ -510,10 +516,153 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+// ============================================================
+// COPY TO CLIPBOARD
+// ============================================================
+
+let lastSessionReport = null;
+
+/**
+ * Build plain-text A/B session report for clipboard
+ */
+function buildSessionReportText(report) {
+  if (!report) return 'No session data available.';
+
+  const lines = [];
+  const cA = report.variantA.config;
+  const cB = report.variantB.config;
+  const sA = report.variantA;
+  const sB = report.variantB;
+
+  lines.push('=== A/B Test Session Report ===');
+  lines.push(`Session: ${report.sessionId}`);
+  lines.push(`Date: ${new Date(report.startedAt).toLocaleString()}`);
+  lines.push(`Duration: ${formatDuration(report.durationMs)}`);
+  lines.push(`Tokens Detected: ${report.totalTokensDetected}`);
+  lines.push(`Winner: ${report.winner === 'tie' ? 'Tie' : `Config ${report.winner}`}`);
+  lines.push(`PnL Difference: ${report.pnlDifferenceSol.toFixed(4)} SOL`);
+
+  lines.push('');
+  lines.push('--- Configuration ---');
+  const configKeys = [
+    ['Take Profit', `${cA.takeProfit}%`, `${cB.takeProfit}%`],
+    ['Stop Loss', `${cA.stopLoss}%`, `${cB.stopLoss}%`],
+    ['Max Hold Duration', `${(cA.maxHoldDurationMs / 60000).toFixed(1)} min`, `${(cB.maxHoldDurationMs / 60000).toFixed(1)} min`],
+    ['Quote Amount', `${cA.quoteAmount} SOL`, `${cB.quoteAmount} SOL`],
+    ['Buy Slippage', `${cA.buySlippage}%`, `${cB.buySlippage}%`],
+    ['Sell Slippage', `${cA.sellSlippage}%`, `${cB.sellSlippage}%`],
+    ['Min SOL in Curve', cA.pumpfunMinSolInCurve, cB.pumpfunMinSolInCurve],
+    ['Max SOL in Curve', cA.pumpfunMaxSolInCurve, cB.pumpfunMaxSolInCurve],
+    ['Momentum Min Buys', cA.momentumMinTotalBuys, cB.momentumMinTotalBuys],
+    ['Max Trades/Hour', cA.maxTradesPerHour, cB.maxTradesPerHour],
+  ];
+  lines.push(`${'Param'.padEnd(25)} ${'Config A'.padEnd(15)} Config B`);
+  for (const [label, a, b] of configKeys) {
+    const diff = String(a) !== String(b) ? ' *' : '';
+    lines.push(`${label.padEnd(25)} ${String(a).padEnd(15)} ${b}${diff}`);
+  }
+
+  lines.push('');
+  lines.push('--- Results ---');
+  lines.push(`${'Metric'.padEnd(25)} ${'Config A'.padEnd(15)} Config B`);
+  lines.push(`${'Pipeline Passed'.padEnd(25)} ${String(sA.totalPipelinePassed).padEnd(15)} ${sB.totalPipelinePassed}`);
+  lines.push(`${'Pipeline Rejected'.padEnd(25)} ${String(sA.totalPipelineRejected).padEnd(15)} ${sB.totalPipelineRejected}`);
+  lines.push(`${'Trades Entered'.padEnd(25)} ${String(sA.totalTradesEntered).padEnd(15)} ${sB.totalTradesEntered}`);
+  lines.push(`${'Trades Closed'.padEnd(25)} ${String(sA.totalTradesClosed).padEnd(15)} ${sB.totalTradesClosed}`);
+  lines.push(`${'Win Rate'.padEnd(25)} ${(sA.winRate.toFixed(1) + '%').padEnd(15)} ${sB.winRate.toFixed(1)}%`);
+  lines.push(`${'Realized PnL (SOL)'.padEnd(25)} ${sA.realizedPnlSol.toFixed(4).padEnd(15)} ${sB.realizedPnlSol.toFixed(4)}`);
+  lines.push(`${'Realized PnL (%)'.padEnd(25)} ${(sA.realizedPnlPercent.toFixed(1) + '%').padEnd(15)} ${sB.realizedPnlPercent.toFixed(1)}%`);
+  lines.push(`${'Wins'.padEnd(25)} ${String(sA.winCount).padEnd(15)} ${sB.winCount}`);
+  lines.push(`${'Losses'.padEnd(25)} ${String(sA.lossCount).padEnd(15)} ${sB.lossCount}`);
+  lines.push(`${'Avg Win PnL'.padEnd(25)} ${(sA.avgWinPnlPercent.toFixed(1) + '%').padEnd(15)} ${sB.avgWinPnlPercent.toFixed(1)}%`);
+  lines.push(`${'Avg Loss PnL'.padEnd(25)} ${(sA.avgLossPnlPercent.toFixed(1) + '%').padEnd(15)} ${sB.avgLossPnlPercent.toFixed(1)}%`);
+  lines.push(`${'Best Trade'.padEnd(25)} ${(sA.bestTradePnlPercent.toFixed(1) + '%').padEnd(15)} ${sB.bestTradePnlPercent.toFixed(1)}%`);
+  lines.push(`${'Worst Trade'.padEnd(25)} ${(sA.worstTradePnlPercent.toFixed(1) + '%').padEnd(15)} ${sB.worstTradePnlPercent.toFixed(1)}%`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Build plain-text cross-session analysis for clipboard
+ */
+function buildAnalysisText() {
+  if (!analysisData) return 'No analysis data available.';
+
+  const lines = [];
+  lines.push('=== A/B Test Cross-Session Analysis ===');
+  lines.push(`Total Sessions: ${analysisData.totalSessions}`);
+  lines.push(`Parameters Tested: ${analysisData.parameterImpacts.length}`);
+
+  if (analysisData.parameterImpacts.length > 0) {
+    lines.push('');
+    lines.push('--- Parameter Impact Ranking ---');
+    analysisData.parameterImpacts.forEach((impact, idx) => {
+      lines.push(`${idx + 1}. ${formatParamName(impact.paramName)}`);
+      lines.push(`   Sessions: ${impact.sessionsTested} | Avg PnL Impact: ${impact.avgPnlImpact.toFixed(4)} SOL`);
+      lines.push(`   Best Value: ${impact.bestValue !== null ? impact.bestValue : '--'} (${impact.bestValueWinRate.toFixed(0)}% win rate)`);
+      lines.push(`   Higher Wins: ${impact.higherWins} | Lower Wins: ${impact.lowerWins}`);
+    });
+  }
+
+  const config = analysisData.bestConfig;
+  const params = Object.entries(config.params);
+  if (params.length > 0) {
+    lines.push('');
+    lines.push('--- Best Known Configuration ---');
+    lines.push(`Overall Confidence: ${formatConfidence(config.overallConfidence)}`);
+    for (const [name, info] of params) {
+      lines.push(`  ${formatParamName(name)}: ${info.value} (${info.confidence}, ${info.sessionsTested} tests)`);
+    }
+  }
+
+  if (analysisData.testSuggestions && analysisData.testSuggestions.length > 0) {
+    lines.push('');
+    lines.push('--- Suggested Next Tests ---');
+    analysisData.testSuggestions.forEach(s => {
+      lines.push(`  [${s.priority}] ${formatParamName(s.paramName)}: A=${s.suggestedValueA}, B=${s.suggestedValueB}`);
+      lines.push(`    Reason: ${s.reason}`);
+    });
+  }
+
+  return lines.join('\n');
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+  }
+}
+
+async function copyAnalysis() {
+  const btn = document.getElementById('copy-analysis-btn');
+  let text;
+
+  // If viewing a session detail, copy that; otherwise copy the analysis
+  if (lastSessionReport) {
+    text = buildSessionReportText(lastSessionReport);
+  } else {
+    text = buildAnalysisText();
+  }
+
+  await copyToClipboard(text);
+  btn.textContent = 'Copied!';
+  setTimeout(() => { btn.textContent = 'Copy Analysis'; }, 2000);
+}
+
 // Make functions available globally for onclick handlers
 window.viewSessionDetail = viewSessionDetail;
 window.showParamDetail = showParamDetail;
 window.closeParamDetail = closeParamDetail;
+window.copyAnalysis = copyAnalysis;
 
 // ============================================================
 // INIT
