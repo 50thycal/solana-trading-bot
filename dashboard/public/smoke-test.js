@@ -248,6 +248,76 @@ function renderReport(report) {
   } else {
     buyFailuresPanel.style.display = 'none';
   }
+
+  // Traded token panel
+  renderTradedToken(report);
+}
+
+/**
+ * Render the Traded Token info panel for a completed report.
+ * Shows token name/symbol, contract address, bonding curve, and
+ * buy/sell timestamps with Solscan explorer links.
+ */
+function renderTradedToken(report) {
+  const panel = document.getElementById('traded-token-panel');
+  const meta = document.getElementById('traded-token-meta');
+  const subtitle = document.getElementById('traded-token-subtitle');
+  if (!panel || !meta) return;
+
+  const token = report.tradedToken;
+  if (!token || !token.mint) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  subtitle.textContent = `${token.symbol || '?'} · ${token.name || 'Unknown'}`;
+
+  const solscanTx = (sig) => sig
+    ? `<a href="https://solscan.io/tx/${encodeURIComponent(sig)}" target="_blank" rel="noopener" title="${escapeHtml(sig)}">${escapeHtml(sig.substring(0, 12))}…</a>`
+    : '<span class="text-muted">—</span>';
+
+  const solscanAddr = (addr, label) => addr
+    ? `<a href="https://solscan.io/token/${encodeURIComponent(addr)}" target="_blank" rel="noopener" title="${escapeHtml(addr)}">${label || escapeHtml(addr.substring(0, 16))}…</a>`
+    : '<span class="text-muted">—</span>';
+
+  const buyTime  = report.buyTimestamp  ? formatDate(report.buyTimestamp)  : '—';
+  const sellTime = report.sellTimestamp ? formatDate(report.sellTimestamp) : '—';
+
+  meta.innerHTML = `
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Token</span>
+      <span class="smoke-meta-value">${escapeHtml(token.symbol || '?')} &mdash; ${escapeHtml(token.name || 'Unknown')}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Contract Address</span>
+      <span class="smoke-meta-value" style="font-family:monospace;font-size:0.8rem;">
+        ${solscanAddr(token.mint, token.mint.substring(0, 20))}
+      </span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Bonding Curve</span>
+      <span class="smoke-meta-value" style="font-family:monospace;font-size:0.8rem;" title="${escapeHtml(token.bondingCurve || '')}">
+        ${token.bondingCurve ? escapeHtml(token.bondingCurve.substring(0, 20)) + '…' : '—'}
+      </span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Buy Confirmed</span>
+      <span class="smoke-meta-value">${escapeHtml(buyTime)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Buy Transaction</span>
+      <span class="smoke-meta-value" style="font-family:monospace;font-size:0.8rem;">${solscanTx(report.buySignature)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Sell Confirmed</span>
+      <span class="smoke-meta-value">${escapeHtml(sellTime)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Sell Transaction</span>
+      <span class="smoke-meta-value" style="font-family:monospace;font-size:0.8rem;">${solscanTx(report.sellSignature)}</span>
+    </div>
+  `;
 }
 
 /**
@@ -390,6 +460,17 @@ function buildReportText(report) {
   if (report.netCostSol !== undefined) {
     lines.push(`Net Cost: ${report.netCostSol.toFixed(6)} SOL`);
     lines.push(`P&L: ${formatPnl(-report.netCostSol)}`);
+  }
+
+  if (report.tradedToken && report.tradedToken.mint) {
+    const t = report.tradedToken;
+    lines.push('');
+    lines.push('--- Traded Token ---');
+    lines.push(`Token:    ${t.symbol || '?'} — ${t.name || 'Unknown'}`);
+    lines.push(`Contract: ${t.mint}`);
+    lines.push(`Curve:    ${t.bondingCurve || '—'}`);
+    if (report.buyTimestamp)  lines.push(`Bought:   ${formatDate(report.buyTimestamp)}  sig: ${report.buySignature || '—'}`);
+    if (report.sellTimestamp) lines.push(`Sold:     ${formatDate(report.sellTimestamp)}  sig: ${report.sellSignature || '—'}`);
   }
 
   if (report.steps && report.steps.length > 0) {

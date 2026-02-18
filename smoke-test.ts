@@ -115,6 +115,23 @@ export interface SmokeTestReport {
   tokensPipelinePassed: number;
   actualSolSpentOnBuy?: number;
   buyOverheadSol?: number;
+  /** Token that was successfully bought and sold during this run */
+  tradedToken?: {
+    name: string;
+    symbol: string;
+    /** Full on-chain mint address (contract address) */
+    mint: string;
+    /** Bonding curve program account */
+    bondingCurve: string;
+  };
+  /** Wall-clock time (ms) when buy transaction was confirmed */
+  buyTimestamp?: number;
+  /** Wall-clock time (ms) when sell transaction was confirmed */
+  sellTimestamp?: number;
+  /** Buy transaction signature */
+  buySignature?: string;
+  /** Sell transaction signature */
+  sellSignature?: string;
 }
 
 // Shared state for the report endpoint
@@ -308,10 +325,12 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     passedBondingCurve: PublicKey | null;
     isToken2022: boolean;
     buySignature: string;
+    buyTimestamp: number;
     tokensReceived: number;
     actualSolSpent: number | undefined;
     sellSignature: string;
     sellSolReceived: number;
+    sellTimestamp: number;
     exitTrigger: string;
   } = {
     connection: null,
@@ -321,10 +340,12 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     passedBondingCurve: null,
     isToken2022: false,
     buySignature: '',
+    buyTimestamp: 0,
     tokensReceived: 0,
     actualSolSpent: undefined,
     sellSignature: '',
     sellSolReceived: 0,
+    sellTimestamp: 0,
     exitTrigger: '',
   };
 
@@ -598,6 +619,7 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
       if (sellResult.success) {
         state.sellSignature = sellResult.signature || '';
         state.sellSolReceived = sellResult.solReceived || 0;
+        state.sellTimestamp = Date.now();
         return `Sold on attempt ${attempt}/${maxAttempts} for ${state.sellSolReceived.toFixed(6)} SOL, sig: ${state.sellSignature.substring(0, 12)}...`;
       }
 
@@ -678,7 +700,19 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     }
   }
 
-  return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceAfter, state.exitTrigger, buyFailures, tokensEvaluated, tokensPipelinePassed, state.actualSolSpent, tradeAmount);
+  const tradedToken = state.passedToken ? {
+    name: state.passedToken.name || '',
+    symbol: state.passedToken.symbol || '',
+    mint: state.passedToken.mint.toString(),
+    bondingCurve: state.passedBondingCurve?.toString() || '',
+  } : undefined;
+
+  return buildReport(
+    startedAt, steps, walletBalanceBefore, walletBalanceAfter, state.exitTrigger,
+    buyFailures, tokensEvaluated, tokensPipelinePassed, state.actualSolSpent, tradeAmount,
+    tradedToken, state.buyTimestamp || undefined, state.sellTimestamp || undefined,
+    state.buySignature || undefined, state.sellSignature || undefined,
+  );
 
   } finally {
     // Always clear live progress so the dashboard never shows a stale "Running..." state
@@ -705,10 +739,12 @@ async function runListenPipelineAndBuy(
     passedBondingCurve: PublicKey | null;
     isToken2022: boolean;
     buySignature: string;
+    buyTimestamp: number;
     tokensReceived: number;
     actualSolSpent: number | undefined;
     sellSignature: string;
     sellSolReceived: number;
+    sellTimestamp: number;
     exitTrigger: string;
   },
   tradeAmount: number,
@@ -819,6 +855,7 @@ async function runListenPipelineAndBuy(
             state.passedBondingCurve = token.bondingCurve!;
             state.isToken2022 = isToken2022;
             state.buySignature = buyResult.signature || '';
+            state.buyTimestamp = Date.now();
             state.tokensReceived = buyResult.tokensReceived || 0;
             state.actualSolSpent = buyResult.actualSolSpent;
             buySucceeded = true;
@@ -942,6 +979,11 @@ function buildReport(
   tokensPipelinePassed: number,
   actualSolSpentOnBuy?: number,
   tradeAmount?: number,
+  tradedToken?: { name: string; symbol: string; mint: string; bondingCurve: string },
+  buyTimestamp?: number,
+  sellTimestamp?: number,
+  buySignature?: string,
+  sellSignature?: string,
 ): SmokeTestReport {
   const completedAt = Date.now();
   const passedCount = steps.filter((s) => s.status === 'passed').length;
@@ -971,6 +1013,11 @@ function buildReport(
     tokensPipelinePassed,
     actualSolSpentOnBuy,
     buyOverheadSol: buyOverhead,
+    tradedToken,
+    buyTimestamp,
+    sellTimestamp,
+    buySignature,
+    sellSignature,
   };
 
   // Store for dashboard retrieval (in-memory + persisted to file)
