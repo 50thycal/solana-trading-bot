@@ -826,6 +826,25 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       const postSolBalance = await getPreTxSolBalance(connection, wallet.publicKey);
       if (postSolBalance !== null) {
         actualSolSpent = (preSolBalance - postSolBalance) / LAMPORTS_PER_SOL;
+
+        // Sanity check: actualSolSpent should not exceed the expected outflow by more than
+        // 20%. A significantly higher value means the balance snapshot captured wallet
+        // changes from a concurrent transaction (e.g., a race-condition double-buy) rather
+        // than just this transaction. Log a loud warning so the anomaly is visible.
+        const expectedMaxSpendSol = outflow.totalExpectedOutflow / LAMPORTS_PER_SOL;
+        if (actualSolSpent > expectedMaxSpendSol * 1.2) {
+          logger.warn(
+            {
+              mint: mint.toString(),
+              actualSolSpent: actualSolSpent.toFixed(6),
+              expectedMaxSpend: expectedMaxSpendSol.toFixed(6),
+              ratio: (actualSolSpent / expectedMaxSpendSol).toFixed(2),
+            },
+            '[pump.fun] SPEND ANOMALY: actualSolSpent exceeds expected outflow by >20%. ' +
+            'A concurrent transaction may have been captured in the balance delta. ' +
+            'Check for double-buy race conditions.',
+          );
+        }
       }
     }
 
