@@ -1060,6 +1060,49 @@ export class StateStore {
     };
   }
 
+  /**
+   * Close all open positions (mark as closed)
+   */
+  closeAllOpenPositions(): number {
+    const result = this.db.prepare(`
+      UPDATE positions
+      SET status = 'closed', closed_timestamp = ?, closed_reason = 'dashboard_reset'
+      WHERE status = 'open'
+    `).run(Date.now());
+
+    if (result.changes > 0) {
+      logger.info({ count: result.changes }, 'Closed all open positions via dashboard reset');
+    }
+
+    return result.changes;
+  }
+
+  /**
+   * Clear all trade records
+   */
+  clearAllTrades(): number {
+    const result = this.db.prepare('DELETE FROM trades').run();
+
+    if (result.changes > 0) {
+      logger.info({ count: result.changes }, 'Cleared all trades via dashboard reset');
+    }
+
+    return result.changes;
+  }
+
+  /**
+   * Clear all pool detection records
+   */
+  clearAllPoolDetections(): number {
+    const result = this.db.prepare('DELETE FROM pool_detections').run();
+
+    if (result.changes > 0) {
+      logger.info({ count: result.changes }, 'Cleared all pool detections via dashboard reset');
+    }
+
+    return result.changes;
+  }
+
   // ============================================================
   // UTILITY OPERATIONS
   // ============================================================

@@ -378,6 +378,50 @@ async function updateAll() {
   ]);
 }
 
+// Reset Stats button handler
+const resetStatsBtn = document.getElementById('reset-stats-btn');
+if (resetStatsBtn) {
+  resetStatsBtn.addEventListener('click', async () => {
+    if (!confirm(
+      'Reset all dashboard stats? This will:\n' +
+      '- Close all open positions\n' +
+      '- Clear trade history\n' +
+      '- Clear pipeline detection records\n' +
+      '- Reset buy/sell counters\n\n' +
+      'This cannot be undone.'
+    )) return;
+
+    resetStatsBtn.disabled = true;
+    resetStatsBtn.textContent = 'Resetting...';
+
+    try {
+      const res = await fetch('/api/reset-production-stats', { method: 'POST' });
+      const result = await res.json();
+
+      if (result.success) {
+        showDashboardToast('Stats reset successfully');
+        // Refresh immediately
+        await updateAll();
+      } else {
+        showDashboardToast('Error: ' + (result.error || 'Unknown error'));
+      }
+    } catch (err) {
+      showDashboardToast('Failed to reach server');
+    } finally {
+      resetStatsBtn.disabled = false;
+      resetStatsBtn.textContent = 'Reset Stats';
+    }
+  });
+}
+
+function showDashboardToast(message) {
+  const toast = document.getElementById('dashboard-toast');
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.add('show');
+  setTimeout(() => { toast.classList.remove('show'); }, 3000);
+}
+
 // Initial load, then schedule next poll only after the current one finishes.
 // This prevents overlapping requests when the server is slow.
 async function pollLoop() {

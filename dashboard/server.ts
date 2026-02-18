@@ -480,6 +480,10 @@ export class DashboardServer {
           await this.handleRailwayRestart(res);
           break;
 
+        case '/api/reset-production-stats':
+          await this.handleResetProductionStats(res);
+          break;
+
         default:
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'API endpoint not found' }));
@@ -1125,6 +1129,44 @@ export class DashboardServer {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error({ error: errorMessage }, 'Failed to reset pipeline stats');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: errorMessage }));
+    }
+  }
+
+  /**
+   * POST /api/reset-production-stats - Reset all production dashboard stats
+   * Closes open positions, clears trades/pool detections, resets in-memory stats
+   */
+  private async handleResetProductionStats(res: http.ServerResponse): Promise<void> {
+    try {
+      const stateStore = getStateStore();
+      const pnlTracker = getPnlTracker();
+      const results: Record<string, any> = {};
+
+      // 1. Close all open positions
+      if (stateStore) {
+        results.positionsClosed = stateStore.closeAllOpenPositions();
+        results.tradesCleared = stateStore.clearAllTrades();
+        results.poolDetectionsCleared = stateStore.clearAllPoolDetections();
+      }
+
+      // 2. Reset in-memory PnlTracker session stats
+      if (pnlTracker) {
+        pnlTracker.resetSessionStats();
+        results.pnlTrackerReset = true;
+      }
+
+      // 3. Reset in-memory pipeline stats
+      resetPipelineStats();
+      results.pipelineStatsReset = true;
+
+      logger.info(results, 'Production stats reset via dashboard');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, ...results }));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ error: errorMessage }, 'Failed to reset production stats');
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: errorMessage }));
     }

@@ -137,6 +137,8 @@ function renderProgress(progress) {
  * Render a smoke test report into the UI (works for both current and historical)
  */
 function renderReport(report) {
+  lastRenderedReport = report;
+
   if (!report || report.status === 'no_report') {
     document.getElementById('smoke-loading').textContent = 'No smoke test report available. Run in smoke mode to generate one.';
     document.getElementById('smoke-badge').textContent = 'No Report';
@@ -368,6 +370,85 @@ async function updateHistory() {
       </div>
     `;
   }).join('');
+}
+
+/**
+ * Build a plain-text report for clipboard (for pasting into Claude for analysis)
+ */
+function buildReportText(report) {
+  if (!report || report.status === 'no_report') return 'No smoke test report available.';
+
+  const lines = [];
+  lines.push('=== Smoke Test Report ===');
+  lines.push(`Result: ${report.overallResult}`);
+  lines.push(`Date: ${formatDate(report.startedAt)}`);
+  lines.push(`Duration: ${formatDuration(report.totalDurationMs)}`);
+  lines.push(`Steps: ${report.passedCount}/${report.totalSteps} passed, ${report.failedCount} failed`);
+
+  if (report.exitTrigger) lines.push(`Exit Trigger: ${report.exitTrigger}`);
+  if (report.walletBalanceBefore !== undefined) lines.push(`Wallet Before: ${report.walletBalanceBefore.toFixed(4)} SOL`);
+  if (report.netCostSol !== undefined) {
+    lines.push(`Net Cost: ${report.netCostSol.toFixed(6)} SOL`);
+    lines.push(`P&L: ${formatPnl(-report.netCostSol)}`);
+  }
+
+  if (report.steps && report.steps.length > 0) {
+    lines.push('');
+    lines.push('--- Steps ---');
+    report.steps.forEach((step, i) => {
+      const duration = step.durationMs ? formatDuration(step.durationMs) : '--';
+      lines.push(`${i + 1}. [${step.status.toUpperCase()}] ${step.name} (${duration})`);
+      if (step.details) lines.push(`   ${step.details}`);
+    });
+  }
+
+  if (report.buyFailures && report.buyFailures.length > 0) {
+    lines.push('');
+    lines.push('--- Buy Failures ---');
+    report.buyFailures.forEach(f => {
+      const mint = (f.tokenSymbol || '') + ' ' + (f.tokenMint || '').substring(0, 12) + '...';
+      lines.push(`- ${mint}: ${f.reason || 'Unknown'}`);
+    });
+  }
+
+  return lines.join('\n');
+}
+
+// Store the latest rendered report for copy
+let lastRenderedReport = null;
+
+/**
+ * Copy current report to clipboard
+ */
+async function copyCurrentReport() {
+  const btn = document.getElementById('copy-report-btn');
+  let report = lastRenderedReport;
+
+  if (!report) {
+    // Fetch fresh
+    if (viewingReportId) {
+      report = await fetchApi(`/api/smoke-test-reports/${viewingReportId}`);
+    } else {
+      report = await fetchApi('/api/smoke-test-report');
+    }
+  }
+
+  const text = buildReportText(report);
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+  }
+
+  btn.textContent = 'Copied!';
+  setTimeout(() => { btn.textContent = 'Copy Report'; }, 2000);
 }
 
 async function updateAll() {
