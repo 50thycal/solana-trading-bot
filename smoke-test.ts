@@ -773,6 +773,22 @@ async function runListenPipelineAndBuy(
           return;
         }
 
+        // Re-check AFTER the async pipeline await. Two tokens arriving within the pipeline
+        // processing window (~100-200ms) will both pass the initial `if (processingBuy)`
+        // guard at the top because the flag is still false while both are inside
+        // pipeline.process(). This second check closes that race window — only the first
+        // token to exit the pipeline and reach here will proceed to buy.
+        if (buySucceeded || processingBuy) {
+          logger.debug(
+            { mint: token.mint.toString(), symbol: token.symbol },
+            '[smoke-test] Pipeline passed but another token already claimed the buy slot - skipping'
+          );
+          return;
+        }
+
+        // Claim the buy slot before any further awaits
+        processingBuy = true;
+
         // Pipeline passed!
         tokensPipelinePassed++;
         setTokensPipelinePassed(tokensPipelinePassed);
@@ -780,8 +796,6 @@ async function runListenPipelineAndBuy(
           { mint: token.mint.toString(), symbol: token.symbol, score: result.context.deepFilters?.filterResults?.score },
           '[smoke-test] Token passed pipeline - attempting buy'
         );
-
-        processingBuy = true;
 
         // Attempt buy - use cheapGates if available, otherwise fall back to detection event
         const isToken2022 = result.context.cheapGates?.mintInfo?.isToken2022 ?? token.isToken2022 ?? false;
