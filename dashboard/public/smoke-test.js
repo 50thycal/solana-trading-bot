@@ -254,6 +254,30 @@ function renderReport(report) {
 }
 
 /**
+ * Copy a mint/address to clipboard and flash the button label.
+ * Called from inline onclick in the traded-token panel.
+ */
+function copyMint(text, btn) {
+  const original = btn.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = original; }, 1500);
+  }).catch(() => {
+    // Fallback for browsers that block clipboard API
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = original; }, 1500);
+  });
+}
+
+/**
  * Render the Traded Token info panel for a completed report.
  * Shows token name/symbol, contract address, bonding curve, and
  * buy/sell timestamps with Solscan explorer links.
@@ -291,8 +315,9 @@ function renderTradedToken(report) {
     </div>
     <div class="smoke-meta-item">
       <span class="smoke-meta-label">Contract Address</span>
-      <span class="smoke-meta-value" style="font-family:monospace;font-size:0.8rem;">
-        ${solscanAddr(token.mint, token.mint.substring(0, 20))}
+      <span class="smoke-meta-value" style="font-family:monospace;font-size:0.8rem;display:flex;align-items:center;gap:0.4rem;">
+        <span title="${escapeHtml(token.mint)}">${escapeHtml(token.mint.substring(0, 20))}…</span>
+        <button class="btn btn-secondary btn-small" style="padding:0.1rem 0.5rem;font-size:0.7rem;font-family:sans-serif;" onclick="copyMint('${token.mint}', this)">Copy</button>
       </span>
     </div>
     <div class="smoke-meta-item">
