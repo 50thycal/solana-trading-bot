@@ -115,6 +115,9 @@ export class PnlTracker {
   }): TradeRecord {
     const stateStore = getStateStore();
 
+    // Look up position by mint to get the actual DB position ID (avoids FK constraint failure)
+    const positionId = stateStore?.getPositionByMint(params.tokenMint)?.id;
+
     // Record trade intent if we have a state store
     let tradeId: string;
     if (stateStore) {
@@ -124,7 +127,7 @@ export class PnlTracker {
         amountSol: params.amountSol,
         amountToken: params.amountToken,
         poolId: params.poolId,
-        positionId: params.tokenMint, // Use token mint as position ID
+        positionId,
       });
       tradeId = dbTrade.id;
 
@@ -150,7 +153,7 @@ export class PnlTracker {
       timestamp: Date.now(),
       txSignature: params.txSignature,
       poolId: params.poolId,
-      positionId: params.tokenMint,
+      positionId,
     };
 
     this.sessionStats.totalBuys++;
