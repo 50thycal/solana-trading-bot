@@ -235,7 +235,40 @@ export async function verifySellTransaction(
   const { connection, signature, wallet, expectedSol, preBalance } = params;
 
   try {
-    // Strategy 1: Balance comparison (preferred)
+    // Strategy 1: Transaction parsing (preferred — uses atomic on-chain pre/postBalances
+    // which are immune to the RPC read-consistency race that can affect separate
+    // getBalance calls made before and after the transaction)
+    const txBalances = await parseTransactionBalancesWithRetry(connection, signature, wallet);
+
+    if (txBalances && txBalances.solChange > 0) {
+      const actualSolReceived = txBalances.solChange / LAMPORTS_PER_SOL;
+      const slippagePercent = calculateSlippage(expectedSol, actualSolReceived);
+
+      if (Math.abs(slippagePercent) > 5) {
+        logger.warn(
+          {
+            signature,
+            wallet: wallet.toString(),
+            expected: expectedSol,
+            actual: actualSolReceived,
+            slippagePercent: slippagePercent.toFixed(2),
+          },
+          '[tx-verifier] Significant SOL slippage detected on sell',
+        );
+      }
+
+      return {
+        success: true,
+        signature,
+        actualSolReceived,
+        expectedSol,
+        solSlippagePercent: slippagePercent,
+        verificationMethod: 'tx_parsing',
+      };
+    }
+
+    // Strategy 2: Balance comparison (fallback — separate RPC calls can race with
+    // concurrent wallet activity, so only used when tx parsing is unavailable)
     const postBalance = await getSolBalanceWithRetry(connection, wallet);
 
     if (postBalance !== null) {
@@ -271,23 +304,6 @@ export async function verifySellTransaction(
         expectedSol,
         solSlippagePercent: slippagePercent,
         verificationMethod: 'balance_check',
-      };
-    }
-
-    // Strategy 2: Transaction parsing (fallback)
-    const txBalances = await parseTransactionBalancesWithRetry(connection, signature, wallet);
-
-    if (txBalances && txBalances.solChange > 0) {
-      const actualSolReceived = txBalances.solChange / LAMPORTS_PER_SOL;
-      const slippagePercent = calculateSlippage(expectedSol, actualSolReceived);
-
-      return {
-        success: true,
-        signature,
-        actualSolReceived,
-        expectedSol,
-        solSlippagePercent: slippagePercent,
-        verificationMethod: 'tx_parsing',
       };
     }
 
