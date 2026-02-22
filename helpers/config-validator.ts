@@ -423,7 +423,7 @@ export function validateConfig(): ValidatedConfig {
   }
   const sniperGateRecheckIntervalMs = Math.round(sniperGateRecheckIntervalSeconds * 1000);
 
-  const sniperGateMaxChecks = requireNumber('SNIPER_GATE_MAX_CHECKS', 15);
+  const sniperGateMaxChecks = requireNumber('SNIPER_GATE_MAX_CHECKS', 10);
   if (sniperGateMaxChecks < 1) {
     errors.push({ variable: 'SNIPER_GATE_MAX_CHECKS', message: 'must be >= 1' });
   }
@@ -521,6 +521,15 @@ export function validateConfig(): ValidatedConfig {
       'Both TRAILING_STOP and TAKE_PROFIT are configured. '
       + 'When trailing stop is enabled, fixed take profit is ignored. '
       + 'Use HARD_TAKE_PROFIT_PERCENT for a ceiling with trailing stop.',
+    );
+  }
+
+  if (trailingStopEnabled && trailingStopDistancePercent >= trailingStopActivationPercent) {
+    logger.warn(
+      `TRAILING_STOP_DISTANCE_PERCENT (${trailingStopDistancePercent}) >= `
+      + `TRAILING_STOP_ACTIVATION_PERCENT (${trailingStopActivationPercent}). `
+      + 'The trail level will be at or below zero when activation triggers, making '
+      + 'the trailing stop functionally inactive. Set DISTANCE < ACTIVATION.',
     );
   }
 
