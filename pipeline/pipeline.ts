@@ -19,10 +19,12 @@ import {
   CheapGatesData,
   DeepFiltersData,
   MomentumGateData,
+  SniperGateData,
 } from './types';
 import { CheapGatesStage, CheapGatesConfig } from './cheap-gates';
 import { DeepFiltersStage, DeepFiltersConfig } from './deep-filters';
 import { MomentumGateStage, MomentumGateConfig } from './momentum-gate';
+import { SniperGateStage, SniperGateConfig } from './sniper-gate';
 import { logger } from '../helpers';
 import { TokenLogBuffer } from '../helpers/token-log-buffer';
 
@@ -64,6 +66,9 @@ export interface PipelineConfig {
   /** Momentum gate configuration */
   momentumGate: Partial<MomentumGateConfig>;
 
+  /** Sniper gate configuration (alternative to momentum gate at Stage 4) */
+  sniperGate: Partial<SniperGateConfig>;
+
   /** Enable verbose logging */
   verbose: boolean;
 }
@@ -72,6 +77,7 @@ const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   cheapGates: {},
   deepFilters: {},
   momentumGate: {},
+  sniperGate: {},
   verbose: false,
 };
 
@@ -97,6 +103,7 @@ export class PumpFunPipeline {
   private cheapGatesStage: CheapGatesStage;
   private deepFiltersStage: DeepFiltersStage;
   private momentumGateStage: MomentumGateStage;
+  private sniperGateStage: SniperGateStage;
 
   constructor(
     connection: Connection,
@@ -111,13 +118,15 @@ export class PumpFunPipeline {
     this.cheapGatesStage = new CheapGatesStage(connection, this.config.cheapGates);
     this.deepFiltersStage = new DeepFiltersStage(connection, this.config.deepFilters);
     this.momentumGateStage = new MomentumGateStage(connection, this.config.momentumGate);
+    this.sniperGateStage = new SniperGateStage(connection, this.config.sniperGate);
 
     logger.info(
       {
-        stages: ['cheap-gates', 'deep-filters', 'momentum-gate'],
+        stages: ['cheap-gates', 'deep-filters', 'momentum-gate-or-sniper-gate'],
         cheapGatesConfig: this.config.cheapGates,
         deepFiltersConfig: this.config.deepFilters,
         momentumGateConfig: this.config.momentumGate,
+        sniperGateConfig: this.config.sniperGate,
       },
       '[pipeline] Initialized'
     );
@@ -190,23 +199,40 @@ export class PumpFunPipeline {
       context.deepFilters = deepFiltersResult.data as DeepFiltersData;
 
       // ═══════════════════════════════════════════════════════════════════════════
-      // STAGE 4: Momentum Gate
+      // STAGE 4: Sniper Gate OR Momentum Gate
+      // Sniper gate takes priority when enabled; falls back to momentum gate.
       // ═══════════════════════════════════════════════════════════════════════════
-      const momentumGateResult = await this.momentumGateStage.execute(context);
-      stageResults.push(momentumGateResult);
+      if (this.config.sniperGate.enabled) {
+        const sniperResult = await this.sniperGateStage.execute(context);
+        stageResults.push(sniperResult);
 
-      if (!momentumGateResult.pass) {
-        context.rejection = {
-          stage: momentumGateResult.stage,
-          reason: momentumGateResult.reason,
-          timestamp: Date.now(),
-        };
+        if (!sniperResult.pass) {
+          context.rejection = {
+            stage: sniperResult.stage,
+            reason: sniperResult.reason,
+            timestamp: Date.now(),
+          };
+          return this.buildResult(false, context, stageResults, pipelineStart, sniperResult);
+        }
 
-        return this.buildResult(false, context, stageResults, pipelineStart, momentumGateResult);
+        context.sniperGate = sniperResult.data as SniperGateData;
+      } else {
+        const momentumGateResult = await this.momentumGateStage.execute(context);
+        stageResults.push(momentumGateResult);
+
+        if (!momentumGateResult.pass) {
+          context.rejection = {
+            stage: momentumGateResult.stage,
+            reason: momentumGateResult.reason,
+            timestamp: Date.now(),
+          };
+
+          return this.buildResult(false, context, stageResults, pipelineStart, momentumGateResult);
+        }
+
+        // Add momentum gate data to context
+        context.momentumGate = momentumGateResult.data as MomentumGateData;
       }
-
-      // Add momentum gate data to context
-      context.momentumGate = momentumGateResult.data as MomentumGateData;
 
       // ═══════════════════════════════════════════════════════════════════════════
       // ALL STAGES PASSED

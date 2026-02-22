@@ -166,6 +166,55 @@ export interface MomentumGateData {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SNIPER GATE DATA
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Data produced by sniper gate stage
+ *
+ * The sniper gate classifies early wallets as bots vs organic buyers,
+ * monitors for bot exits, and only passes when bots have dumped and
+ * organic demand remains.
+ */
+export interface SniperGateData {
+  /** How many bot wallets identified (bought within sniperSlotThreshold) */
+  sniperWalletCount: number;
+
+  /** How many bots exited (sold) */
+  sniperExitCount: number;
+
+  /** % of bots that exited */
+  sniperExitPercent: number;
+
+  /** Unique wallets from later slots (organic buyers) */
+  organicBuyerCount: number;
+
+  /** Total buy transactions seen */
+  totalBuys: number;
+
+  /** Total sell transactions seen */
+  totalSells: number;
+
+  /** Unique buyer wallets total */
+  uniqueBuyWalletCount: number;
+
+  /** How many polls before decision */
+  checksPerformed: number;
+
+  /** Total time spent in gate (ms) */
+  totalWaitMs: number;
+
+  /** Timestamp when gate check started */
+  checkStartedAt: number;
+
+  /** Identified bot wallet addresses */
+  sniperWallets: string[];
+
+  /** Organic wallet addresses */
+  organicWallets: string[];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // PIPELINE CONTEXT
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -186,6 +235,9 @@ export interface PipelineContext {
 
   /** Data from momentum gate (if passed) */
   momentumGate?: MomentumGateData;
+
+  /** Data from sniper gate (if passed) */
+  sniperGate?: SniperGateData;
 
   /** Log buffer for non-interleaved output */
   logBuffer?: TokenLogBuffer;
@@ -255,6 +307,11 @@ export const RejectionReasons = {
   // Momentum Gate
   MOMENTUM_THRESHOLD_NOT_MET: 'Momentum threshold not met',
   MOMENTUM_RPC_FETCH_FAILED: 'Failed to fetch transactions for momentum check',
+
+  // Sniper Gate
+  SNIPER_GATE_TIMEOUT: 'Sniper gate timeout - bots did not exit in time',
+  SNIPER_GATE_LOW_ORGANIC: 'Insufficient organic buyers after bot exit',
+  SNIPER_GATE_RPC_FAILED: 'Failed to fetch transactions for sniper gate',
 } as const;
 
 export type RejectionReason = typeof RejectionReasons[keyof typeof RejectionReasons];

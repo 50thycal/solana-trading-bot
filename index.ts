@@ -447,6 +447,16 @@ const runListener = async () => {
       recheckIntervalMs: config.momentumRecheckIntervalMs,
       maxChecks: config.momentumMaxChecks,
     },
+    sniperGate: {
+      enabled: config.sniperGateEnabled,
+      initialDelayMs: config.sniperGateInitialDelayMs,
+      recheckIntervalMs: config.sniperGateRecheckIntervalMs,
+      maxChecks: config.sniperGateMaxChecks,
+      sniperSlotThreshold: config.sniperGateSniperSlotThreshold,
+      minBotExitPercent: config.sniperGateMinBotExitPercent,
+      minOrganicBuyers: config.sniperGateMinOrganicBuyers,
+      logOnly: config.sniperGateLogOnly,
+    },
     verbose: LOG_LEVEL === 'debug' || LOG_LEVEL === 'trace',
   });
   logger.info('[pipeline] pump.fun processing pipeline initialized');
@@ -488,6 +498,10 @@ const runListener = async () => {
     takeProfit: TAKE_PROFIT,
     stopLoss: STOP_LOSS,
     maxHoldDurationMs: botConfig.maxHoldDurationMs,
+    trailingStopEnabled: config.trailingStopEnabled,
+    trailingStopActivationPercent: config.trailingStopActivationPercent,
+    trailingStopDistancePercent: config.trailingStopDistancePercent,
+    hardTakeProfitPercent: config.hardTakeProfitPercent,
   });
 
   pumpFunMonitor.on('trigger', async (event: PumpFunTriggerEvent) => {
@@ -893,6 +907,8 @@ const runListener = async () => {
           entryTimestamp,
           buySignature: buyResult.signature || '',
           isToken2022,
+          // Pass sniper wallet metadata if gate ran (enables future sell pressure analysis)
+          sniperWallets: pipelineResult.context.sniperGate?.sniperWallets,
         });
 
         logger.info(
