@@ -63,7 +63,12 @@ export interface SniperGateConfig {
   /** Wait between recheck polls in ms (default: 1000) */
   recheckIntervalMs: number;
 
-  /** Maximum polls before timeout rejection (default: 15) */
+  /**
+   * Maximum polls before timeout rejection (default: 10).
+   * Each poll issues 2 heavy RPC calls (getSignaturesForAddress + getParsedTransactions
+   * for up to 100 transactions). Keep this value conservative to avoid exhausting
+   * RPC rate limits under concurrent token processing.
+   */
   maxChecks: number;
 
   /** Slots 0..N after token creation = sniper bot (default: 3) */
@@ -83,7 +88,7 @@ const DEFAULT_CONFIG: SniperGateConfig = {
   enabled: false,
   initialDelayMs: 500,
   recheckIntervalMs: 1000,
-  maxChecks: 15,
+  maxChecks: 10,
   sniperSlotThreshold: 3,
   minBotExitPercent: 50,
   minOrganicBuyers: 3,
@@ -154,11 +159,17 @@ async function fetchAndAnalyzeTransactions(
   }
 
   // Step 2: Fetch parsed transaction details (batch)
-  const txSignatures = signatures.map((s) => s.signature);
-  const transactions = await connection.getParsedTransactions(txSignatures, {
+  // NOTE: getSignaturesForAddress returns newest-first; we reverse so we process
+  // oldest-first, ensuring early buys are classified before their subsequent sells.
+  const txSignaturesNewestFirst = signatures.map((s) => s.signature);
+  const transactionsNewestFirst = await connection.getParsedTransactions(txSignaturesNewestFirst, {
     commitment: 'confirmed',
     maxSupportedTransactionVersion: 0,
   });
+
+  // Reverse both arrays to process oldest transaction first
+  const txSignatures = [...txSignaturesNewestFirst].reverse();
+  const transactions = [...transactionsNewestFirst].reverse();
 
   // Step 3: Analyze each transaction
   for (let i = 0; i < transactions.length; i++) {
@@ -235,8 +246,11 @@ async function fetchAndAnalyzeTransactions(
           sniperWallets.set(wallet, 'bought');
         }
       } else {
-        // Later buyer = organic
-        organicWallets.add(wallet);
+        // Later buyer = organic — but only if the wallet was not already
+        // classified as a sniper (prevents double-counting across both sets)
+        if (!sniperWallets.has(wallet)) {
+          organicWallets.add(wallet);
+        }
       }
     }
 
@@ -463,11 +477,13 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
     const botExitPercent = botCount > 0 ? (botExitCount / botCount) * 100 : 0;
     const organicCount = lastAnalysis?.organicWallets.size ?? 0;
 
-    // Determine primary rejection reason
-    const rejectReason =
-      organicCount < this.config.minOrganicBuyers
-        ? RejectionReasons.SNIPER_GATE_LOW_ORGANIC
-        : RejectionReasons.SNIPER_GATE_TIMEOUT;
+    // Determine primary rejection reason:
+    // TIMEOUT  = bots are still present and haven't met the exit threshold
+    // LOW_ORGANIC = bots cleared (or none) but organic count still insufficient
+    const botsStillPresent = botCount > 0 && botExitPercent < this.config.minBotExitPercent;
+    const rejectReason = botsStillPresent
+      ? RejectionReasons.SNIPER_GATE_TIMEOUT
+      : RejectionReasons.SNIPER_GATE_LOW_ORGANIC;
 
     return this.reject(
       `${rejectReason}: bots=${botCount}, exits=${botExitPercent.toFixed(1)}%, organic=${organicCount}/${this.config.minOrganicBuyers}`,

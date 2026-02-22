@@ -144,6 +144,9 @@ export interface DetectedToken {
   /** Transaction signature that triggered detection */
   signature?: string;
 
+  /** Slot number of the creation transaction (used by sniper gate for slotDelta classification) */
+  slot?: number;
+
   /** Raw log messages from the creation transaction */
   rawLogs?: string[];
 }

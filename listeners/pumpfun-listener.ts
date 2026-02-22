@@ -53,6 +53,8 @@ export interface PumpFunToken {
   detectedAt: number;
   /** Whether this token uses Token-2022 (CreateV2) vs SPL Token (Create) */
   isToken2022: boolean;
+  /** Slot number of the creation transaction */
+  slot: number;
 }
 
 /**
@@ -282,6 +284,13 @@ export class PumpFunListener extends EventEmitter {
           complete: false, // Just created, not graduated yet
         };
 
+        if (!token.slot) {
+          logger.warn(
+            { signature, mint: token.mint.toString() },
+            '[pump.fun] Creation slot is 0 or missing — sniper gate slot-delta classification will not work correctly',
+          );
+        }
+
         const detectedToken: DetectedToken = {
           source: 'pumpfun',
           mint: token.mint,
@@ -298,6 +307,7 @@ export class PumpFunListener extends EventEmitter {
           verified: true,
           isToken2022: token.isToken2022,
           signature: token.signature,
+          slot: token.slot,
           poolState: {
             type: 'pumpfun',
             state: pumpFunState,
@@ -364,7 +374,7 @@ export class PumpFunListener extends EventEmitter {
    */
   private parseCreateTransaction(
     tx: ParsedTransactionWithMeta,
-    signature: string
+    signature: string,
   ): PumpFunToken | null {
     try {
       const instructions = tx.transaction.message.instructions;
@@ -453,6 +463,7 @@ export class PumpFunListener extends EventEmitter {
                 signature,
                 detectedAt: Date.now(),
                 isToken2022: isCreateV2,
+                slot: tx.slot,
               };
             }
           }
@@ -514,6 +525,7 @@ export class PumpFunListener extends EventEmitter {
                 signature,
                 detectedAt: Date.now(),
                 isToken2022: isCreateV2,
+                slot: tx.slot,
               };
             }
           }
@@ -577,6 +589,7 @@ export class PumpFunListener extends EventEmitter {
               signature,
               detectedAt: Date.now(),
               isToken2022: false, // Conservative default for fallback path
+              slot: tx.slot,
             };
           }
         }

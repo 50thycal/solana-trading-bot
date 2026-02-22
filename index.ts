@@ -657,7 +657,7 @@ const runListener = async () => {
     // ═══════════════ PIPELINE PROCESSING ═══════════════
     const detectionEvent: DetectionEvent = {
       signature: token.signature || `detection-${Date.now()}`,
-      slot: 0,
+      slot: token.slot ?? 0,
       mint: token.mint,
       bondingCurve: token.bondingCurve!,
       associatedBondingCurve: token.associatedBondingCurve!,
