@@ -97,6 +97,35 @@ export const PUMPFUN_ENABLE_MAX_SOL_FILTER = config.pumpfunEnableMaxSolFilter;
 export const PUMPFUN_MIN_SCORE_REQUIRED = config.pumpfunMinScoreRequired;
 
 // ============================================================================
+// MOMENTUM GATE
+// ============================================================================
+export const MOMENTUM_GATE_ENABLED = config.momentumGateEnabled;
+export const MOMENTUM_INITIAL_DELAY_MS = config.momentumInitialDelayMs;
+export const MOMENTUM_MIN_TOTAL_BUYS = config.momentumMinTotalBuys;
+export const MOMENTUM_RECHECK_INTERVAL_MS = config.momentumRecheckIntervalMs;
+export const MOMENTUM_MAX_CHECKS = config.momentumMaxChecks;
+
+// ============================================================================
+// SNIPER GATE
+// ============================================================================
+export const SNIPER_GATE_ENABLED = config.sniperGateEnabled;
+export const SNIPER_GATE_INITIAL_DELAY_MS = config.sniperGateInitialDelayMs;
+export const SNIPER_GATE_RECHECK_INTERVAL_MS = config.sniperGateRecheckIntervalMs;
+export const SNIPER_GATE_MAX_CHECKS = config.sniperGateMaxChecks;
+export const SNIPER_GATE_SNIPER_SLOT_THRESHOLD = config.sniperGateSniperSlotThreshold;
+export const SNIPER_GATE_MIN_BOT_EXIT_PERCENT = config.sniperGateMinBotExitPercent;
+export const SNIPER_GATE_MIN_ORGANIC_BUYERS = config.sniperGateMinOrganicBuyers;
+export const SNIPER_GATE_LOG_ONLY = config.sniperGateLogOnly;
+
+// ============================================================================
+// TRAILING STOP
+// ============================================================================
+export const TRAILING_STOP_ENABLED = config.trailingStopEnabled;
+export const TRAILING_STOP_ACTIVATION_PERCENT = config.trailingStopActivationPercent;
+export const TRAILING_STOP_DISTANCE_PERCENT = config.trailingStopDistancePercent;
+export const HARD_TAKE_PROFIT_PERCENT = config.hardTakeProfitPercent;
+
+// ============================================================================
 // TEST MODE
 // ============================================================================
 export const TEST_MODE = config.testMode;

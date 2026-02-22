@@ -40,13 +40,17 @@ export interface PumpFunPosition {
   // For unrealized PnL tracking
   lastCurrentValueSol?: number;
   lastCheckTimestamp?: number;
+  // Sniper gate metadata (for future sell pressure analysis)
+  sniperWallets?: string[];
+  // Trailing stop: highest PnL % seen (updated each check)
+  highWaterMarkPercent?: number;
 }
 
 /**
  * Trigger event for pump.fun positions
  */
 export interface PumpFunTriggerEvent {
-  type: 'take_profit' | 'stop_loss' | 'time_exit' | 'manual' | 'graduated';
+  type: 'take_profit' | 'stop_loss' | 'trailing_stop' | 'time_exit' | 'manual' | 'graduated';
   position: PumpFunPosition;
   currentValueSol: number;
   pnlPercent: number;
@@ -62,6 +66,11 @@ export interface PumpFunMonitorConfig {
   takeProfit: number; // percentage
   stopLoss: number; // percentage
   maxHoldDurationMs?: number; // 0 = disabled
+  // Trailing stop loss (all optional - disabled by default)
+  trailingStopEnabled?: boolean;          // default: false
+  trailingStopActivationPercent?: number; // default: 15 (activate at +15% PnL)
+  trailingStopDistancePercent?: number;   // default: 10 (sell if 10% below high water)
+  hardTakeProfitPercent?: number;         // default: 0 (0 = disabled)
 }
 
 /**
@@ -89,14 +98,23 @@ export class PumpFunPositionMonitor extends EventEmitter {
     this.wallet = wallet;
     this.config = config;
 
+    const trailingEnabled = config.trailingStopEnabled ?? false;
+    const trailingActivation = config.trailingStopActivationPercent ?? 15;
+    const trailingDistance = config.trailingStopDistancePercent ?? 10;
+    const hardTp = config.hardTakeProfitPercent ?? 0;
+
     logger.info(
       {
         checkInterval: `${(config.checkIntervalMs / 60000).toFixed(4)} min`,
-        takeProfit: `${config.takeProfit}%`,
+        takeProfit: trailingEnabled ? 'disabled (trailing stop active)' : `${config.takeProfit}%`,
         stopLoss: `${config.stopLoss}%`,
         maxHoldDuration: config.maxHoldDurationMs
           ? `${(config.maxHoldDurationMs / 60000).toFixed(4)} min`
           : 'disabled',
+        trailingStop: trailingEnabled
+          ? `enabled (activate at +${trailingActivation}%, trail ${trailingDistance}%)`
+          : 'disabled',
+        hardTakeProfit: hardTp > 0 ? `${hardTp}%` : 'disabled',
       },
       '[pump.fun] Position monitor initialized',
     );
@@ -309,8 +327,67 @@ export class PumpFunPositionMonitor extends EventEmitter {
       '[pump.fun] Position check',
     );
 
-    // Check take profit
-    if (pnlPercent >= this.config.takeProfit) {
+    // ═══════════════ TRAILING STOP LOGIC ═══════════════
+    const trailingStopEnabled = this.config.trailingStopEnabled ?? false;
+    const trailingStopActivationPercent = this.config.trailingStopActivationPercent ?? 15;
+    const trailingStopDistancePercent = this.config.trailingStopDistancePercent ?? 10;
+    const hardTakeProfitPercent = this.config.hardTakeProfitPercent ?? 0;
+
+    if (trailingStopEnabled) {
+      // Initialize high water mark if not set
+      if (position.highWaterMarkPercent === undefined) {
+        position.highWaterMarkPercent = 0;
+      }
+
+      // Update high water mark
+      if (pnlPercent > position.highWaterMarkPercent) {
+        position.highWaterMarkPercent = pnlPercent;
+      }
+
+      // Check if trailing stop is activated (above activation threshold)
+      if (position.highWaterMarkPercent >= trailingStopActivationPercent) {
+        const trailLevel = position.highWaterMarkPercent - trailingStopDistancePercent;
+
+        if (pnlPercent <= trailLevel) {
+          logger.info(
+            {
+              mint: position.tokenMint,
+              pnlPercent: pnlPercent.toFixed(2),
+              highWaterMark: position.highWaterMarkPercent.toFixed(2),
+              trailLevel: trailLevel.toFixed(2),
+            },
+            '[pump.fun] Trailing stop triggered',
+          );
+          await this.executeSell(
+            position,
+            currentValueSol,
+            pnlPercent,
+            'trailing_stop',
+            `Trail stop: PnL ${pnlPercent.toFixed(2)}% dropped below trail ${trailLevel.toFixed(2)}% (high: ${position.highWaterMarkPercent.toFixed(2)}%)`,
+          );
+          return;
+        }
+      }
+
+      // Hard take profit ceiling (optional, fires even with trailing stop active)
+      if (hardTakeProfitPercent > 0 && pnlPercent >= hardTakeProfitPercent) {
+        logger.info(
+          { mint: position.tokenMint, pnlPercent: pnlPercent.toFixed(2) },
+          '[pump.fun] Hard take profit triggered',
+        );
+        await this.executeSell(
+          position,
+          currentValueSol,
+          pnlPercent,
+          'take_profit',
+          `Hard TP hit: ${pnlPercent.toFixed(2)}%`,
+        );
+        return;
+      }
+    }
+
+    // Check take profit (only when trailing stop is disabled)
+    if (!trailingStopEnabled && pnlPercent >= this.config.takeProfit) {
       logger.info(
         { mint: position.tokenMint, pnlPercent: pnlPercent.toFixed(2) },
         '[pump.fun] Take profit triggered',
@@ -319,7 +396,7 @@ export class PumpFunPositionMonitor extends EventEmitter {
       return;
     }
 
-    // Check stop loss
+    // Check stop loss (always active - protects before trailing stop activates)
     if (pnlPercent <= -this.config.stopLoss) {
       logger.info(
         { mint: position.tokenMint, pnlPercent: pnlPercent.toFixed(2) },

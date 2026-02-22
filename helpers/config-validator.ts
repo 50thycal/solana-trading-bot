@@ -85,6 +85,22 @@ export interface ValidatedConfig {
   momentumRecheckIntervalMs: number;
   momentumMaxChecks: number;
 
+  // Sniper Gate (Pipeline Stage 4 - Alternative to Momentum Gate)
+  sniperGateEnabled: boolean;
+  sniperGateInitialDelayMs: number;
+  sniperGateRecheckIntervalMs: number;
+  sniperGateMaxChecks: number;
+  sniperGateSniperSlotThreshold: number;
+  sniperGateMinBotExitPercent: number;
+  sniperGateMinOrganicBuyers: number;
+  sniperGateLogOnly: boolean;
+
+  // Trailing Stop Loss
+  trailingStopEnabled: boolean;
+  trailingStopActivationPercent: number;
+  trailingStopDistancePercent: number;
+  hardTakeProfitPercent: number;
+
   // Smoke Test (applies when botMode='smoke')
   smokeTestTimeoutMs: number;
 
@@ -389,6 +405,64 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'MOMENTUM_MAX_CHECKS', message: 'MOMENTUM_MAX_CHECKS must be at least 1' });
   }
 
+  // === SNIPER GATE (Pipeline Stage 4 - Alternative to Momentum Gate) ===
+  // Identifies sniper bot wallets by slot delta, monitors for their exits,
+  // then evaluates organic demand. When enabled, replaces the momentum gate.
+
+  const sniperGateEnabled = requireBoolean('SNIPER_GATE_ENABLED', false);
+
+  const sniperGateInitialDelaySeconds = requireNumber('SNIPER_GATE_INITIAL_DELAY_SECONDS', 0.5);
+  if (sniperGateInitialDelaySeconds < 0) {
+    errors.push({ variable: 'SNIPER_GATE_INITIAL_DELAY_SECONDS', message: 'cannot be negative' });
+  }
+  const sniperGateInitialDelayMs = Math.round(sniperGateInitialDelaySeconds * 1000);
+
+  const sniperGateRecheckIntervalSeconds = requireNumber('SNIPER_GATE_RECHECK_INTERVAL_SECONDS', 1);
+  if (sniperGateRecheckIntervalSeconds < 0.1) {
+    errors.push({ variable: 'SNIPER_GATE_RECHECK_INTERVAL_SECONDS', message: 'must be >= 0.1' });
+  }
+  const sniperGateRecheckIntervalMs = Math.round(sniperGateRecheckIntervalSeconds * 1000);
+
+  const sniperGateMaxChecks = requireNumber('SNIPER_GATE_MAX_CHECKS', 15);
+  if (sniperGateMaxChecks < 1) {
+    errors.push({ variable: 'SNIPER_GATE_MAX_CHECKS', message: 'must be >= 1' });
+  }
+
+  const sniperGateSniperSlotThreshold = requireNumber('SNIPER_GATE_SNIPER_SLOT_THRESHOLD', 3);
+  if (sniperGateSniperSlotThreshold < 0) {
+    errors.push({ variable: 'SNIPER_GATE_SNIPER_SLOT_THRESHOLD', message: 'cannot be negative' });
+  }
+
+  const sniperGateMinBotExitPercent = requireNumber('SNIPER_GATE_MIN_BOT_EXIT_PERCENT', 50);
+  if (sniperGateMinBotExitPercent < 0 || sniperGateMinBotExitPercent > 100) {
+    errors.push({ variable: 'SNIPER_GATE_MIN_BOT_EXIT_PERCENT', message: 'must be 0-100' });
+  }
+
+  const sniperGateMinOrganicBuyers = requireNumber('SNIPER_GATE_MIN_ORGANIC_BUYERS', 3);
+  if (sniperGateMinOrganicBuyers < 1) {
+    errors.push({ variable: 'SNIPER_GATE_MIN_ORGANIC_BUYERS', message: 'must be >= 1' });
+  }
+
+  const sniperGateLogOnly = requireBoolean('SNIPER_GATE_LOG_ONLY', false);
+
+  // === TRAILING STOP LOSS ===
+  const trailingStopEnabled = requireBoolean('TRAILING_STOP_ENABLED', false);
+
+  const trailingStopActivationPercent = requireNumber('TRAILING_STOP_ACTIVATION_PERCENT', 15);
+  if (trailingStopActivationPercent < 0) {
+    errors.push({ variable: 'TRAILING_STOP_ACTIVATION_PERCENT', message: 'cannot be negative' });
+  }
+
+  const trailingStopDistancePercent = requireNumber('TRAILING_STOP_DISTANCE_PERCENT', 10);
+  if (trailingStopDistancePercent < 0) {
+    errors.push({ variable: 'TRAILING_STOP_DISTANCE_PERCENT', message: 'cannot be negative' });
+  }
+
+  const hardTakeProfitPercent = requireNumber('HARD_TAKE_PROFIT_PERCENT', 0);
+  if (hardTakeProfitPercent < 0) {
+    errors.push({ variable: 'HARD_TAKE_PROFIT_PERCENT', message: 'cannot be negative' });
+  }
+
   // === SMOKE TEST (applies when BOT_MODE=smoke) ===
   const smokeTestTimeoutMinutes = requireNumber('SMOKE_TEST_TIMEOUT_MINUTES', 5);
   if (smokeTestTimeoutMinutes < 0.5) {
@@ -432,6 +506,22 @@ export function validateConfig(): ValidatedConfig {
 
   if (rpcWebsocketEndpoint && !rpcWebsocketEndpoint.startsWith('ws://') && !rpcWebsocketEndpoint.startsWith('wss://')) {
     errors.push({ variable: 'RPC_WEBSOCKET_ENDPOINT', message: 'RPC_WEBSOCKET_ENDPOINT must be a valid WebSocket URL (ws:// or wss://)' });
+  }
+
+  // Conflict warnings
+  if (sniperGateEnabled && momentumGateEnabled) {
+    logger.warn(
+      'Both SNIPER_GATE and MOMENTUM_GATE are enabled. '
+      + 'Sniper gate takes priority at Stage 4.',
+    );
+  }
+
+  if (trailingStopEnabled && takeProfit > 0) {
+    logger.warn(
+      'Both TRAILING_STOP and TAKE_PROFIT are configured. '
+      + 'When trailing stop is enabled, fixed take profit is ignored. '
+      + 'Use HARD_TAKE_PROFIT_PERCENT for a ceiling with trailing stop.',
+    );
   }
 
   // Report all errors at once
@@ -512,6 +602,18 @@ export function validateConfig(): ValidatedConfig {
     momentumMinTotalBuys,
     momentumRecheckIntervalMs,
     momentumMaxChecks,
+    sniperGateEnabled,
+    sniperGateInitialDelayMs,
+    sniperGateRecheckIntervalMs,
+    sniperGateMaxChecks,
+    sniperGateSniperSlotThreshold,
+    sniperGateMinBotExitPercent,
+    sniperGateMinOrganicBuyers,
+    sniperGateLogOnly,
+    trailingStopEnabled,
+    trailingStopActivationPercent,
+    trailingStopDistancePercent,
+    hardTakeProfitPercent,
     testMode,
     smokeTestTimeoutMs,
     abTestDurationMs,
