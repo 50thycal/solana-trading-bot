@@ -15,6 +15,7 @@ import {
   BondingCurveState,
 } from '../helpers/pumpfun';
 import { logger } from '../helpers';
+import { StateStore } from '../persistence/state-store';
 import BN from 'bn.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -129,12 +130,16 @@ export class PaperTradeTracker extends EventEmitter {
   private monitorConfig: PaperMonitorConfig | null = null;
   private monitorLoop: NodeJS.Timeout | null = null;
   private isMonitoringActive: boolean = false;
+  private stateStore: StateStore | null = null;
 
-  constructor(connection: Connection, monitorConfig?: PaperMonitorConfig) {
+  constructor(connection: Connection, monitorConfig?: PaperMonitorConfig, stateStore?: StateStore | null) {
     super();
     this.connection = connection;
     if (monitorConfig) {
       this.monitorConfig = monitorConfig;
+    }
+    if (stateStore) {
+      this.stateStore = stateStore;
     }
   }
 
@@ -359,6 +364,19 @@ export class PaperTradeTracker extends EventEmitter {
     this.activeTrades.delete(trade.mint);
     this.closedTrades.push(closedTrade);
 
+    // Persist exit to DB
+    if (this.stateStore && closedTrade.closedReason) {
+      this.stateStore.updatePaperTradeExit({
+        id: closedTrade.id,
+        status: closedTrade.status,
+        closedReason: closedTrade.closedReason,
+        exitPricePerToken: closedTrade.exitPricePerToken ?? closedTrade.entryPricePerToken,
+        exitSolReceived: closedTrade.exitSolReceived ?? closedTrade.hypotheticalSolSpent,
+        realizedPnlSol: closedTrade.realizedPnlSol ?? 0,
+        realizedPnlPercent: closedTrade.realizedPnlPercent ?? 0,
+      });
+    }
+
     // Emit event for A/B test framework and other listeners
     this.emit('trade-closed', closedTrade);
 
@@ -395,6 +413,12 @@ export class PaperTradeTracker extends EventEmitter {
     symbol?: string;
     signature: string;
     pipelineDurationMs: number;
+    /** Sniper gate snapshot at entry — present when sniper gate is enabled */
+    sniperBotCount?: number;
+    sniperExitPercent?: number;
+    organicBuyerCount?: number;
+    sniperGateChecks?: number;
+    sniperGateWaitMs?: number;
   }): void {
     const {
       mint,
@@ -405,6 +429,11 @@ export class PaperTradeTracker extends EventEmitter {
       symbol,
       signature,
       pipelineDurationMs,
+      sniperBotCount,
+      sniperExitPercent,
+      organicBuyerCount,
+      sniperGateChecks,
+      sniperGateWaitMs,
     } = params;
 
     // Calculate how many tokens would be received
@@ -443,6 +472,29 @@ export class PaperTradeTracker extends EventEmitter {
     }
 
     this.activeTrades.set(trade.mint, trade);
+
+    // Persist to DB for analysis
+    if (this.stateStore) {
+      this.stateStore.recordPaperTradeEntry({
+        id: trade.id,
+        tokenMint: trade.mint,
+        bondingCurve: trade.bondingCurve,
+        name,
+        symbol,
+        entryVirtualSolReserves: trade.entryVirtualSolReserves,
+        entryVirtualTokenReserves: trade.entryVirtualTokenReserves,
+        hypotheticalSolSpent,
+        entryPricePerToken: entryPrice,
+        hypotheticalTokensReceived: tokensOut.toNumber(),
+        pipelineDurationMs,
+        signature,
+        sniperBotCount,
+        sniperExitPercent,
+        organicBuyerCount,
+        sniperGateChecks,
+        sniperGateWaitMs,
+      });
+    }
 
     logger.info(
       {
@@ -768,15 +820,17 @@ let paperTradeTrackerInstance: PaperTradeTracker | null = null;
 
 export function initPaperTradeTracker(
   connection: Connection,
-  monitorConfig?: PaperMonitorConfig
+  monitorConfig?: PaperMonitorConfig,
+  stateStore?: StateStore | null,
 ): PaperTradeTracker {
   if (!paperTradeTrackerInstance) {
-    paperTradeTrackerInstance = new PaperTradeTracker(connection, monitorConfig);
+    paperTradeTrackerInstance = new PaperTradeTracker(connection, monitorConfig, stateStore);
     logger.info(
       {
         monitoringEnabled: monitorConfig?.enabled ?? false,
         takeProfit: monitorConfig?.takeProfit,
         stopLoss: monitorConfig?.stopLoss,
+        persistenceEnabled: stateStore != null,
       },
       '[paper-trade] Paper trade tracker initialized'
     );

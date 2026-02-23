@@ -166,6 +166,32 @@ export interface MomentumGateData {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SNIPER GATE CHECK RESULT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Per-poll result captured during sniper gate polling.
+ * Stored in checkHistory for pattern analysis in dry_run / log_only mode.
+ */
+export interface SniperGateCheckResult {
+  /** Poll number (1 = first check after initial delay) */
+  checkNumber: number;
+  /** Unix timestamp (ms) when this check was completed */
+  checkedAt: number;
+  botCount: number;
+  botExitCount: number;
+  botExitPercent: number;
+  organicCount: number;
+  totalBuys: number;
+  totalSells: number;
+  uniqueBuyWalletCount: number;
+  /** Whether pass conditions (bot exit + organic threshold) were met at this check */
+  passConditionsMet: boolean;
+  sniperWallets: string[];
+  organicWallets: string[];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SNIPER GATE DATA
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -212,6 +238,12 @@ export interface SniperGateData {
 
   /** Organic wallet addresses */
   organicWallets: string[];
+
+  /** Whether gate was running in log-only mode */
+  logOnly: boolean;
+
+  /** Full time-series of every poll result — populated when the gate runs all maxChecks */
+  checkHistory: SniperGateCheckResult[];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

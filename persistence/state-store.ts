@@ -32,12 +32,15 @@ import {
   PoolDetectionQueryOptions,
   PoolDetectionStats,
   StoredFilterResult,
+  RecordSniperGateObservationsInput,
+  RecordPaperTradeEntryInput,
+  UpdatePaperTradeExitInput,
 } from './models';
 
 /**
  * Current schema version - increment when making schema changes
  */
-const CURRENT_SCHEMA_VERSION = 3;
+const CURRENT_SCHEMA_VERSION = 4;
 
 /**
  * SQLite State Store - manages all persistent data
@@ -137,6 +140,10 @@ export class StateStore {
 
       if (currentVersion < 3) {
         this.migrateToV3();
+      }
+
+      if (currentVersion < 4) {
+        this.migrateToV4();
       }
 
       logger.info({ version: CURRENT_SCHEMA_VERSION }, 'Database migrations complete');
@@ -284,6 +291,76 @@ export class StateStore {
     `);
 
     logger.info('Applied migration v3: Added pool_type column for CPMM support');
+  }
+
+  /**
+   * Migration to version 4 - Sniper gate observations + paper trades tables
+   */
+  private migrateToV4(): void {
+    this.db.exec(`
+      -- Per-poll sniper gate results for pattern analysis
+      CREATE TABLE IF NOT EXISTS sniper_gate_observations (
+        id TEXT PRIMARY KEY,
+        token_mint TEXT NOT NULL,
+        bonding_curve TEXT NOT NULL,
+        observed_at INTEGER NOT NULL,
+        check_number INTEGER NOT NULL,
+        creation_slot INTEGER NOT NULL,
+        bot_count INTEGER NOT NULL,
+        bot_exit_count INTEGER NOT NULL,
+        bot_exit_percent REAL NOT NULL,
+        organic_count INTEGER NOT NULL,
+        total_buys INTEGER NOT NULL,
+        total_sells INTEGER NOT NULL,
+        unique_buy_wallets INTEGER NOT NULL,
+        pass_conditions_met INTEGER NOT NULL,
+        log_only INTEGER NOT NULL,
+        sniper_wallets TEXT NOT NULL,
+        organic_wallets TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_sgo_token_mint ON sniper_gate_observations(token_mint);
+      CREATE INDEX IF NOT EXISTS idx_sgo_observed_at ON sniper_gate_observations(observed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_sgo_check_number ON sniper_gate_observations(token_mint, check_number);
+
+      -- Paper trades from dry_run mode (persisted for analysis)
+      CREATE TABLE IF NOT EXISTS paper_trades (
+        id TEXT PRIMARY KEY,
+        token_mint TEXT NOT NULL,
+        bonding_curve TEXT NOT NULL,
+        name TEXT,
+        symbol TEXT,
+        entry_virtual_sol_reserves TEXT NOT NULL,
+        entry_virtual_token_reserves TEXT NOT NULL,
+        entry_timestamp INTEGER NOT NULL,
+        hypothetical_sol_spent REAL NOT NULL,
+        entry_price_per_token REAL NOT NULL,
+        hypothetical_tokens_received REAL NOT NULL,
+        pipeline_duration_ms INTEGER NOT NULL,
+        signature TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        closed_timestamp INTEGER,
+        closed_reason TEXT,
+        exit_price_per_token REAL,
+        exit_sol_received REAL,
+        realized_pnl_sol REAL,
+        realized_pnl_percent REAL,
+        sniper_bot_count INTEGER,
+        sniper_exit_percent REAL,
+        organic_buyer_count INTEGER,
+        sniper_gate_checks INTEGER,
+        sniper_gate_wait_ms INTEGER
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_pt_token_mint ON paper_trades(token_mint);
+      CREATE INDEX IF NOT EXISTS idx_pt_entry_timestamp ON paper_trades(entry_timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_pt_status ON paper_trades(status);
+
+      -- Record migration
+      INSERT INTO schema_version (version, applied_at) VALUES (4, ${Date.now()});
+    `);
+
+    logger.info('Applied migration v4: sniper_gate_observations and paper_trades tables');
   }
 
   /**
@@ -1127,6 +1204,138 @@ export class StateStore {
   /**
    * Get database statistics
    */
+  // ═══════════════════════════════════════════════════════════════
+  // SNIPER GATE OBSERVATIONS
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Bulk-insert all poll observations for a single token's sniper gate run.
+   * Called after the gate completes (pass or reject) so the full check history
+   * is available. Uses a transaction for atomicity.
+   */
+  recordSniperGateObservations(input: RecordSniperGateObservationsInput): void {
+    if (!this.initialized) return;
+    if (input.checks.length === 0) return;
+
+    const insert = this.db.prepare(`
+      INSERT OR IGNORE INTO sniper_gate_observations (
+        id, token_mint, bonding_curve, observed_at, check_number,
+        creation_slot, bot_count, bot_exit_count, bot_exit_percent,
+        organic_count, total_buys, total_sells, unique_buy_wallets,
+        pass_conditions_met, log_only, sniper_wallets, organic_wallets
+      ) VALUES (
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?
+      )
+    `);
+
+    const insertMany = this.db.transaction((checks: RecordSniperGateObservationsInput['checks']) => {
+      for (const check of checks) {
+        const id = `sgo_${input.tokenMint}_${check.checkNumber}_${check.checkedAt}`;
+        insert.run(
+          id,
+          input.tokenMint,
+          input.bondingCurve,
+          check.checkedAt,
+          check.checkNumber,
+          input.creationSlot,
+          check.botCount,
+          check.botExitCount,
+          check.botExitPercent,
+          check.organicCount,
+          check.totalBuys,
+          check.totalSells,
+          check.uniqueBuyWallets,
+          check.passConditionsMet ? 1 : 0,
+          input.logOnly ? 1 : 0,
+          JSON.stringify(check.sniperWallets),
+          JSON.stringify(check.organicWallets),
+        );
+      }
+    });
+
+    insertMany(input.checks);
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // PAPER TRADES
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Record a new paper trade entry (called when dry_run pipeline passes)
+   */
+  recordPaperTradeEntry(input: RecordPaperTradeEntryInput): void {
+    if (!this.initialized) return;
+
+    this.db.prepare(`
+      INSERT OR IGNORE INTO paper_trades (
+        id, token_mint, bonding_curve, name, symbol,
+        entry_virtual_sol_reserves, entry_virtual_token_reserves,
+        entry_timestamp, hypothetical_sol_spent, entry_price_per_token,
+        hypothetical_tokens_received, pipeline_duration_ms, signature,
+        status, sniper_bot_count, sniper_exit_percent, organic_buyer_count,
+        sniper_gate_checks, sniper_gate_wait_ms
+      ) VALUES (
+        ?, ?, ?, ?, ?,
+        ?, ?,
+        ?, ?, ?,
+        ?, ?, ?,
+        'active', ?, ?, ?,
+        ?, ?
+      )
+    `).run(
+      input.id,
+      input.tokenMint,
+      input.bondingCurve,
+      input.name ?? null,
+      input.symbol ?? null,
+      input.entryVirtualSolReserves,
+      input.entryVirtualTokenReserves,
+      Date.now(),
+      input.hypotheticalSolSpent,
+      input.entryPricePerToken,
+      input.hypotheticalTokensReceived,
+      input.pipelineDurationMs,
+      input.signature,
+      input.sniperBotCount ?? null,
+      input.sniperExitPercent ?? null,
+      input.organicBuyerCount ?? null,
+      input.sniperGateChecks ?? null,
+      input.sniperGateWaitMs ?? null,
+    );
+  }
+
+  /**
+   * Update a paper trade when it closes (TP / SL / time exit / graduated)
+   */
+  updatePaperTradeExit(input: UpdatePaperTradeExitInput): void {
+    if (!this.initialized) return;
+
+    this.db.prepare(`
+      UPDATE paper_trades
+      SET
+        status = ?,
+        closed_timestamp = ?,
+        closed_reason = ?,
+        exit_price_per_token = ?,
+        exit_sol_received = ?,
+        realized_pnl_sol = ?,
+        realized_pnl_percent = ?
+      WHERE id = ?
+    `).run(
+      input.status,
+      Date.now(),
+      input.closedReason,
+      input.exitPricePerToken,
+      input.exitSolReceived,
+      input.realizedPnlSol,
+      input.realizedPnlPercent,
+      input.id,
+    );
+  }
+
   getStats(): {
     positions: { open: number; closed: number };
     trades: { pending: number; confirmed: number; failed: number };

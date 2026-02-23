@@ -29,6 +29,7 @@ import {
   PipelineContext,
   StageResult,
   SniperGateData,
+  SniperGateCheckResult,
   PipelineStage,
   RejectionReasons,
 } from './types';
@@ -331,6 +332,8 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
           checkStartedAt: startTime,
           sniperWallets: [],
           organicWallets: [],
+          logOnly: false,
+          checkHistory: [],
         },
         durationMs: Date.now() - startTime,
       };
@@ -343,6 +346,7 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
 
     let checksPerformed = 0;
     let lastAnalysis: WalletAnalysis | null = null;
+    const checkHistory: SniperGateCheckResult[] = [];
 
     // Polling loop
     while (checksPerformed < this.config.maxChecks) {
@@ -370,6 +374,7 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
             error: errorMsg,
           },
           buf,
+          checkHistory,
         );
       }
 
@@ -410,13 +415,29 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
         botCount === 0 || botExitPercent >= this.config.minBotExitPercent;
       const passConditionsMet = botsCleared && hasEnoughOrganic;
 
-      if (passConditionsMet || this.config.logOnly) {
+      // Record this check in history for pattern analysis
+      checkHistory.push({
+        checkNumber: checksPerformed,
+        checkedAt: Date.now(),
+        botCount,
+        botExitCount,
+        botExitPercent,
+        organicCount,
+        totalBuys: analysis.totalBuys,
+        totalSells: analysis.totalSells,
+        uniqueBuyWalletCount,
+        passConditionsMet,
+        sniperWallets: [...analysis.sniperWallets.keys()],
+        organicWallets: [...analysis.organicWallets],
+      });
+
+      // In log-only mode we run the full loop — do NOT short-circuit here.
+      // The pass happens after maxChecks are exhausted (below the while loop).
+      if (passConditionsMet) {
         const duration = Date.now() - startTime;
-        const passReason = this.config.logOnly && !passConditionsMet
-          ? `Log-only mode (would have waited: bots=${botCount}, exits=${botExitPercent.toFixed(1)}%, organic=${organicCount})`
-          : botCount === 0
-            ? `No bots detected, ${organicCount} organic buyers`
-            : `Bots cleared: ${botExitPercent.toFixed(1)}% exited, ${organicCount} organic buyers`;
+        const passReason = botCount === 0
+          ? `No bots detected, ${organicCount} organic buyers`
+          : `Bots cleared: ${botExitPercent.toFixed(1)}% exited, ${organicCount} organic buyers`;
 
         if (buf) {
           buf.info(
@@ -458,6 +479,8 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
             checkStartedAt: startTime,
             sniperWallets: [...analysis.sniperWallets.keys()],
             organicWallets: [...analysis.organicWallets],
+            logOnly: this.config.logOnly,
+            checkHistory,
           },
           durationMs: duration,
         };
@@ -469,13 +492,63 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
       }
     }
 
-    // Max checks reached -> REJECT with specific reason
+    // Max checks reached
     const botCount = lastAnalysis?.sniperWallets.size ?? 0;
     const botExitCount = lastAnalysis
       ? [...lastAnalysis.sniperWallets.values()].filter((v) => v === 'exited').length
       : 0;
     const botExitPercent = botCount > 0 ? (botExitCount / botCount) * 100 : 0;
     const organicCount = lastAnalysis?.organicWallets.size ?? 0;
+    const uniqueBuyWalletCount = lastAnalysis?.allBuyWallets.size ?? 0;
+
+    // In log-only mode: run the full loop for data collection, then pass.
+    // Conditions were never met naturally, but we still forward all check data.
+    if (this.config.logOnly) {
+      const duration = Date.now() - startTime;
+      const passReason = `Log-only mode (${checksPerformed} checks complete): bots=${botCount}, exits=${botExitPercent.toFixed(1)}%, organic=${organicCount}`;
+
+      if (buf) {
+        buf.info(`Sniper gate: PASSED (log-only) - ${passReason} (${duration}ms)`);
+      } else {
+        logger.info(
+          {
+            stage: this.name,
+            mint: mintStr,
+            botCount,
+            botExitCount,
+            botExitPercent: botExitPercent.toFixed(1) + '%',
+            organicCount,
+            checksPerformed,
+            logOnly: true,
+            durationMs: duration,
+          },
+          '[pipeline] Sniper gate passed (log-only, all checks complete)',
+        );
+      }
+
+      return {
+        pass: true,
+        reason: passReason,
+        stage: this.name,
+        data: {
+          sniperWalletCount: botCount,
+          sniperExitCount: botExitCount,
+          sniperExitPercent: botExitPercent,
+          organicBuyerCount: organicCount,
+          totalBuys: lastAnalysis?.totalBuys ?? 0,
+          totalSells: lastAnalysis?.totalSells ?? 0,
+          uniqueBuyWalletCount,
+          checksPerformed,
+          totalWaitMs: duration,
+          checkStartedAt: startTime,
+          sniperWallets: lastAnalysis ? [...lastAnalysis.sniperWallets.keys()] : [],
+          organicWallets: lastAnalysis ? [...lastAnalysis.organicWallets] : [],
+          logOnly: true,
+          checkHistory,
+        },
+        durationMs: duration,
+      };
+    }
 
     // Determine primary rejection reason:
     // TIMEOUT  = bots are still present and haven't met the exit threshold
@@ -500,17 +573,21 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
         checksPerformed,
       },
       buf,
+      checkHistory,
     );
   }
 
   /**
-   * Helper to create rejection result with consistent logging
+   * Helper to create rejection result with consistent logging.
+   * checkHistory is included in data so callers can persist observations even
+   * for rejected tokens.
    */
   private reject(
     reason: string,
     startTime: number,
     logData: Record<string, unknown> = {},
     logBuffer?: import('../helpers/token-log-buffer').TokenLogBuffer,
+    checkHistory: SniperGateCheckResult[] = [],
   ): StageResult<SniperGateData> {
     const duration = Date.now() - startTime;
 
@@ -528,11 +605,28 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
       );
     }
 
+    const lastCheck = checkHistory[checkHistory.length - 1];
     return {
       pass: false,
       reason,
       stage: this.name,
       durationMs: duration,
+      data: {
+        sniperWalletCount: lastCheck?.botCount ?? 0,
+        sniperExitCount: lastCheck?.botExitCount ?? 0,
+        sniperExitPercent: lastCheck?.botExitPercent ?? 0,
+        organicBuyerCount: lastCheck?.organicCount ?? 0,
+        totalBuys: lastCheck?.totalBuys ?? 0,
+        totalSells: lastCheck?.totalSells ?? 0,
+        uniqueBuyWalletCount: lastCheck?.uniqueBuyWalletCount ?? 0,
+        checksPerformed: checkHistory.length,
+        totalWaitMs: duration,
+        checkStartedAt: startTime,
+        sniperWallets: lastCheck?.sniperWallets ?? [],
+        organicWallets: lastCheck?.organicWallets ?? [],
+        logOnly: this.config.logOnly,
+        checkHistory,
+      },
     };
   }
 

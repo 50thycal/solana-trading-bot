@@ -479,7 +479,7 @@ const runListener = async () => {
       stopLoss: STOP_LOSS,
       maxHoldDurationMs: botConfig.maxHoldDurationMs,
       enabled: true,
-    });
+    }, stateStore);
     paperTracker.start();
     logger.info(
       {
@@ -678,6 +678,41 @@ const runListener = async () => {
 
     const pipelineResult = await pipeline.process(detectionEvent);
 
+    // Persist sniper gate per-check observations for pattern analysis.
+    // Works for both pass and reject outcomes — data lives in stageResults.data
+    // for rejections, and in context.sniperGate for passes.
+    if (stateStore) {
+      const sniperStageResult = pipelineResult.stageResults.find(
+        (s) => s.stage === 'sniper-gate',
+      );
+      const sniperData = (pipelineResult.context.sniperGate ?? sniperStageResult?.data) as
+        | import('./pipeline/types').SniperGateData
+        | undefined;
+
+      if (sniperData?.checkHistory && sniperData.checkHistory.length > 0) {
+        stateStore.recordSniperGateObservations({
+          tokenMint: baseMintStr,
+          bondingCurve: bondingCurveStr,
+          creationSlot: detectionEvent.slot,
+          logOnly: sniperData.logOnly,
+          checks: sniperData.checkHistory.map((c) => ({
+            checkNumber: c.checkNumber,
+            checkedAt: c.checkedAt,
+            botCount: c.botCount,
+            botExitCount: c.botExitCount,
+            botExitPercent: c.botExitPercent,
+            organicCount: c.organicCount,
+            totalBuys: c.totalBuys,
+            totalSells: c.totalSells,
+            uniqueBuyWallets: c.uniqueBuyWalletCount,
+            passConditionsMet: c.passConditionsMet,
+            sniperWallets: c.sniperWallets,
+            organicWallets: c.organicWallets,
+          })),
+        });
+      }
+    }
+
     const pipelineStats = getPipelineStats();
     if (pipelineStats) {
       pipelineStats.recordResult(pipelineResult);
@@ -761,6 +796,7 @@ const runListener = async () => {
 
       const paperTracker = getPaperTradeTracker();
       if (paperTracker && pipelineResult.context.deepFilters?.bondingCurveState) {
+        const sg = pipelineResult.context.sniperGate;
         paperTracker.recordPaperTrade({
           mint: token.mint,
           bondingCurve: token.bondingCurve!,
@@ -770,6 +806,11 @@ const runListener = async () => {
           symbol: token.symbol,
           signature: token.signature || 'unknown',
           pipelineDurationMs: pipelineResult.totalDurationMs,
+          sniperBotCount: sg?.sniperWalletCount,
+          sniperExitPercent: sg?.sniperExitPercent,
+          organicBuyerCount: sg?.organicBuyerCount,
+          sniperGateChecks: sg?.checksPerformed,
+          sniperGateWaitMs: sg?.totalWaitMs,
         });
       }
 
@@ -779,7 +820,13 @@ const runListener = async () => {
           tokenMint: baseMintStr,
           action: 'bought',
           poolType: 'pumpfun',
-          filterResults: [],
+          filterResults: pipelineResult.stageResults.map((s) => ({
+            name: s.stage,
+            displayName: s.stage,
+            passed: s.pass,
+            checked: true,
+            reason: s.reason,
+          })),
           riskCheckPassed: true,
           summary: '[pump.fun] DRY RUN - simulated buy',
         });

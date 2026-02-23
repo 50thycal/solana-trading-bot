@@ -270,3 +270,108 @@ export interface PoolDetectionStats {
   // Pool type breakdown (dynamic — includes all pool types found in data)
   byPoolType: Record<string, { total: number; bought: number }>;
 }
+
+// ============================================================
+// SNIPER GATE OBSERVATION MODELS
+// ============================================================
+
+/**
+ * Input for bulk-inserting sniper gate poll observations.
+ * Each item in `checks` corresponds to one poll cycle within the gate's
+ * polling loop and contains the full wallet classification snapshot.
+ */
+export interface RecordSniperGateObservationsInput {
+  tokenMint: string;
+  bondingCurve: string;
+  /** Slot from the token creation transaction (used to derive slotDelta) */
+  creationSlot: number;
+  /** Whether the gate was running in log-only mode */
+  logOnly: boolean;
+  checks: Array<{
+    checkNumber: number;
+    checkedAt: number;
+    botCount: number;
+    botExitCount: number;
+    botExitPercent: number;
+    organicCount: number;
+    totalBuys: number;
+    totalSells: number;
+    uniqueBuyWallets: number;
+    passConditionsMet: boolean;
+    sniperWallets: string[];
+    organicWallets: string[];
+  }>;
+}
+
+// ============================================================
+// PAPER TRADE MODELS
+// ============================================================
+
+/**
+ * Persisted paper trade record (dry_run mode)
+ */
+export interface PaperTradeRecord {
+  id: string;
+  tokenMint: string;
+  bondingCurve: string;
+  name?: string;
+  symbol?: string;
+  entryVirtualSolReserves: string;
+  entryVirtualTokenReserves: string;
+  entryTimestamp: number;
+  hypotheticalSolSpent: number;
+  entryPricePerToken: number;
+  hypotheticalTokensReceived: number;
+  pipelineDurationMs: number;
+  signature: string;
+  status: string;
+  closedTimestamp?: number;
+  closedReason?: string;
+  exitPricePerToken?: number;
+  exitSolReceived?: number;
+  realizedPnlSol?: number;
+  realizedPnlPercent?: number;
+  // Sniper gate snapshot at entry (for correlating trade outcomes with gate metrics)
+  sniperBotCount?: number;
+  sniperExitPercent?: number;
+  organicBuyerCount?: number;
+  sniperGateChecks?: number;
+  sniperGateWaitMs?: number;
+}
+
+/**
+ * Input for recording a new paper trade entry
+ */
+export interface RecordPaperTradeEntryInput {
+  id: string;
+  tokenMint: string;
+  bondingCurve: string;
+  name?: string;
+  symbol?: string;
+  entryVirtualSolReserves: string;
+  entryVirtualTokenReserves: string;
+  hypotheticalSolSpent: number;
+  entryPricePerToken: number;
+  hypotheticalTokensReceived: number;
+  pipelineDurationMs: number;
+  signature: string;
+  // Optional sniper gate snapshot (available when sniper gate is enabled)
+  sniperBotCount?: number;
+  sniperExitPercent?: number;
+  organicBuyerCount?: number;
+  sniperGateChecks?: number;
+  sniperGateWaitMs?: number;
+}
+
+/**
+ * Input for updating a paper trade when it closes (TP / SL / time exit / graduated)
+ */
+export interface UpdatePaperTradeExitInput {
+  id: string;
+  status: string;
+  closedReason: string;
+  exitPricePerToken: number;
+  exitSolReceived: number;
+  realizedPnlSol: number;
+  realizedPnlPercent: number;
+}
