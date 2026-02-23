@@ -6,6 +6,7 @@
  */
 
 import { PipelineResult } from './pipeline';
+import { SniperGateData } from './types';
 import { logger } from '../helpers';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -41,7 +42,11 @@ export interface PipelineStatsSnapshot {
     cheapGates: GateStats[];
     deepFilters: GateStats[];
     momentumGate: GateStats[];
+    sniperGate: GateStats[];
   };
+
+  /** Whether the sniper gate is the active Stage 4 gate (vs momentum gate) */
+  sniperGateActive: boolean;
 
   /** Top rejection reasons with counts */
   topRejectionReasons: Array<{ reason: string; count: number }>;
@@ -65,6 +70,12 @@ export interface RecentToken {
   rejectedAt?: string;
   rejectionReason?: string;
   pipelineDurationMs: number;
+  /** Sniper gate summary fields (populated when sniper gate ran) */
+  sniperBotCount?: number;
+  sniperExitPercent?: number;
+  organicBuyerCount?: number;
+  sniperGateChecks?: number;
+  sniperGateWaitMs?: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -88,9 +99,14 @@ const DEEP_FILTERS = [
   { name: 'max-sol', displayName: 'Max SOL in Curve' },
 ];
 
-/** Momentum gate (Stage 4) */
+/** Momentum gate (Stage 4 — classic) */
 const MOMENTUM_GATE = [
   { name: 'momentum', displayName: 'Momentum Gate' },
+];
+
+/** Sniper gate (Stage 4 — sniper mode) */
+const SNIPER_GATE = [
+  { name: 'sniper', displayName: 'Sniper Gate' },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -109,6 +125,9 @@ export class PipelineStats {
   private cheapGateStats: Map<string, { passed: number; failed: number }>;
   private deepFilterStats: Map<string, { passed: number; failed: number }>;
   private momentumGateStats: Map<string, { passed: number; failed: number }>;
+  private sniperGateStats: Map<string, { passed: number; failed: number }>;
+  /** Whether sniper gate (vs momentum gate) is the active Stage 4 gate */
+  private sniperGateActive: boolean = false;
 
   /** Rejection reason counters */
   private rejectionReasons: Map<string, number>;
@@ -125,6 +144,7 @@ export class PipelineStats {
     this.cheapGateStats = new Map();
     this.deepFilterStats = new Map();
     this.momentumGateStats = new Map();
+    this.sniperGateStats = new Map();
     this.rejectionReasons = new Map();
 
     // Initialize all gates with zero counts
@@ -136,6 +156,9 @@ export class PipelineStats {
     }
     for (const gate of MOMENTUM_GATE) {
       this.momentumGateStats.set(gate.name, { passed: 0, failed: 0 });
+    }
+    for (const gate of SNIPER_GATE) {
+      this.sniperGateStats.set(gate.name, { passed: 0, failed: 0 });
     }
 
     logger.info('[pipeline-stats] Initialized');
@@ -150,6 +173,13 @@ export class PipelineStats {
     this.totalPipelineDurationMs += result.totalDurationMs;
 
     const detection = result.context.detection;
+    const sg = result.context.sniperGate;
+
+    // Detect if sniper gate is the active Stage 4 gate
+    if (sg || result.rejectedAt === 'sniper-gate') {
+      this.sniperGateActive = true;
+    }
+
     const recentToken: RecentToken = {
       mint: detection.mint.toString(),
       name: detection.name,
@@ -159,6 +189,11 @@ export class PipelineStats {
       rejectedAt: result.rejectedAt,
       rejectionReason: result.rejectionReason,
       pipelineDurationMs: result.totalDurationMs,
+      sniperBotCount: sg?.sniperWalletCount,
+      sniperExitPercent: sg?.sniperExitPercent,
+      organicBuyerCount: sg?.organicBuyerCount,
+      sniperGateChecks: sg?.checksPerformed,
+      sniperGateWaitMs: sg?.totalWaitMs,
     };
 
     // Add to recent tokens (keep last MAX_RECENT_TOKENS)
@@ -170,7 +205,7 @@ export class PipelineStats {
     if (result.success) {
       this.tokensBought++;
       // All gates passed
-      this.recordAllGatesPassed();
+      this.recordAllGatesPassed(sg);
     } else {
       this.tokensRejected++;
       // Record which gate rejected and track the reason
@@ -181,7 +216,7 @@ export class PipelineStats {
   /**
    * Record that all gates passed (for bought tokens)
    */
-  private recordAllGatesPassed(): void {
+  private recordAllGatesPassed(sg?: SniperGateData): void {
     // All cheap gates passed
     for (const gate of CHEAP_GATES) {
       const stats = this.cheapGateStats.get(gate.name)!;
@@ -194,10 +229,15 @@ export class PipelineStats {
       stats.passed++;
     }
 
-    // Momentum gate passed
-    for (const gate of MOMENTUM_GATE) {
-      const stats = this.momentumGateStats.get(gate.name)!;
+    // Stage 4: sniper gate or momentum gate
+    if (sg) {
+      const stats = this.sniperGateStats.get('sniper')!;
       stats.passed++;
+    } else {
+      for (const gate of MOMENTUM_GATE) {
+        const stats = this.momentumGateStats.get(gate.name)!;
+        stats.passed++;
+      }
     }
   }
 
@@ -234,6 +274,20 @@ export class PipelineStats {
       }
       // Momentum gate failed
       this.recordMomentumGateRejection(reason);
+    } else if (rejectedAt === 'sniper-gate') {
+      // All cheap gates passed
+      for (const gate of CHEAP_GATES) {
+        const stats = this.cheapGateStats.get(gate.name)!;
+        stats.passed++;
+      }
+      // All deep filters passed
+      for (const filter of DEEP_FILTERS) {
+        const stats = this.deepFilterStats.get(filter.name)!;
+        stats.passed++;
+      }
+      // Sniper gate failed
+      const stats = this.sniperGateStats.get('sniper')!;
+      stats.failed++;
     }
   }
 
@@ -427,6 +481,17 @@ export class PipelineStats {
       };
     });
 
+    const sniperGateArray: GateStats[] = SNIPER_GATE.map((gate) => {
+      const stats = this.sniperGateStats.get(gate.name)!;
+      return {
+        name: gate.name,
+        displayName: gate.displayName,
+        passed: stats.passed,
+        failed: stats.failed,
+        totalChecked: stats.passed + stats.failed,
+      };
+    });
+
     // Build top rejection reasons
     const topRejectionReasons = Array.from(this.rejectionReasons.entries())
       .map(([reason, count]) => ({ reason, count }))
@@ -449,7 +514,9 @@ export class PipelineStats {
         cheapGates: cheapGatesArray,
         deepFilters: deepFiltersArray,
         momentumGate: momentumGateArray,
+        sniperGate: sniperGateArray,
       },
+      sniperGateActive: this.sniperGateActive,
       topRejectionReasons,
       avgPipelineDurationMs,
       totalPipelineDurationMs: this.totalPipelineDurationMs,
@@ -470,6 +537,8 @@ export class PipelineStats {
     this.recentTokens = [];
     this.rejectionReasons.clear();
 
+    this.sniperGateActive = false;
+
     // Reset all gate counters
     for (const gate of CHEAP_GATES) {
       this.cheapGateStats.set(gate.name, { passed: 0, failed: 0 });
@@ -479,6 +548,9 @@ export class PipelineStats {
     }
     for (const gate of MOMENTUM_GATE) {
       this.momentumGateStats.set(gate.name, { passed: 0, failed: 0 });
+    }
+    for (const gate of SNIPER_GATE) {
+      this.sniperGateStats.set(gate.name, { passed: 0, failed: 0 });
     }
 
     logger.info('[pipeline-stats] Stats reset');

@@ -2060,6 +2060,117 @@ body {
   transform: translateX(-50%) translateY(0);
 }
 
+/* ============================================================
+   SNIPER GATE MODAL STYLES
+   ============================================================ */
+
+.sniper-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.sniper-stat {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.sniper-stat-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.25rem;
+}
+
+.sniper-stat-value {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.sniper-stat-value.bot-count {
+  color: var(--accent-red, #ef4444);
+}
+
+.sniper-stat-value.bot-exit {
+  color: var(--accent-yellow, #f59e0b);
+}
+
+.sniper-stat-value.organic-count {
+  color: var(--accent-green);
+}
+
+.sniper-stat-pct {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+/* Sniper check history table */
+.sniper-check-table-wrap {
+  overflow-x: auto;
+  margin-top: 0.5rem;
+}
+
+.sniper-check-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.sniper-check-table th {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-align: right;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+.sniper-check-table th:first-child,
+.sniper-check-table td:first-child {
+  text-align: left;
+}
+
+.sniper-check-table td {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border-color);
+  text-align: right;
+  color: var(--text-secondary);
+}
+
+.sniper-check-table tr:last-child td {
+  border-bottom: none;
+}
+
+.sniper-check-table tr:hover td {
+  background: var(--bg-secondary);
+}
+
+.sniper-col-pass.pass-yes {
+  color: var(--accent-green);
+  font-weight: 700;
+}
+
+.sniper-col-pass.pass-no {
+  color: var(--text-muted);
+}
+
+.sniper-pct {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.sniper-history-empty {
+  font-size: 0.8rem;
+  padding: 0.5rem 0;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .env-toolbar {

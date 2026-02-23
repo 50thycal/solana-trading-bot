@@ -38,6 +38,9 @@ const elements = {
   cheapGatesStats: document.getElementById('cheap-gates-stats'),
   deepFiltersStats: document.getElementById('deep-filters-stats'),
   momentumGateStats: document.getElementById('momentum-gate-stats'),
+  gate4FunnelLabel: document.getElementById('funnel-gate4-label'),
+  gate4PanelTitle: document.getElementById('gate4-panel-title'),
+  gate4PanelSubtitle: document.getElementById('gate4-panel-subtitle'),
 
   // Token list
   tokenList: document.getElementById('token-list'),
@@ -151,7 +154,7 @@ async function updatePipelineStats() {
   updateFunnel(data);
 
   // Update gate stats
-  updateGateStats(data.gateStats);
+  updateGateStats(data.gateStats, data.sniperGateActive);
 
   // Update rejection reasons
   updateRejectionReasons(data.topRejectionReasons);
@@ -165,32 +168,38 @@ function updateFunnel(data) {
   const bought = data.tokensBought || 0;
 
   // Calculate how many passed each stage
-  // Tokens that passed cheap gates = tokens that reached deep filters + bought
   const cheapGates = data.gateStats?.cheapGates || [];
   const deepFilters = data.gateStats?.deepFilters || [];
-  const momentumGate = data.gateStats?.momentumGate || [];
+  const sniperGateActive = data.sniperGateActive || false;
 
-  // Get the last cheap gate passed count (those that made it through all cheap gates)
+  // Gate 4: sniper or momentum
+  const gate4Stats = sniperGateActive
+    ? (data.gateStats?.sniperGate || [])
+    : (data.gateStats?.momentumGate || []);
+
   const lastCheapGate = cheapGates[cheapGates.length - 1];
   const passedCheapGates = lastCheapGate ? lastCheapGate.passed : 0;
 
-  // Get the last deep filter passed count
   const lastDeepFilter = deepFilters[deepFilters.length - 1];
   const passedDeepFilters = lastDeepFilter ? lastDeepFilter.passed : 0;
 
-  // Get the momentum gate passed count
-  const lastMomentumGate = momentumGate[momentumGate.length - 1];
-  const passedMomentumGate = lastMomentumGate ? lastMomentumGate.passed : 0;
+  const lastGate4 = gate4Stats[gate4Stats.length - 1];
+  const passedGate4 = lastGate4 ? lastGate4.passed : 0;
+
+  // Update funnel labels if sniper gate is active
+  if (elements.gate4FunnelLabel) {
+    elements.gate4FunnelLabel.textContent = sniperGateActive ? 'Sniper Gate' : 'Momentum Gate';
+  }
 
   // Update funnel values
   elements.funnelDetected.querySelector('.funnel-value').textContent = detected;
   elements.funnelCheapGates.querySelector('.funnel-value').textContent = passedCheapGates;
   elements.funnelDeepFilters.querySelector('.funnel-value').textContent = passedDeepFilters;
-  elements.funnelMomentumGate.querySelector('.funnel-value').textContent = passedMomentumGate;
+  elements.funnelMomentumGate.querySelector('.funnel-value').textContent = passedGate4;
   elements.funnelBought.querySelector('.funnel-value').textContent = bought;
 }
 
-function updateGateStats(gateStats) {
+function updateGateStats(gateStats, sniperGateActive) {
   if (!gateStats) return;
 
   // Cheap gates
@@ -207,11 +216,23 @@ function updateGateStats(gateStats) {
     elements.deepFiltersStats.innerHTML = '<div class="empty-state">No data yet</div>';
   }
 
-  // Momentum gate
-  if (gateStats.momentumGate && gateStats.momentumGate.length > 0) {
-    elements.momentumGateStats.innerHTML = gateStats.momentumGate.map(renderGateStat).join('');
+  // Gate 4: show sniper or momentum depending on which is active
+  if (sniperGateActive) {
+    if (elements.gate4PanelTitle) elements.gate4PanelTitle.textContent = 'Sniper Gate';
+    if (elements.gate4PanelSubtitle) elements.gate4PanelSubtitle.textContent = 'Bot exit + organic buyer detection';
+    if (gateStats.sniperGate && gateStats.sniperGate.length > 0) {
+      elements.momentumGateStats.innerHTML = gateStats.sniperGate.map(renderGateStat).join('');
+    } else {
+      elements.momentumGateStats.innerHTML = '<div class="empty-state">No data yet</div>';
+    }
   } else {
-    elements.momentumGateStats.innerHTML = '<div class="empty-state">No data yet</div>';
+    if (elements.gate4PanelTitle) elements.gate4PanelTitle.textContent = 'Momentum Gate';
+    if (elements.gate4PanelSubtitle) elements.gate4PanelSubtitle.textContent = 'Buy activity validation';
+    if (gateStats.momentumGate && gateStats.momentumGate.length > 0) {
+      elements.momentumGateStats.innerHTML = gateStats.momentumGate.map(renderGateStat).join('');
+    } else {
+      elements.momentumGateStats.innerHTML = '<div class="empty-state">No data yet</div>';
+    }
   }
 }
 
@@ -633,7 +654,7 @@ async function clearPaperTrades() {
 // MODALS
 // ============================================================
 
-function showTokenDetail(mint) {
+async function showTokenDetail(mint) {
   const token = recentTokens.find(t => t.mint === mint);
   if (!token) return;
 
@@ -646,6 +667,44 @@ function showTokenDetail(mint) {
   const outcomeDetail = token.outcome === 'rejected' && token.rejectionReason
     ? `at ${token.rejectedAt}: ${formatRejectionReason(token.rejectionReason)}`
     : `Pipeline completed in ${token.pipelineDurationMs}ms`;
+
+  // Build sniper gate summary section (from in-memory token data)
+  let sniperSummaryHtml = '';
+  if (token.sniperBotCount !== undefined || token.organicBuyerCount !== undefined) {
+    const botCount = token.sniperBotCount ?? 0;
+    const exitPercent = token.sniperExitPercent ?? 0;
+    const exitCount = Math.round(botCount * exitPercent / 100);
+    const organicCount = token.organicBuyerCount ?? 0;
+    const checks = token.sniperGateChecks ?? 0;
+    const waitSec = token.sniperGateWaitMs != null ? (token.sniperGateWaitMs / 1000).toFixed(1) : '--';
+
+    sniperSummaryHtml = `
+      <div class="modal-section">
+        <h4>Sniper Gate Summary</h4>
+        <div class="sniper-stats-grid">
+          <div class="sniper-stat">
+            <div class="sniper-stat-label">Bots Detected</div>
+            <div class="sniper-stat-value bot-count">${botCount}</div>
+          </div>
+          <div class="sniper-stat">
+            <div class="sniper-stat-label">Bots Exited</div>
+            <div class="sniper-stat-value bot-exit">${exitCount} <span class="sniper-stat-pct">(${exitPercent.toFixed(0)}%)</span></div>
+          </div>
+          <div class="sniper-stat">
+            <div class="sniper-stat-label">Organic Buyers</div>
+            <div class="sniper-stat-value organic-count">${organicCount}</div>
+          </div>
+          <div class="sniper-stat">
+            <div class="sniper-stat-label">Gate Duration</div>
+            <div class="sniper-stat-value">${waitSec}s (${checks} checks)</div>
+          </div>
+        </div>
+        <div id="sniper-check-history">
+          <div class="loading">Loading check history...</div>
+        </div>
+      </div>
+    `;
+  }
 
   elements.tokenModalBody.innerHTML = `
     <div class="modal-section">
@@ -685,6 +744,8 @@ function showTokenDetail(mint) {
       </div>
     </div>
 
+    ${sniperSummaryHtml}
+
     <div class="modal-section">
       <h4>External Links</h4>
       <div class="external-links">
@@ -696,6 +757,56 @@ function showTokenDetail(mint) {
   `;
 
   elements.tokenModal.classList.add('open');
+
+  // Async: fetch and render sniper check history from DB if sniper section is shown
+  if (sniperSummaryHtml) {
+    const historyEl = document.getElementById('sniper-check-history');
+    if (historyEl) {
+      const data = await fetchApi(`/api/sniper-gate/token/${mint}`);
+      if (data && data.observations && data.observations.length > 0) {
+        historyEl.innerHTML = renderSniperCheckHistory(data.observations);
+      } else {
+        historyEl.innerHTML = '<div class="empty-state sniper-history-empty">No check history in database</div>';
+      }
+    }
+  }
+}
+
+function renderSniperCheckHistory(observations) {
+  const rows = observations.map(obs => {
+    const passClass = obs.passConditionsMet ? 'pass-yes' : 'pass-no';
+    const passText = obs.passConditionsMet ? '✓' : '—';
+    return `
+      <tr>
+        <td class="sniper-col-check">#${obs.checkNumber}</td>
+        <td class="sniper-col-bots">${obs.botCount}</td>
+        <td class="sniper-col-exits">${obs.botExitCount} <span class="sniper-pct">(${obs.botExitPercent.toFixed(0)}%)</span></td>
+        <td class="sniper-col-organic">${obs.organicCount}</td>
+        <td class="sniper-col-buys">${obs.totalBuys}</td>
+        <td class="sniper-col-sells">${obs.totalSells}</td>
+        <td class="sniper-col-pass ${passClass}">${passText}</td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <div class="sniper-check-table-wrap">
+      <table class="sniper-check-table">
+        <thead>
+          <tr>
+            <th>Check</th>
+            <th>Bots</th>
+            <th>Exits</th>
+            <th>Organic</th>
+            <th>Buys</th>
+            <th>Sells</th>
+            <th>Pass?</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 function closeTokenModal() {

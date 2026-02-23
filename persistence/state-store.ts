@@ -1336,6 +1336,53 @@ export class StateStore {
     );
   }
 
+  /**
+   * Retrieve all poll observations for a single token's sniper gate run.
+   * Returns rows ordered by check_number ASC for timeline display.
+   */
+  getSniperGateObservations(tokenMint: string): Array<{
+    checkNumber: number;
+    checkedAt: number;
+    botCount: number;
+    botExitCount: number;
+    botExitPercent: number;
+    organicCount: number;
+    totalBuys: number;
+    totalSells: number;
+    uniqueBuyWallets: number;
+    passConditionsMet: boolean;
+    logOnly: boolean;
+    sniperWallets: string[];
+    organicWallets: string[];
+  }> {
+    if (!this.initialized) return [];
+
+    const rows = this.db.prepare(`
+      SELECT check_number, observed_at, bot_count, bot_exit_count, bot_exit_percent,
+             organic_count, total_buys, total_sells, unique_buy_wallets,
+             pass_conditions_met, log_only, sniper_wallets, organic_wallets
+      FROM sniper_gate_observations
+      WHERE token_mint = ?
+      ORDER BY check_number ASC
+    `).all(tokenMint) as any[];
+
+    return rows.map(row => ({
+      checkNumber: row.check_number,
+      checkedAt: row.observed_at,
+      botCount: row.bot_count,
+      botExitCount: row.bot_exit_count,
+      botExitPercent: row.bot_exit_percent,
+      organicCount: row.organic_count,
+      totalBuys: row.total_buys,
+      totalSells: row.total_sells,
+      uniqueBuyWallets: row.unique_buy_wallets,
+      passConditionsMet: row.pass_conditions_met === 1,
+      logOnly: row.log_only === 1,
+      sniperWallets: JSON.parse(row.sniper_wallets || '[]'),
+      organicWallets: JSON.parse(row.organic_wallets || '[]'),
+    }));
+  }
+
   getStats(): {
     positions: { open: number; closed: number };
     trades: { pending: number; confirmed: number; failed: number };
