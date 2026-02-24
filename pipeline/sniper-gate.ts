@@ -433,7 +433,7 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
 
       // In log-only mode we run the full loop — do NOT short-circuit here.
       // The pass happens after maxChecks are exhausted (below the while loop).
-      if (passConditionsMet) {
+      if (passConditionsMet && !this.config.logOnly) {
         const duration = Date.now() - startTime;
         const passReason = botCount === 0
           ? `No bots detected, ${organicCount} organic buyers`
