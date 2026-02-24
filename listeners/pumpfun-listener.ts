@@ -212,9 +212,7 @@ export class PumpFunListener extends EventEmitter {
       {
         signature,
         createLogLine,
-        allLogs: logMessages.filter(l =>
-          l.includes('Program log:') || l.includes('Instruction:')
-        ),
+        allLogs: logMessages.filter(l => l.includes('Program log:')),
       },
       '[pump.fun DEBUG] Create instruction detected in logs'
     );
@@ -791,6 +789,20 @@ export class PumpFunListener extends EventEmitter {
    */
   getPlatformStats(): PlatformStats {
     return { ...this.platformStats };
+  }
+
+  /**
+   * Increment buySucceeded counter (called by external buy handler on success)
+   */
+  incrementBuySucceeded(): void {
+    this.platformStats.buySucceeded++;
+  }
+
+  /**
+   * Increment buyFailed counter (called by external buy handler on failure)
+   */
+  incrementBuyFailed(): void {
+    this.platformStats.buyFailed++;
   }
 
   /**
