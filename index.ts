@@ -620,6 +620,11 @@ const runListener = async () => {
   // PUMP.FUN 'new-token' HANDLER
   // Flow: Detection → Pipeline (Cheap Gates + Deep Filters) → Execute Buy
   // ══════════════════════════════════════════════════════════════════════════════
+  // In-memory guard: prevents the same mint from entering the pipeline twice
+  // concurrently when duplicate websocket events arrive in the same tick before
+  // the async pipeline can write to the state-store dedup check.
+  const inFlightMints = new Set<string>();
+
   pumpFunListener.on('new-token', async (token: DetectedToken) => {
     if (token.source !== 'pumpfun') {
       return;
@@ -632,6 +637,17 @@ const runListener = async () => {
     const baseMintStr = token.mint.toString();
     const bondingCurveStr = token.bondingCurve?.toString() || 'unknown';
     const stateStore = getStateStore();
+
+    // ═══════════════ IN-FLIGHT DEDUP GUARD ═══════════════
+    // Prevents concurrent pipeline runs for the same mint when duplicate
+    // websocket events arrive before the first pipeline has finished.
+    if (inFlightMints.has(baseMintStr)) {
+      logger.debug({ mint: baseMintStr }, '[pump.fun] Duplicate detection event, already in-flight — skipping');
+      return;
+    }
+    inFlightMints.add(baseMintStr);
+
+    try {
 
     // ═══════════════ POSITION LIMIT CHECK ═══════════════
     const openCount = getOpenPositionCount();
@@ -994,6 +1010,10 @@ const runListener = async () => {
           });
         }
       }
+    }
+
+    } finally {
+      inFlightMints.delete(baseMintStr);
     }
   });
 
