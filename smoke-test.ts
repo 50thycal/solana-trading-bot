@@ -446,6 +446,16 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
         recheckIntervalMs: config.momentumRecheckIntervalMs,
         maxChecks: config.momentumMaxChecks,
       },
+      sniperGate: {
+        enabled: config.sniperGateEnabled,
+        initialDelayMs: config.sniperGateInitialDelayMs,
+        recheckIntervalMs: config.sniperGateRecheckIntervalMs,
+        maxChecks: config.sniperGateMaxChecks,
+        sniperSlotThreshold: config.sniperGateSniperSlotThreshold,
+        minBotExitPercent: config.sniperGateMinBotExitPercent,
+        minOrganicBuyers: config.sniperGateMinOrganicBuyers,
+        logOnly: config.sniperGateLogOnly,
+      },
       verbose: true,
     });
 
@@ -785,7 +795,7 @@ async function runListenPipelineAndBuy(
         // Build detection event for pipeline
         const detectionEvent: DetectionEvent = {
           signature: token.signature || `smoke-test-${Date.now()}`,
-          slot: 0,
+          slot: token.slot ?? 0,
           mint: token.mint,
           bondingCurve: token.bondingCurve!,
           associatedBondingCurve: token.associatedBondingCurve!,
