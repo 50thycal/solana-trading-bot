@@ -5,6 +5,7 @@ import { getMetadataAccountDataSerializer } from '@metaplex-foundation/mpl-token
 import { EventEmitter } from 'events';
 import { getMintCache } from '../cache/mint.cache';
 import { logger } from '../helpers/logger';
+import { PUMPFUN_DETECTION_COOLDOWN_MS } from '../helpers/constants';
 import {
   DetectedToken,
   PumpFunState,
@@ -80,6 +81,7 @@ interface PumpFunListenerStats {
   logsReceived: number;
   createInstructionsDetected: number;
   tokensProcessed: number;
+  skippedDuringCooldown: number;
   errors: number;
   lastDetectedAt: number | null;
 }
@@ -115,10 +117,13 @@ export class PumpFunListener extends EventEmitter {
   private connection: Connection;
   private subscriptionId: number | null = null;
   private isRunning: boolean = false;
+  private cooldownMs: number;
+  private lastTokenAcceptedAt: number = 0;
   private stats: PumpFunListenerStats = {
     logsReceived: 0,
     createInstructionsDetected: 0,
     tokensProcessed: 0,
+    skippedDuringCooldown: 0,
     errors: 0,
     lastDetectedAt: null,
   };
@@ -130,9 +135,10 @@ export class PumpFunListener extends EventEmitter {
   private processedSignatures: Set<string> = new Set();
   private maxProcessedSignatures: number = 10000;
 
-  constructor(connection: Connection) {
+  constructor(connection: Connection, cooldownMs: number = PUMPFUN_DETECTION_COOLDOWN_MS) {
     super();
     this.connection = connection;
+    this.cooldownMs = cooldownMs;
   }
 
   /**
@@ -206,6 +212,23 @@ export class PumpFunListener extends EventEmitter {
     if (!hasCreate) {
       return;
     }
+
+    // Cooldown gate: skip tokens that arrive while a recent one is still being processed.
+    // This prevents concurrent RPC calls from stacking up and causing 429 rate-limit errors.
+    if (this.cooldownMs > 0) {
+      const msSinceLastAccepted = Date.now() - this.lastTokenAcceptedAt;
+      if (msSinceLastAccepted < this.cooldownMs) {
+        this.stats.skippedDuringCooldown++;
+        this.addProcessedSignature(signature); // don't revisit later
+        logger.debug(
+          { signature, msSinceLastAccepted, cooldownMs: this.cooldownMs },
+          '[pump.fun] Skipping token — detection cooldown active'
+        );
+        return;
+      }
+    }
+
+    this.lastTokenAcceptedAt = Date.now();
 
     // DEBUG: Log all the log messages for Create transactions
     logger.info(
@@ -813,6 +836,7 @@ export class PumpFunListener extends EventEmitter {
       logsReceived: 0,
       createInstructionsDetected: 0,
       tokensProcessed: 0,
+      skippedDuringCooldown: 0,
       errors: 0,
       lastDetectedAt: null,
     };

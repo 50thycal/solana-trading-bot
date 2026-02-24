@@ -95,6 +95,7 @@ export const PUMPFUN_MAX_SOL_IN_CURVE = config.pumpfunMaxSolInCurve;
 export const PUMPFUN_ENABLE_MIN_SOL_FILTER = config.pumpfunEnableMinSolFilter;
 export const PUMPFUN_ENABLE_MAX_SOL_FILTER = config.pumpfunEnableMaxSolFilter;
 export const PUMPFUN_MIN_SCORE_REQUIRED = config.pumpfunMinScoreRequired;
+export const PUMPFUN_DETECTION_COOLDOWN_MS = config.pumpfunDetectionCooldownMs;
 
 // ============================================================================
 // MOMENTUM GATE
