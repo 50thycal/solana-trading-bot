@@ -401,6 +401,11 @@ export class DashboardServer {
           else if (pathname.startsWith('/api/pools/')) {
             const id = pathname.substring('/api/pools/'.length);
             data = this.getApiPoolById(id);
+          }
+          // Check for /api/sniper-gate/token/:mint pattern
+          else if (pathname.startsWith('/api/sniper-gate/token/')) {
+            const mint = pathname.substring('/api/sniper-gate/token/'.length);
+            data = this.getApiSniperGateToken(mint);
           } else {
             res.writeHead(404, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'API endpoint not found' }));
@@ -930,6 +935,19 @@ export class DashboardServer {
     }
 
     return pool;
+  }
+
+  /**
+   * GET /api/sniper-gate/token/:mint - Sniper gate observations for a specific token
+   */
+  private getApiSniperGateToken(mint: string) {
+    const stateStore = getStateStore();
+    if (!stateStore) {
+      return { error: 'State store not initialized', observations: [] };
+    }
+
+    const observations = stateStore.getSniperGateObservations(mint);
+    return { mint, observations };
   }
 
   /**
