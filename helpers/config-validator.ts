@@ -77,6 +77,7 @@ export interface ValidatedConfig {
   pumpfunEnableMinSolFilter: boolean;
   pumpfunEnableMaxSolFilter: boolean;
   pumpfunMinScoreRequired: number;
+  pumpfunDetectionCooldownMs: number;
 
   // Momentum Gate
   momentumGateEnabled: boolean;
@@ -378,6 +379,12 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'PUMPFUN_MIN_SCORE_REQUIRED', message: 'PUMPFUN_MIN_SCORE_REQUIRED must be between 0 and 100' });
   }
 
+  const pumpfunDetectionCooldownSeconds = requireNumber('PUMPFUN_DETECTION_COOLDOWN_SECONDS', 0);
+  if (pumpfunDetectionCooldownSeconds < 0) {
+    errors.push({ variable: 'PUMPFUN_DETECTION_COOLDOWN_SECONDS', message: 'PUMPFUN_DETECTION_COOLDOWN_SECONDS cannot be negative' });
+  }
+  const pumpfunDetectionCooldownMs = Math.round(pumpfunDetectionCooldownSeconds * 1000);
+
   // === MOMENTUM GATE (Pipeline Stage 4) ===
   // Validates buy momentum before allowing purchase
 
@@ -606,6 +613,7 @@ export function validateConfig(): ValidatedConfig {
     pumpfunEnableMinSolFilter,
     pumpfunEnableMaxSolFilter,
     pumpfunMinScoreRequired,
+    pumpfunDetectionCooldownMs,
     momentumGateEnabled,
     momentumInitialDelayMs,
     momentumMinTotalBuys,

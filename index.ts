@@ -847,6 +847,8 @@ const runListener = async () => {
           summary: '[pump.fun] DRY RUN - simulated buy',
         });
       }
+
+      pumpFunListener?.incrementBuySucceeded();
     } else {
       // ═══════════════ LIVE BUY ═══════════════
       const isToken2022 = context.cheapGates?.mintInfo.isToken2022 ?? false;
@@ -915,6 +917,7 @@ const runListener = async () => {
         }
 
         if (summarizer) summarizer.recordBuySuccess();
+        pumpFunListener?.incrementBuySucceeded();
 
         // Record position
         const entryTimestamp = Date.now();
@@ -988,6 +991,7 @@ const runListener = async () => {
           summarizer.recordBuyFailure();
           summarizer.recordError(`Buy failed: ${buyResult.error || 'unknown'}`);
         }
+        pumpFunListener?.incrementBuyFailed();
 
         logger.error(
           {
@@ -1048,7 +1052,7 @@ const runListener = async () => {
     const stateStore = getStateStore();
     const dbStats = stateStore?.getStats();
     const pumpFunPlatformStats = pumpFunListener?.getPlatformStats();
-    const pumpfun = pumpFunPlatformStats || { detected: 0, isNew: 0, tokenTooOld: 0, buyAttempted: 0, errors: 0 };
+    const pumpfun = pumpFunPlatformStats || { detected: 0, isNew: 0, tokenTooOld: 0, buyAttempted: 0, buySucceeded: 0, buyFailed: 0, errors: 0 };
     const monitorStats = pumpFunMonitor.getStats();
     const mintCacheStats = getMintCache().getStats();
 
@@ -1068,7 +1072,7 @@ const runListener = async () => {
         openPositions: dbStats?.positions.open || 0,
         mode: DRY_RUN ? 'PAPER' : 'LIVE',
       },
-      `Heartbeat: Detected=${pumpfun.detected} New=${pumpfun.isNew} Bought=${pumpfun.buyAttempted} | Positions: ${monitorStats.positionCount} | Mode: ${DRY_RUN ? 'PAPER' : 'LIVE'}`
+      `Heartbeat: Detected=${pumpfun.detected} New=${pumpfun.isNew} Attempted=${pumpfun.buyAttempted} Succeeded=${pumpfun.buySucceeded ?? 0} Failed=${pumpfun.buyFailed ?? 0} | Positions: ${monitorStats.positionCount} | Mode: ${DRY_RUN ? 'PAPER' : 'LIVE'}`
     );
 
     pumpFunListener?.resetStats();
