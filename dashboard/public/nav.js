@@ -8,6 +8,7 @@ const NAV_LINKS = [
   { path: '/dry-run', label: 'Dry Run', modes: ['dry_run'] },
   { path: '/production', label: 'Production', modes: ['production'] },
   { path: '/smoke-test', label: 'Smoke Test', modes: ['smoke'] },
+  { path: '/smoke-analytics', label: 'Smoke Analytics', modes: ['smoke'] },
   { path: '/ab-test', label: 'A/B Test', modes: ['ab'] },
   { path: '/diagnostic.html', label: 'Diagnostics' },
   { path: '/env-config', label: 'Config' },

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smoke Test Analytics</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/smoke-test-analytics.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Navigation -->
+    <nav id="nav-bar" class="nav-bar"></nav>
+
+    <!-- Header -->
+    <header class="page-header">
+      <div class="header-left">
+        <h1>Smoke Test Analytics</h1>
+        <span class="header-badge" id="analytics-badge">Analytics</span>
+      </div>
+      <div class="header-right">
+        <a href="/smoke-test" class="btn btn-secondary btn-small">Back to Smoke Tests</a>
+      </div>
+    </header>
+
+    <!-- Run Selector -->
+    <section class="panel" id="run-selector-panel">
+      <div class="panel-header">
+        <h2>Select Runs to Analyze</h2>
+        <div class="selector-actions">
+          <button class="btn btn-secondary btn-small" onclick="selectAll()">Select All</button>
+          <button class="btn btn-secondary btn-small" onclick="selectNone()">Deselect All</button>
+          <button class="btn btn-secondary btn-small" onclick="selectPassing()">Only Passing</button>
+          <button class="btn btn-primary btn-small" onclick="applySelection()">Analyze Selected</button>
+        </div>
+      </div>
+      <div id="run-selector-list" class="run-selector-list">
+        <div class="empty-state">Loading smoke test runs...</div>
+      </div>
+    </section>
+
+    <!-- Aggregate Stats Cards -->
+    <section class="overview-cards" id="agg-stats" style="display:none;">
+      <div class="card card-accent">
+        <div class="card-label">Avg P&L</div>
+        <div class="card-value big" id="stat-avg-pnl">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Total P&L</div>
+        <div class="card-value" id="stat-total-pnl">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Pass Rate</div>
+        <div class="card-value" id="stat-pass-rate">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Runs Analyzed</div>
+        <div class="card-value" id="stat-run-count">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Median P&L</div>
+        <div class="card-value" id="stat-median-pnl">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">P&L Std Dev</div>
+        <div class="card-value" id="stat-pnl-stddev">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Avg Duration</div>
+        <div class="card-value" id="stat-avg-duration">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Avg Tokens Seen</div>
+        <div class="card-value" id="stat-avg-tokens">--</div>
+      </div>
+    </section>
+
+    <!-- Additional Metric Cards Row -->
+    <section class="overview-cards" id="agg-stats-2" style="display:none;">
+      <div class="card">
+        <div class="card-label">Avg Pipeline Passed</div>
+        <div class="card-value" id="stat-avg-pipeline">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Avg Buy Failures</div>
+        <div class="card-value" id="stat-avg-buyfails">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Best P&L</div>
+        <div class="card-value positive" id="stat-best-pnl">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Worst P&L</div>
+        <div class="card-value negative" id="stat-worst-pnl">--</div>
+      </div>
+    </section>
+
+    <!-- Charts -->
+    <section class="panel" id="charts-panel" style="display:none;">
+      <div class="panel-header">
+        <h2>Charts</h2>
+      </div>
+
+      <!-- P&L Over Time -->
+      <div class="chart-container">
+        <h3 class="chart-title">P&L Per Run</h3>
+        <canvas id="chart-pnl" height="250"></canvas>
+      </div>
+
+      <!-- Cumulative P&L -->
+      <div class="chart-container">
+        <h3 class="chart-title">Cumulative P&L</h3>
+        <canvas id="chart-cumulative-pnl" height="250"></canvas>
+      </div>
+
+      <!-- Duration Over Time -->
+      <div class="chart-container">
+        <h3 class="chart-title">Duration Per Run (seconds)</h3>
+        <canvas id="chart-duration" height="200"></canvas>
+      </div>
+
+      <!-- Tokens Evaluated -->
+      <div class="chart-container">
+        <h3 class="chart-title">Tokens Evaluated vs Pipeline Passed</h3>
+        <canvas id="chart-tokens" height="200"></canvas>
+      </div>
+
+      <!-- Exit Trigger Distribution -->
+      <div class="chart-container chart-container-half">
+        <h3 class="chart-title">Exit Trigger Distribution</h3>
+        <canvas id="chart-exit-triggers" height="250"></canvas>
+      </div>
+
+      <!-- Pass/Fail Distribution -->
+      <div class="chart-container chart-container-half">
+        <h3 class="chart-title">Pass / Fail Ratio</h3>
+        <canvas id="chart-pass-fail" height="250"></canvas>
+      </div>
+    </section>
+
+    <!-- Environment Variable Impact -->
+    <section class="panel" id="env-impact-panel" style="display:none;">
+      <div class="panel-header">
+        <h2>Environment Variable Impact</h2>
+        <span class="panel-subtitle">Which settings produce the best results?</span>
+      </div>
+      <div id="env-impact-content"></div>
+    </section>
+
+    <!-- Per-Run Detail Table -->
+    <section class="panel" id="detail-table-panel" style="display:none;">
+      <div class="panel-header">
+        <h2>Run Details</h2>
+        <div class="selector-actions">
+          <button class="btn btn-secondary btn-small" id="sort-btn-date" onclick="sortTable('date')">Sort by Date</button>
+          <button class="btn btn-secondary btn-small" id="sort-btn-pnl" onclick="sortTable('pnl')">Sort by P&L</button>
+          <button class="btn btn-secondary btn-small" id="sort-btn-duration" onclick="sortTable('duration')">Sort by Duration</button>
+        </div>
+      </div>
+      <div class="table-wrapper">
+        <table class="analytics-table" id="detail-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Result</th>
+              <th>P&L (SOL)</th>
+              <th>Duration</th>
+              <th>Tokens Seen</th>
+              <th>Pipeline Passed</th>
+              <th>Buy Failures</th>
+              <th>Exit Trigger</th>
+            </tr>
+          </thead>
+          <tbody id="detail-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script src="/nav.js"></script>
+  <script src="/smoke-test-analytics.js"></script>
+</body>
+</html>
