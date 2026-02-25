@@ -132,6 +132,8 @@ export interface SmokeTestReport {
   buySignature?: string;
   /** Sell transaction signature */
   sellSignature?: string;
+  /** Snapshot of environment variables used for this run (for cross-run analytics) */
+  envSnapshot?: Record<string, string | number | boolean>;
 }
 
 // Shared state for the report endpoint
@@ -1005,6 +1007,24 @@ function buildReport(
     ? actualSolSpentOnBuy - tradeAmount
     : undefined;
 
+  // Capture environment variables snapshot for cross-run analytics
+  const envSnapshot: Record<string, string | number | boolean> = {
+    QUOTE_AMOUNT: Number(QUOTE_AMOUNT),
+    TAKE_PROFIT,
+    STOP_LOSS,
+    MAX_HOLD_DURATION_MS,
+    BUY_SLIPPAGE,
+    SELL_SLIPPAGE,
+    COMPUTE_UNIT_LIMIT,
+    COMPUTE_UNIT_PRICE,
+    PUMPFUN_MIN_SOL_IN_CURVE,
+    PUMPFUN_MAX_SOL_IN_CURVE,
+    PUMPFUN_ENABLE_MIN_SOL_FILTER,
+    PUMPFUN_ENABLE_MAX_SOL_FILTER,
+    PUMPFUN_MIN_SCORE_REQUIRED,
+    SMOKE_TEST_TIMEOUT_MS,
+  };
+
   const report: SmokeTestReport = {
     startedAt,
     completedAt,
@@ -1028,6 +1048,7 @@ function buildReport(
     sellTimestamp,
     buySignature,
     sellSignature,
+    envSnapshot,
   };
 
   // Store for dashboard retrieval (in-memory + persisted to file)

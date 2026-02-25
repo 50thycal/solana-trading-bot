@@ -354,6 +354,10 @@ export class DashboardServer {
           data = getSmokeTestProgress() || { running: false };
           break;
 
+        case '/api/smoke-test-analytics':
+          data = this.getSmokeTestAnalytics(url.searchParams);
+          break;
+
         case '/api/env-reference':
           data = this.getApiEnvReference();
           break;
@@ -1621,6 +1625,140 @@ export class DashboardServer {
   }
 
   // ============================================================
+  // SMOKE TEST ANALYTICS
+  // ============================================================
+
+  /**
+   * GET /api/smoke-test-analytics - Aggregated analytics across smoke test runs
+   * Query params:
+   *   ids=<startedAt1>,<startedAt2>,... (optional; defaults to all)
+   */
+  private getSmokeTestAnalytics(params: URLSearchParams) {
+    const allReports = getAllSmokeTestReports();
+    if (allReports.length === 0) {
+      return { error: 'No smoke test reports available', reports: [], analytics: null };
+    }
+
+    // Filter by selected IDs if provided
+    const idsParam = params.get('ids');
+    let reports = allReports;
+    if (idsParam) {
+      const ids = new Set(idsParam.split(','));
+      reports = allReports.filter(r => ids.has(String(r.startedAt)));
+    }
+
+    if (reports.length === 0) {
+      return { error: 'No matching reports found', reports: [], analytics: null };
+    }
+
+    // Compute aggregated analytics
+    const passCount = reports.filter(r => r.overallResult === 'PASS').length;
+    const failCount = reports.filter(r => r.overallResult === 'FAIL').length;
+    const pnlValues = reports.map(r => -r.netCostSol);
+    const durations = reports.map(r => r.totalDurationMs);
+    const tokensEval = reports.map(r => r.tokensEvaluated);
+    const tokensPassed = reports.map(r => r.tokensPipelinePassed);
+    const buyFailCounts = reports.map(r => r.buyFailures?.length || 0);
+
+    const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+    const min = (arr: number[]) => arr.length ? Math.min(...arr) : 0;
+    const max = (arr: number[]) => arr.length ? Math.max(...arr) : 0;
+    const median = (arr: number[]) => {
+      if (!arr.length) return 0;
+      const sorted = [...arr].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    };
+    const stdDev = (arr: number[]) => {
+      if (arr.length < 2) return 0;
+      const mean = avg(arr);
+      return Math.sqrt(arr.reduce((sum, v) => sum + (v - mean) ** 2, 0) / (arr.length - 1));
+    };
+
+    const aggregates = {
+      totalRuns: reports.length,
+      passCount,
+      failCount,
+      passRate: reports.length > 0 ? passCount / reports.length : 0,
+      pnl: { avg: avg(pnlValues), min: min(pnlValues), max: max(pnlValues), median: median(pnlValues), stdDev: stdDev(pnlValues), total: pnlValues.reduce((a, b) => a + b, 0) },
+      duration: { avg: avg(durations), min: min(durations), max: max(durations), median: median(durations) },
+      tokensEvaluated: { avg: avg(tokensEval), min: min(tokensEval), max: max(tokensEval), median: median(tokensEval) },
+      tokensPipelinePassed: { avg: avg(tokensPassed), min: min(tokensPassed), max: max(tokensPassed), median: median(tokensPassed) },
+      buyFailures: { avg: avg(buyFailCounts), min: min(buyFailCounts), max: max(buyFailCounts), total: buyFailCounts.reduce((a, b) => a + b, 0) },
+      exitTriggers: {} as Record<string, number>,
+    };
+
+    // Count exit triggers
+    for (const r of reports) {
+      const trigger = r.exitTrigger || 'unknown';
+      aggregates.exitTriggers[trigger] = (aggregates.exitTriggers[trigger] || 0) + 1;
+    }
+
+    // Env variable impact analysis: group reports by each env variable value,
+    // compute avg P&L for each value to find which settings yield best results
+    const envImpact: Record<string, { values: Record<string, { avgPnl: number; count: number; avgDuration: number; passRate: number }> }> = {};
+    for (const r of reports) {
+      if (!r.envSnapshot) continue;
+      const pnl = -r.netCostSol;
+      const passed = r.overallResult === 'PASS' ? 1 : 0;
+      for (const [key, val] of Object.entries(r.envSnapshot)) {
+        const strVal = String(val);
+        if (!envImpact[key]) envImpact[key] = { values: {} };
+        if (!envImpact[key].values[strVal]) {
+          envImpact[key].values[strVal] = { avgPnl: 0, count: 0, avgDuration: 0, passRate: 0 };
+        }
+        const bucket = envImpact[key].values[strVal];
+        // Running totals (we'll divide by count at the end)
+        bucket.avgPnl += pnl;
+        bucket.avgDuration += r.totalDurationMs;
+        bucket.passRate += passed;
+        bucket.count++;
+      }
+    }
+    // Convert sums to averages
+    for (const key of Object.keys(envImpact)) {
+      for (const val of Object.keys(envImpact[key].values)) {
+        const b = envImpact[key].values[val];
+        if (b.count > 0) {
+          b.avgPnl /= b.count;
+          b.avgDuration /= b.count;
+          b.passRate /= b.count;
+        }
+      }
+    }
+
+    // Time series data for charts (ordered by startedAt)
+    const sortedReports = [...reports].sort((a, b) => a.startedAt - b.startedAt);
+    const timeSeries = sortedReports.map(r => ({
+      startedAt: r.startedAt,
+      pnl: -r.netCostSol,
+      duration: r.totalDurationMs,
+      tokensEvaluated: r.tokensEvaluated,
+      tokensPipelinePassed: r.tokensPipelinePassed,
+      exitTrigger: r.exitTrigger || 'unknown',
+      result: r.overallResult,
+      buyFailures: r.buyFailures?.length || 0,
+      envSnapshot: r.envSnapshot || {},
+    }));
+
+    // Cumulative P&L for the chart
+    let cumPnl = 0;
+    const cumulativePnl = timeSeries.map(t => {
+      cumPnl += t.pnl;
+      return { startedAt: t.startedAt, cumulativePnl: cumPnl };
+    });
+
+    return {
+      analytics: aggregates,
+      envImpact,
+      timeSeries,
+      cumulativePnl,
+      reportCount: allReports.length,
+      selectedCount: reports.length,
+    };
+  }
+
+  // ============================================================
   // STATIC FILE SERVING
   // ============================================================
 
@@ -1632,6 +1770,7 @@ export class DashboardServer {
       '/dry-run': '/dry-run.html',
       '/production': '/production.html',
       '/smoke-test': '/smoke-test.html',
+      '/smoke-analytics': '/smoke-test-analytics.html',
       '/ab-test': '/ab-results.html',
       '/ab-results': '/ab-results.html',
       '/env-config': '/env-config.html',
