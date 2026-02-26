@@ -163,6 +163,14 @@
         <h2>Environment Variable Impact</h2>
         <span class="panel-subtitle">Which settings produce the best results?</span>
       </div>
+      <div class="env-impact-controls">
+        <div class="env-select-wrapper">
+          <select id="env-var-select" class="env-var-select" onchange="onEnvVarSelected()">
+            <option value="">-- Select a variable to analyze --</option>
+          </select>
+        </div>
+        <div class="env-impact-summary" id="env-impact-summary"></div>
+      </div>
       <div id="env-impact-content"></div>
     </section>
 

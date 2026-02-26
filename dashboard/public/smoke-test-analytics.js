@@ -666,83 +666,308 @@ function drawPassFailChart(passCount, failCount) {
 }
 
 // ============================================================
-// ENV VARIABLE IMPACT
+// ENV VARIABLE IMPACT (Dropdown-based)
 // ============================================================
 
+/** Cached env impact data for dropdown re-renders */
+let cachedEnvImpact = null;
+
+/**
+ * Categorize env variables for the dropdown groupings.
+ */
+const ENV_VAR_CATEGORIES = {
+  'Trading Parameters': [
+    'QUOTE_AMOUNT', 'TAKE_PROFIT', 'STOP_LOSS', 'BUY_SLIPPAGE', 'SELL_SLIPPAGE',
+    'AUTO_BUY_DELAY', 'AUTO_SELL', 'AUTO_SELL_DELAY', 'PRICE_CHECK_INTERVAL',
+    'PRICE_CHECK_DURATION', 'ONE_TOKEN_AT_A_TIME',
+  ],
+  'Position Management': [
+    'MAX_HOLD_DURATION_MS', 'MAX_BUY_RETRIES', 'MAX_SELL_RETRIES',
+  ],
+  'Risk Controls': [
+    'MAX_TOTAL_EXPOSURE_SOL', 'MAX_TRADES_PER_HOUR', 'MIN_WALLET_BUFFER_SOL',
+  ],
+  'Transaction Execution': [
+    'COMPUTE_UNIT_LIMIT', 'COMPUTE_UNIT_PRICE', 'TRANSACTION_EXECUTOR',
+    'SIMULATE_TRANSACTION', 'USE_DYNAMIC_FEE', 'PRIORITY_FEE_PERCENTILE',
+    'MIN_PRIORITY_FEE', 'MAX_PRIORITY_FEE', 'USE_FALLBACK_EXECUTOR',
+  ],
+  'Pump.fun Filters': [
+    'PUMPFUN_MIN_SOL_IN_CURVE', 'PUMPFUN_MAX_SOL_IN_CURVE',
+    'PUMPFUN_ENABLE_MIN_SOL_FILTER', 'PUMPFUN_ENABLE_MAX_SOL_FILTER',
+    'PUMPFUN_MIN_SCORE_REQUIRED', 'PUMPFUN_DETECTION_COOLDOWN_MS',
+    'MAX_TOKEN_AGE_SECONDS',
+  ],
+  'Momentum Gate': [
+    'MOMENTUM_GATE_ENABLED', 'MOMENTUM_INITIAL_DELAY_MS',
+    'MOMENTUM_MIN_TOTAL_BUYS', 'MOMENTUM_RECHECK_INTERVAL_MS',
+    'MOMENTUM_MAX_CHECKS',
+  ],
+  'Sniper Gate': [
+    'SNIPER_GATE_ENABLED', 'SNIPER_GATE_INITIAL_DELAY_MS',
+    'SNIPER_GATE_RECHECK_INTERVAL_MS', 'SNIPER_GATE_MAX_CHECKS',
+    'SNIPER_GATE_SNIPER_SLOT_THRESHOLD', 'SNIPER_GATE_MIN_BOT_EXIT_PERCENT',
+    'SNIPER_GATE_MIN_ORGANIC_BUYERS', 'SNIPER_GATE_LOG_ONLY',
+  ],
+  'Trailing Stop': [
+    'TRAILING_STOP_ENABLED', 'TRAILING_STOP_ACTIVATION_PERCENT',
+    'TRAILING_STOP_DISTANCE_PERCENT', 'HARD_TAKE_PROFIT_PERCENT',
+  ],
+  'Test Config': [
+    'SMOKE_TEST_TIMEOUT_MS',
+  ],
+};
+
+/** Find category for a variable name */
+function getVarCategory(varName) {
+  for (const [cat, vars] of Object.entries(ENV_VAR_CATEGORIES)) {
+    if (vars.includes(varName)) return cat;
+  }
+  return 'Other';
+}
+
+/**
+ * Compute a confidence-weighted impact score for a variable.
+ * Takes into account:
+ *   - P&L spread between best and worst values
+ *   - Sample sizes (more runs = higher confidence)
+ *   - Pass rate differences
+ *   - Whether there are actually multiple values to compare
+ */
+function computeImpactScore(impact) {
+  const entries = Object.entries(impact.values);
+  if (entries.length < 2) return { score: 0, level: 'single', label: 'Single Value' };
+
+  const sorted = entries.sort((a, b) => b[1].avgPnl - a[1].avgPnl);
+  const best = sorted[0][1];
+  const worst = sorted[sorted.length - 1][1];
+
+  const pnlSpread = best.avgPnl - worst.avgPnl;
+  const passRateSpread = best.passRate - worst.passRate;
+
+  // Minimum sample size across values — low counts reduce confidence
+  const minSamples = Math.min(...entries.map(e => e[1].count));
+  const totalSamples = entries.reduce((sum, e) => sum + e[1].count, 0);
+
+  // Confidence factor: scales from 0 to 1 based on sample size
+  // At least 3 runs per value for reasonable confidence
+  const confidenceFactor = Math.min(1, minSamples / 5);
+
+  // Weighted score: P&L spread (primary) + pass rate spread (secondary), scaled by confidence
+  const rawScore = (pnlSpread * 10000) + (passRateSpread * 50);
+  const score = rawScore * confidenceFactor;
+
+  let level, label;
+  if (confidenceFactor < 0.4) {
+    level = 'low-confidence';
+    label = 'Low Confidence';
+  } else if (score > 1.0) {
+    level = 'high';
+    label = 'High Impact';
+  } else if (score > 0.1) {
+    level = 'medium';
+    label = 'Medium Impact';
+  } else {
+    level = 'low';
+    label = 'Low Impact';
+  }
+
+  return { score, level, label, pnlSpread, passRateSpread, confidenceFactor, minSamples, totalSamples };
+}
+
 function renderEnvImpact(envImpact) {
+  cachedEnvImpact = envImpact;
   const container = document.getElementById('env-impact-content');
+  const select = document.getElementById('env-var-select');
+  const summary = document.getElementById('env-impact-summary');
 
   if (!envImpact || Object.keys(envImpact).length === 0) {
     container.innerHTML = '<div class="empty-state">No environment variable data available. Run smoke tests with envSnapshot enabled.</div>';
+    select.innerHTML = '<option value="">-- No data --</option>';
+    summary.innerHTML = '';
     return;
   }
 
-  // Sort variables by relevance (those with multiple values first, as they show impact)
-  const sorted = Object.entries(envImpact).sort((a, b) => {
-    const aVals = Object.keys(a[1].values).length;
-    const bVals = Object.keys(b[1].values).length;
-    return bVals - aVals;
-  });
+  // Build dropdown with optgroups by category, sorted by impact score within each
+  const varsByCategory = {};
+  const impactScores = {};
+  for (const [varName, impact] of Object.entries(envImpact)) {
+    const cat = getVarCategory(varName);
+    if (!varsByCategory[cat]) varsByCategory[cat] = [];
+    const scoreInfo = computeImpactScore(impact);
+    impactScores[varName] = scoreInfo;
+    varsByCategory[cat].push({ varName, scoreInfo });
+  }
 
-  container.innerHTML = sorted.map(([varName, impact]) => {
-    const values = Object.entries(impact.values).sort((a, b) => b[1].avgPnl - a[1].avgPnl);
-    const hasMultipleValues = values.length > 1;
+  // Sort each category: multi-value (by score desc) first, then single-value
+  for (const cat of Object.keys(varsByCategory)) {
+    varsByCategory[cat].sort((a, b) => b.scoreInfo.score - a.scoreInfo.score);
+  }
 
-    const bestValue = values[0];
-    const worstValue = values[values.length - 1];
+  // Ordered categories
+  const categoryOrder = Object.keys(ENV_VAR_CATEGORIES).concat(['Other']);
 
-    // Format the variable name nicely
-    const displayName = varName.replace(/_/g, ' ');
-
-    let impactBadge = '';
-    if (hasMultipleValues) {
-      const pnlDiff = bestValue[1].avgPnl - worstValue[1].avgPnl;
-      if (pnlDiff > 0.0001) {
-        impactBadge = `<span class="impact-badge impact-high">High Impact</span>`;
-      } else if (pnlDiff > 0.00001) {
-        impactBadge = `<span class="impact-badge impact-medium">Medium Impact</span>`;
-      } else {
-        impactBadge = `<span class="impact-badge impact-low">Low Impact</span>`;
-      }
-    } else {
-      impactBadge = `<span class="impact-badge impact-single">Single Value</span>`;
+  let optionsHtml = '<option value="">-- Select a variable to analyze --</option>';
+  for (const cat of categoryOrder) {
+    const vars = varsByCategory[cat];
+    if (!vars || vars.length === 0) continue;
+    optionsHtml += `<optgroup label="${escapeHtml(cat)}">`;
+    for (const { varName, scoreInfo } of vars) {
+      const indicator = scoreInfo.level === 'single' ? '' :
+        scoreInfo.level === 'high' ? ' *** ' :
+        scoreInfo.level === 'medium' ? ' ** ' :
+        scoreInfo.level === 'low-confidence' ? ' ? ' : ' * ';
+      const displayName = varName.replace(/_/g, ' ');
+      optionsHtml += `<option value="${escapeHtml(varName)}">${escapeHtml(displayName)}${indicator}</option>`;
     }
+    optionsHtml += '</optgroup>';
+  }
 
-    const rows = values.map(([val, stats]) => {
-      const isBest = hasMultipleValues && val === bestValue[0];
-      const rowClass = isBest ? 'best-value-row' : '';
-      return `
-        <tr class="${rowClass}">
-          <td class="env-val-cell"><code>${escapeHtml(String(val))}</code></td>
-          <td class="${pnlClass(stats.avgPnl)}">${formatPnl(stats.avgPnl)}</td>
-          <td>${formatDuration(stats.avgDuration)}</td>
-          <td>${(stats.passRate * 100).toFixed(0)}%</td>
-          <td>${stats.count} run${stats.count !== 1 ? 's' : ''}</td>
-        </tr>
-      `;
-    }).join('');
+  select.innerHTML = optionsHtml;
 
-    return `
-      <div class="env-var-card ${hasMultipleValues ? 'multi-value' : 'single-value'}">
-        <div class="env-var-header">
-          <span class="env-var-name">${escapeHtml(displayName)}</span>
-          ${impactBadge}
+  // Build overview summary: count by impact level
+  const levels = { high: 0, medium: 0, low: 0, 'low-confidence': 0, single: 0 };
+  for (const info of Object.values(impactScores)) {
+    levels[info.level] = (levels[info.level] || 0) + 1;
+  }
+
+  summary.innerHTML = `
+    <span class="env-summary-item impact-high-bg" title="High impact variables">${levels.high} high</span>
+    <span class="env-summary-item impact-medium-bg" title="Medium impact variables">${levels.medium} medium</span>
+    <span class="env-summary-item impact-low-bg" title="Low impact variables">${levels.low} low</span>
+    ${levels['low-confidence'] > 0 ? `<span class="env-summary-item impact-lowconf-bg" title="Need more data">${levels['low-confidence']} need data</span>` : ''}
+    <span class="env-summary-item impact-single-bg" title="Only one value tested">${levels.single} single</span>
+    <span class="env-summary-total">${Object.keys(envImpact).length} variables tracked</span>
+  `;
+
+  // Auto-select the highest impact variable if there is one
+  const highImpactVar = Object.entries(impactScores)
+    .filter(([, info]) => info.level !== 'single')
+    .sort((a, b) => b[1].score - a[1].score)[0];
+
+  if (highImpactVar) {
+    select.value = highImpactVar[0];
+    renderSelectedEnvVar(highImpactVar[0]);
+  } else {
+    container.innerHTML = '<div class="empty-state">All variables have only one value tested. Vary your settings between smoke test runs to see impact analysis.</div>';
+  }
+}
+
+/** Called when user picks a variable from the dropdown */
+function onEnvVarSelected() {
+  const select = document.getElementById('env-var-select');
+  const varName = select.value;
+  if (!varName || !cachedEnvImpact) {
+    document.getElementById('env-impact-content').innerHTML = '';
+    return;
+  }
+  renderSelectedEnvVar(varName);
+}
+
+/** Render the detailed analysis view for a single env variable */
+function renderSelectedEnvVar(varName) {
+  const container = document.getElementById('env-impact-content');
+  const impact = cachedEnvImpact[varName];
+  if (!impact) {
+    container.innerHTML = '<div class="empty-state">No data for this variable.</div>';
+    return;
+  }
+
+  const values = Object.entries(impact.values).sort((a, b) => b[1].avgPnl - a[1].avgPnl);
+  const hasMultipleValues = values.length > 1;
+  const scoreInfo = computeImpactScore(impact);
+
+  const bestValue = values[0];
+  const worstValue = values[values.length - 1];
+  const displayName = varName.replace(/_/g, ' ');
+
+  // Impact badge
+  let impactBadgeClass, impactBadgeLabel;
+  if (!hasMultipleValues) {
+    impactBadgeClass = 'impact-single';
+    impactBadgeLabel = 'Single Value';
+  } else if (scoreInfo.level === 'low-confidence') {
+    impactBadgeClass = 'impact-low-confidence';
+    impactBadgeLabel = 'Low Confidence';
+  } else if (scoreInfo.level === 'high') {
+    impactBadgeClass = 'impact-high';
+    impactBadgeLabel = 'High Impact';
+  } else if (scoreInfo.level === 'medium') {
+    impactBadgeClass = 'impact-medium';
+    impactBadgeLabel = 'Medium Impact';
+  } else {
+    impactBadgeClass = 'impact-low';
+    impactBadgeLabel = 'Low Impact';
+  }
+
+  // Build analysis insights
+  let insightsHtml = '';
+  if (hasMultipleValues) {
+    const pnlSpreadFormatted = formatPnl(scoreInfo.pnlSpread);
+    const passRateSpreadPct = (scoreInfo.passRateSpread * 100).toFixed(1);
+
+    insightsHtml = `
+      <div class="env-insights">
+        <div class="env-insight-row">
+          <span class="insight-label">Best value</span>
+          <span class="insight-value positive"><code>${escapeHtml(String(bestValue[0]))}</code> (${formatPnl(bestValue[1].avgPnl)} avg, ${(bestValue[1].passRate * 100).toFixed(0)}% pass)</span>
         </div>
-        <table class="env-impact-table">
-          <thead>
-            <tr>
-              <th>Value</th>
-              <th>Avg P&L</th>
-              <th>Avg Duration</th>
-              <th>Pass Rate</th>
-              <th>Runs</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
+        <div class="env-insight-row">
+          <span class="insight-label">Worst value</span>
+          <span class="insight-value negative"><code>${escapeHtml(String(worstValue[0]))}</code> (${formatPnl(worstValue[1].avgPnl)} avg, ${(worstValue[1].passRate * 100).toFixed(0)}% pass)</span>
+        </div>
+        <div class="env-insight-row">
+          <span class="insight-label">P&L spread</span>
+          <span class="insight-value">${pnlSpreadFormatted}</span>
+        </div>
+        <div class="env-insight-row">
+          <span class="insight-label">Pass rate spread</span>
+          <span class="insight-value">${passRateSpreadPct}%</span>
+        </div>
+        <div class="env-insight-row">
+          <span class="insight-label">Confidence</span>
+          <span class="insight-value">${(scoreInfo.confidenceFactor * 100).toFixed(0)}% (min ${scoreInfo.minSamples} runs per value, ${scoreInfo.totalSamples} total)</span>
+        </div>
       </div>
     `;
+  }
+
+  const rows = values.map(([val, stats]) => {
+    const isBest = hasMultipleValues && val === bestValue[0];
+    const isWorst = hasMultipleValues && values.length > 1 && val === worstValue[0];
+    const rowClass = isBest ? 'best-value-row' : isWorst ? 'worst-value-row' : '';
+    return `
+      <tr class="${rowClass}">
+        <td class="env-val-cell"><code>${escapeHtml(String(val))}</code></td>
+        <td class="${pnlClass(stats.avgPnl)}">${formatPnl(stats.avgPnl)}</td>
+        <td>${formatDuration(stats.avgDuration)}</td>
+        <td>${(stats.passRate * 100).toFixed(0)}%</td>
+        <td>${stats.count} run${stats.count !== 1 ? 's' : ''}</td>
+      </tr>
+    `;
   }).join('');
+
+  container.innerHTML = `
+    <div class="env-var-card ${hasMultipleValues ? 'multi-value' : 'single-value'}">
+      <div class="env-var-header">
+        <span class="env-var-name">${escapeHtml(displayName)}</span>
+        <span class="impact-badge ${impactBadgeClass}">${impactBadgeLabel}</span>
+      </div>
+      ${insightsHtml}
+      <table class="env-impact-table">
+        <thead>
+          <tr>
+            <th>Value</th>
+            <th>Avg P&L</th>
+            <th>Avg Duration</th>
+            <th>Pass Rate</th>
+            <th>Runs</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 // ============================================================
