@@ -190,7 +190,99 @@
   letter-spacing: 0.03em;
 }
 
-/* Env Variable Impact */
+/* Env Variable Impact - Dropdown Controls */
+.env-impact-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.env-select-wrapper {
+  flex: 1;
+  min-width: 250px;
+  max-width: 450px;
+}
+
+.env-var-select {
+  width: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.env-var-select:focus {
+  border-color: var(--accent-blue);
+}
+
+.env-var-select optgroup {
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-style: normal;
+}
+
+.env-var-select option {
+  color: var(--text-primary);
+  padding: 0.3rem;
+}
+
+.env-impact-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.env-summary-item {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.impact-high-bg {
+  background: rgba(0, 200, 83, 0.2);
+  color: var(--accent-green);
+}
+
+.impact-medium-bg {
+  background: rgba(255, 193, 7, 0.2);
+  color: var(--accent-yellow);
+}
+
+.impact-low-bg {
+  background: rgba(139, 152, 165, 0.2);
+  color: var(--text-secondary);
+}
+
+.impact-lowconf-bg {
+  background: rgba(156, 39, 176, 0.2);
+  color: #ce93d8;
+}
+
+.impact-single-bg {
+  background: rgba(110, 118, 129, 0.15);
+  color: var(--text-muted);
+}
+
+.env-summary-total {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-left: 0.5rem;
+}
+
+/* Env Variable Impact - Card & Table */
 .env-var-card {
   margin-bottom: 1rem;
   padding: 1rem;
@@ -246,9 +338,63 @@
   color: var(--text-secondary);
 }
 
+.impact-low-confidence {
+  background: rgba(156, 39, 176, 0.2);
+  color: #ce93d8;
+}
+
 .impact-single {
   background: rgba(110, 118, 129, 0.2);
   color: var(--text-muted);
+}
+
+/* Insights panel for selected variable */
+.env-insights {
+  margin-bottom: 0.75rem;
+  padding: 0.75rem;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+}
+
+.env-insight-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.25rem 0;
+  font-size: 0.82rem;
+}
+
+.env-insight-row + .env-insight-row {
+  border-top: 1px solid var(--border-color);
+}
+
+.insight-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+}
+
+.insight-value {
+  font-family: monospace;
+  font-size: 0.82rem;
+}
+
+.insight-value.positive {
+  color: var(--accent-green);
+}
+
+.insight-value.negative {
+  color: var(--accent-red);
+}
+
+.insight-value code {
+  background: var(--bg-tertiary);
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  font-size: 0.85em;
 }
 
 .env-impact-table {
@@ -288,6 +434,20 @@
 .best-value-row td:first-child::before {
   content: '\2605';
   color: var(--accent-green);
+  margin-right: 0.3rem;
+}
+
+.worst-value-row {
+  background: rgba(255, 82, 82, 0.06);
+}
+
+.worst-value-row td:first-child {
+  position: relative;
+}
+
+.worst-value-row td:first-child::before {
+  content: '\2193';
+  color: var(--accent-red);
   margin-right: 0.3rem;
 }
 
