@@ -204,7 +204,7 @@ function renderRunSelector() {
       <label class="run-selector-item" data-id="${escapeHtml(id)}">
         <input type="checkbox" class="run-checkbox" value="${escapeHtml(id)}" ${checked}
                onchange="toggleRun('${escapeHtml(id)}', this.checked)">
-        <span class="run-result ${statusClass}">${r.overallResult}</span>
+        <span class="run-result ${statusClass}">${escapeHtml(r.overallResult)}</span>
         <span class="run-date">${formatDate(r.startedAt)}</span>
         <span class="run-pnl ${pnlClass(pnl)}">${formatPnlShort(pnl)} SOL</span>
         <span class="run-duration">${formatDuration(r.totalDurationMs)}</span>
