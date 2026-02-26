@@ -272,6 +272,7 @@ function hideAnalytics() {
   document.getElementById('charts-panel').style.display = 'none';
   document.getElementById('env-impact-panel').style.display = 'none';
   document.getElementById('detail-table-panel').style.display = 'none';
+  document.getElementById('copy-results-bar').style.display = 'none';
 }
 
 function renderAnalytics(data) {
@@ -288,6 +289,7 @@ function renderAnalytics(data) {
   document.getElementById('charts-panel').style.display = '';
   document.getElementById('env-impact-panel').style.display = '';
   document.getElementById('detail-table-panel').style.display = '';
+  document.getElementById('copy-results-bar').style.display = '';
 
   // Aggregate stats
   const avgPnlEl = document.getElementById('stat-avg-pnl');
@@ -978,8 +980,42 @@ function renderDetailTable(timeSeries) {
   const sorted = sortTimeSeries(timeSeries, currentSort.field, currentSort.dir);
   const tbody = document.getElementById('detail-table-body');
 
-  tbody.innerHTML = sorted.map(t => {
+  tbody.innerHTML = sorted.map((t, idx) => {
     const resultClass = t.result === 'PASS' ? 'positive' : 'negative';
+    const envSnapshot = t.envSnapshot || {};
+    const envKeys = Object.keys(envSnapshot);
+    const hasEnv = envKeys.length > 0;
+
+    // Build key env summary tags
+    let envSummary = '';
+    if (hasEnv) {
+      const tp = envSnapshot.TAKE_PROFIT;
+      const sl = envSnapshot.STOP_LOSS;
+      const qa = envSnapshot.QUOTE_AMOUNT;
+      const parts = [];
+      if (tp !== undefined) parts.push(`TP:${tp}%`);
+      if (sl !== undefined) parts.push(`SL:${sl}%`);
+      if (qa !== undefined) parts.push(`${qa} SOL`);
+      envSummary = parts.length > 0 ? `<span class="env-tag">${escapeHtml(parts.join(' | '))}</span> ` : '';
+    }
+
+    const toggleId = `env-detail-${t.startedAt}`;
+
+    // Build expandable env details
+    let envDetailsHtml = '';
+    if (hasEnv) {
+      const envRows = envKeys.map(k =>
+        `<div class="env-detail-row"><span class="env-detail-key">${escapeHtml(k)}</span><span class="env-detail-val">${escapeHtml(String(envSnapshot[k]))}</span></div>`
+      ).join('');
+      envDetailsHtml = `
+        <tr class="env-detail-tr" id="${toggleId}" style="display:none;">
+          <td colspan="9" class="env-detail-cell">
+            <div class="env-detail-grid">${envRows}</div>
+          </td>
+        </tr>
+      `;
+    }
+
     return `
       <tr>
         <td>${formatDate(t.startedAt)}</td>
@@ -990,9 +1026,20 @@ function renderDetailTable(timeSeries) {
         <td>${t.tokensPipelinePassed}</td>
         <td>${t.buyFailures}</td>
         <td>${escapeHtml(t.exitTrigger)}</td>
+        <td>${hasEnv ? `${envSummary}<button class="btn btn-secondary btn-tiny" onclick="toggleEnvDetail('${toggleId}', this)">Show All</button>` : '<span class="text-muted">--</span>'}</td>
       </tr>
+      ${envDetailsHtml}
     `;
   }).join('');
+}
+
+/** Toggle expanded env parameter details for a run */
+function toggleEnvDetail(id, btn) {
+  const row = document.getElementById(id);
+  if (!row) return;
+  const isHidden = row.style.display === 'none';
+  row.style.display = isHidden ? '' : 'none';
+  btn.textContent = isHidden ? 'Hide' : 'Show All';
 }
 
 function sortTimeSeries(data, field, dir) {
@@ -1031,6 +1078,137 @@ function sortTable(field) {
 
   if (analyticsData && analyticsData.timeSeries) {
     renderDetailTable(analyticsData.timeSeries);
+  }
+}
+
+// ============================================================
+// COPY RESULTS FOR AI ANALYSIS
+// ============================================================
+
+/**
+ * Build a plain-text summary of the selected runs and analytics,
+ * suitable for pasting into an AI session for analysis.
+ * Includes: aggregate analytics + per-run results with env parameters.
+ * Excludes: parameter impact analysis (env variable impact section).
+ */
+function buildCopyText() {
+  if (!analyticsData) return '';
+
+  const a = analyticsData.analytics;
+  const ts = analyticsData.timeSeries;
+  const { from, to } = getDateRange();
+
+  const lines = [];
+
+  // Header
+  lines.push('=== SMOKE TEST ANALYTICS REPORT ===');
+  lines.push(`Generated: ${new Date().toLocaleString()}`);
+  if (from || to) {
+    const fromStr = from ? new Date(from).toLocaleString() : 'beginning';
+    const toStr = to ? new Date(to).toLocaleString() : 'now';
+    lines.push(`Date Range: ${fromStr} — ${toStr}`);
+  }
+  lines.push(`Selected Runs: ${a.totalRuns}`);
+  lines.push('');
+
+  // Aggregate Analytics
+  lines.push('--- AGGREGATE ANALYTICS ---');
+  lines.push(`Total Runs: ${a.totalRuns}`);
+  lines.push(`Pass Count: ${a.passCount}`);
+  lines.push(`Fail Count: ${a.failCount}`);
+  lines.push(`Pass Rate: ${(a.passRate * 100).toFixed(1)}%`);
+  lines.push('');
+  lines.push(`Avg P&L: ${formatPnl(a.pnl.avg)}`);
+  lines.push(`Total P&L: ${formatPnl(a.pnl.total)}`);
+  lines.push(`Median P&L: ${formatPnl(a.pnl.median)}`);
+  lines.push(`P&L Std Dev: ${a.pnl.stdDev.toFixed(6)} SOL`);
+  lines.push(`Best P&L: ${formatPnl(a.pnl.max)}`);
+  lines.push(`Worst P&L: ${formatPnl(a.pnl.min)}`);
+  lines.push('');
+  lines.push(`Avg Duration: ${formatDuration(a.duration.avg)}`);
+  lines.push(`Min Duration: ${formatDuration(a.duration.min)}`);
+  lines.push(`Max Duration: ${formatDuration(a.duration.max)}`);
+  lines.push(`Median Duration: ${formatDuration(a.duration.median)}`);
+  lines.push('');
+  lines.push(`Avg Tokens Evaluated: ${a.tokensEvaluated.avg.toFixed(1)}`);
+  lines.push(`Avg Pipeline Passed: ${a.tokensPipelinePassed.avg.toFixed(1)}`);
+  lines.push(`Avg Buy Failures: ${a.buyFailures.avg.toFixed(1)}`);
+  lines.push(`Total Buy Failures: ${a.buyFailures.total}`);
+  lines.push('');
+
+  // Exit trigger distribution
+  lines.push('Exit Trigger Distribution:');
+  for (const [trigger, count] of Object.entries(a.exitTriggers)) {
+    const pct = a.totalRuns > 0 ? ((count / a.totalRuns) * 100).toFixed(1) : '0';
+    lines.push(`  ${trigger}: ${count} (${pct}%)`);
+  }
+  lines.push('');
+
+  // Per-run results with env parameters
+  lines.push('--- INDIVIDUAL TEST RUNS ---');
+  lines.push('');
+
+  // Sort by date ascending for chronological output
+  const sorted = [...ts].sort((a, b) => a.startedAt - b.startedAt);
+
+  sorted.forEach((t, idx) => {
+    lines.push(`Run #${idx + 1}: ${formatDate(t.startedAt)}`);
+    lines.push(`  Result: ${t.result}`);
+    lines.push(`  P&L: ${formatPnl(t.pnl)}`);
+    lines.push(`  Duration: ${formatDuration(t.duration)}`);
+    lines.push(`  Tokens Evaluated: ${t.tokensEvaluated}`);
+    lines.push(`  Pipeline Passed: ${t.tokensPipelinePassed}`);
+    lines.push(`  Buy Failures: ${t.buyFailures}`);
+    lines.push(`  Exit Trigger: ${t.exitTrigger}`);
+
+    // Env parameters for this run
+    const env = t.envSnapshot;
+    if (env && Object.keys(env).length > 0) {
+      lines.push('  Env Parameters:');
+      for (const [key, val] of Object.entries(env)) {
+        lines.push(`    ${key}=${val}`);
+      }
+    } else {
+      lines.push('  Env Parameters: (none recorded)');
+    }
+    lines.push('');
+  });
+
+  lines.push('=== END OF REPORT ===');
+
+  return lines.join('\n');
+}
+
+/** Copy the analytics report to clipboard */
+async function copyResults() {
+  const text = buildCopyText();
+  if (!text) return;
+
+  const btnText = document.getElementById('copy-btn-text');
+  try {
+    await navigator.clipboard.writeText(text);
+    btnText.textContent = 'Copied!';
+    setTimeout(() => {
+      btnText.textContent = 'Copy Results for AI Analysis';
+    }, 2000);
+  } catch (err) {
+    // Fallback for older browsers / insecure contexts
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand('copy');
+      btnText.textContent = 'Copied!';
+    } catch {
+      btnText.textContent = 'Copy failed';
+    }
+    document.body.removeChild(textarea);
+    setTimeout(() => {
+      btnText.textContent = 'Copy Results for AI Analysis';
+    }, 2000);
   }
 }
 

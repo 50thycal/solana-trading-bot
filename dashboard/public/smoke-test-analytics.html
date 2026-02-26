@@ -58,6 +58,14 @@
       </div>
     </section>
 
+    <!-- Copy Results Button (shown when analytics are loaded) -->
+    <section class="copy-results-bar" id="copy-results-bar" style="display:none;">
+      <button class="btn btn-primary btn-small copy-results-btn" onclick="copyResults()">
+        <span id="copy-btn-text">Copy Results for AI Analysis</span>
+      </button>
+      <span class="copy-hint">Copies test results + analytics averages + env parameters to clipboard</span>
+    </section>
+
     <!-- Aggregate Stats Cards -->
     <section class="overview-cards" id="agg-stats" style="display:none;">
       <div class="card card-accent">
@@ -196,6 +204,7 @@
               <th>Pipeline Passed</th>
               <th>Buy Failures</th>
               <th>Exit Trigger</th>
+              <th>Env Params</th>
             </tr>
           </thead>
           <tbody id="detail-table-body"></tbody>
