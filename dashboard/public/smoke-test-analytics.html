@@ -34,6 +34,25 @@
           <button class="btn btn-primary btn-small" onclick="applySelection()">Analyze Selected</button>
         </div>
       </div>
+      <!-- Date Range Filter -->
+      <div class="date-filter-bar">
+        <div class="date-filter-group">
+          <label class="date-filter-label" for="date-from">From</label>
+          <input type="datetime-local" id="date-from" class="date-input" onchange="applyDateFilter()">
+        </div>
+        <div class="date-filter-group">
+          <label class="date-filter-label" for="date-to">To</label>
+          <input type="datetime-local" id="date-to" class="date-input" onchange="applyDateFilter()">
+        </div>
+        <div class="date-filter-presets">
+          <button class="btn btn-secondary btn-small" onclick="datePreset('1h')">Last 1h</button>
+          <button class="btn btn-secondary btn-small" onclick="datePreset('24h')">Last 24h</button>
+          <button class="btn btn-secondary btn-small" onclick="datePreset('7d')">Last 7d</button>
+          <button class="btn btn-secondary btn-small" onclick="datePreset('30d')">Last 30d</button>
+          <button class="btn btn-secondary btn-small" onclick="datePreset('all')">All Time</button>
+        </div>
+        <span class="date-filter-count" id="date-filter-count"></span>
+      </div>
       <div id="run-selector-list" class="run-selector-list">
         <div class="empty-state">Loading smoke test runs...</div>
       </div>

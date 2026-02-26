@@ -84,23 +84,103 @@ async function loadReports() {
 
   allReports = data.reports.sort((a, b) => b.startedAt - a.startedAt);
 
+  // Initialize date inputs from report range
+  if (allReports.length > 0) {
+    const oldest = allReports[allReports.length - 1].startedAt;
+    const newest = allReports[0].startedAt;
+    document.getElementById('date-from').value = toLocalDatetimeStr(oldest);
+    document.getElementById('date-to').value = toLocalDatetimeStr(newest + 60000); // +1 min buffer
+  }
+
   // Select all by default
   selectedIds = new Set(allReports.map(r => String(r.startedAt)));
 
   renderRunSelector();
+  updateDateFilterCount();
 
   // Auto-analyze on load
   await applySelection();
 }
 
+// ============================================================
+// DATE FILTERING
+// ============================================================
+
+/** Convert a timestamp to a local datetime-local input value */
+function toLocalDatetimeStr(ts) {
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Get the current date range from the inputs (as timestamps, or null) */
+function getDateRange() {
+  const fromEl = document.getElementById('date-from');
+  const toEl = document.getElementById('date-to');
+  const from = fromEl.value ? new Date(fromEl.value).getTime() : null;
+  const to = toEl.value ? new Date(toEl.value).getTime() : null;
+  return { from, to };
+}
+
+/** Get reports filtered by the current date range */
+function getDateFilteredReports() {
+  const { from, to } = getDateRange();
+  return allReports.filter(r => {
+    if (from && r.startedAt < from) return false;
+    if (to && r.startedAt > to) return false;
+    return true;
+  });
+}
+
+/** Apply the date filter: select only runs within the range, re-render, and auto-analyze */
+function applyDateFilter() {
+  const filtered = getDateFilteredReports();
+  selectedIds = new Set(filtered.map(r => String(r.startedAt)));
+  renderRunSelector();
+  updateDateFilterCount();
+  applySelection();
+}
+
+/** Quick preset buttons for common date ranges */
+function datePreset(preset) {
+  const now = Date.now();
+  const fromEl = document.getElementById('date-from');
+  const toEl = document.getElementById('date-to');
+
+  toEl.value = toLocalDatetimeStr(now);
+
+  if (preset === 'all') {
+    if (allReports.length > 0) {
+      fromEl.value = toLocalDatetimeStr(allReports[allReports.length - 1].startedAt);
+    } else {
+      fromEl.value = '';
+    }
+  } else {
+    const durations = { '1h': 3600000, '24h': 86400000, '7d': 604800000, '30d': 2592000000 };
+    const ms = durations[preset] || 86400000;
+    fromEl.value = toLocalDatetimeStr(now - ms);
+  }
+
+  applyDateFilter();
+}
+
+function updateDateFilterCount() {
+  const filtered = getDateFilteredReports();
+  const countEl = document.getElementById('date-filter-count');
+  if (countEl) {
+    countEl.textContent = `${filtered.length} of ${allReports.length} runs in range`;
+  }
+}
+
 function renderRunSelector() {
   const list = document.getElementById('run-selector-list');
-  if (allReports.length === 0) {
-    list.innerHTML = '<div class="empty-state">No smoke test reports found</div>';
+  const filtered = getDateFilteredReports();
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="empty-state">No smoke test runs in this date range</div>';
     return;
   }
 
-  list.innerHTML = allReports.map(r => {
+  list.innerHTML = filtered.map(r => {
     const id = String(r.startedAt);
     const checked = selectedIds.has(id) ? 'checked' : '';
     const pnl = -r.netCostSol;
@@ -144,7 +224,8 @@ function toggleRun(id, checked) {
 }
 
 function selectAll() {
-  selectedIds = new Set(allReports.map(r => String(r.startedAt)));
+  const filtered = getDateFilteredReports();
+  selectedIds = new Set(filtered.map(r => String(r.startedAt)));
   document.querySelectorAll('.run-checkbox').forEach(cb => cb.checked = true);
 }
 
@@ -154,8 +235,9 @@ function selectNone() {
 }
 
 function selectPassing() {
+  const filtered = getDateFilteredReports();
   selectedIds = new Set(
-    allReports.filter(r => r.overallResult === 'PASS').map(r => String(r.startedAt))
+    filtered.filter(r => r.overallResult === 'PASS').map(r => String(r.startedAt))
   );
   document.querySelectorAll('.run-checkbox').forEach(cb => {
     cb.checked = selectedIds.has(cb.value);
