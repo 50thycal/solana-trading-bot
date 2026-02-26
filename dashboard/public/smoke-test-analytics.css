@@ -498,6 +498,86 @@
   color: var(--accent-red);
 }
 
+/* Copy Results Bar */
+.copy-results-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.copy-results-btn {
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.copy-hint {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+/* Tiny button variant for inline use */
+.btn-tiny {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  border-radius: 3px;
+}
+
+/* Env detail expandable row in detail table */
+.env-detail-tr td {
+  padding: 0 !important;
+  background: var(--bg-tertiary);
+}
+
+.env-detail-cell {
+  padding: 0.5rem 1rem !important;
+}
+
+.env-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.2rem 1.5rem;
+  font-size: 0.78rem;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.env-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+}
+
+.env-detail-row:hover {
+  background: var(--bg-secondary);
+}
+
+.env-detail-key {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: monospace;
+  letter-spacing: 0.02em;
+}
+
+.env-detail-val {
+  color: var(--text-primary);
+  font-family: monospace;
+  font-size: 0.78rem;
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
 /* Responsive adjustments */
 @media (max-width: 900px) {
   .chart-container-half {
