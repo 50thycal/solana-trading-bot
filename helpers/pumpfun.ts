@@ -454,13 +454,19 @@ function buildBuyExactSolInInstruction(
   // BuyExactSolIn instruction discriminator (first 8 bytes of sha256("global:buy_exact_sol_in"))
   const discriminator = Buffer.from([56, 252, 116, 8, 158, 223, 205, 95]);
 
-  // Instruction data: discriminator + solAmount (u64) + minTokensOut (u64)
-  // solAmount    = exact lamports to spend
-  // minTokensOut = minimum tokens to accept (slippage floor)
-  const data = Buffer.alloc(24);
+  // Instruction data: discriminator + solAmount (u64) + minTokensOut (u64) + trackVolume (OptionBool)
+  // spendable_sol_in = exact lamports to spend
+  // min_tokens_out   = minimum tokens to accept (slippage floor)
+  // track_volume     = Option<bool> Some(true) → update volume accumulators for fee-tier discounts
+  //                    Borsh-encoded as [0x01 (Some), 0x01 (true)] = 2 bytes
+  //                    Omitting this field causes the program to default to a broken path at buy.rs:181
+  const data = Buffer.alloc(26);
   discriminator.copy(data, 0);
   solAmount.toArrayLike(Buffer, 'le', 8).copy(data, 8);
   minTokensOut.toArrayLike(Buffer, 'le', 8).copy(data, 16);
+  // track_volume = Some(true): 0x01 = Some discriminant, 0x01 = true
+  data[24] = 0x01;
+  data[25] = 0x01;
 
   const keys = [
     // 0: global
