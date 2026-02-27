@@ -14,6 +14,9 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
+  getMint,
+  getTransferFeeConfig,
+  calculateEpochFee,
 } from '@solana/spl-token';
 import BN from 'bn.js';
 import { logger } from './logger';
@@ -355,25 +358,32 @@ export async function getBondingCurveState(
 /**
  * Calculate tokens out for a given SOL input (buy)
  *
- * Uses the constant product formula:
- * tokens_out = virtual_token_reserves - (virtual_token_reserves * virtual_sol_reserves) / (virtual_sol_reserves + sol_in)
+ * Uses the on-chain pump.fun formula which subtracts 1 from net_sol before
+ * applying the constant-product AMM calculation:
+ *
+ *   effective_sol = net_sol - 1
+ *   tokens_out = floor(effective_sol * virt_token_reserves
+ *                      / (virt_sol_reserves + effective_sol))
+ *
+ * The -1 adjustment matches the on-chain Rust code.  Without it, we
+ * overestimate tokens_out by a small amount, which can cause minTokensOut
+ * to exceed the program's computed output → BuySlippageBelowMinTokensOut.
  *
  * @param state - Current bonding curve state
- * @param solIn - Amount of SOL to spend (in lamports)
+ * @param solIn - Net SOL after fee deduction (in lamports)
  * @returns Expected tokens out (in smallest units)
  */
 export function calculateBuyTokensOut(state: BondingCurveState, solIn: BN): BN {
-  // K = virtualTokenReserves * virtualSolReserves
-  const k = state.virtualTokenReserves.mul(state.virtualSolReserves);
+  // On-chain uses (net_sol - 1) before the AMM formula
+  const effectiveSol = solIn.sub(new BN(1));
+  if (effectiveSol.isZero() || effectiveSol.isNeg()) {
+    return new BN(0);
+  }
 
-  // new_sol_reserves = virtualSolReserves + solIn
-  const newSolReserves = state.virtualSolReserves.add(solIn);
-
-  // new_token_reserves = K / new_sol_reserves
-  const newTokenReserves = k.div(newSolReserves);
-
-  // tokens_out = virtualTokenReserves - new_token_reserves
-  const tokensOut = state.virtualTokenReserves.sub(newTokenReserves);
+  // tokens_out = floor(effective_sol * vT / (vS + effective_sol))
+  const tokensOut = effectiveSol
+    .mul(state.virtualTokenReserves)
+    .div(state.virtualSolReserves.add(effectiveSol));
 
   return tokensOut;
 }
@@ -455,6 +465,18 @@ export function calculateMarketCapSol(state: BondingCurveState): number {
  * 14: fee_config (NOT mutable)
  * 15: fee_program (NOT mutable)
  */
+/**
+ * Derive the bonding curve V2 PDA for Token-2022 mints.
+ * Seeds: ["bonding-curve-v2", mint]
+ */
+function deriveBondingCurveV2(mint: PublicKey): PublicKey {
+  const [bondingCurveV2] = PublicKey.findProgramAddressSync(
+    [Buffer.from('bonding-curve-v2'), mint.toBuffer()],
+    PUMP_FUN_PROGRAM_ID
+  );
+  return bondingCurveV2;
+}
+
 function buildBuyExactSolInInstruction(
   mint: PublicKey,
   bondingCurve: PublicKey,
@@ -474,19 +496,18 @@ function buildBuyExactSolInInstruction(
   // Verified: echo -n "global:buy_exact_sol_in" | sha256sum
   const discriminator = Buffer.from([56, 252, 116, 8, 158, 223, 205, 95]);
 
-  // Instruction data: discriminator + solAmount (u64) + minTokensOut (u64) + trackVolume (OptionBool)
-  // spendable_sol_in = exact lamports to spend
-  // min_tokens_out   = minimum tokens to accept (slippage floor)
-  // track_volume     = Option<bool> Some(true) → update volume accumulators for fee-tier discounts
-  //                    Borsh-encoded as [0x01 (Some), 0x01 (true)] = 2 bytes
-  //                    Omitting this field causes the program to default to a broken path at buy.rs:181
-  const data = Buffer.alloc(26);
+  // Instruction data: discriminator (8) + spendable_sol_in (8) + min_tokens_out (8) = 24 bytes.
+  //
+  // The IDL defines a third arg track_volume (OptionBool), but the working
+  // reference SDK (Erbsensuppee/pumpfun-pumpswap-sdk) uses 24-byte "compat"
+  // encoding that OMITS track_volume entirely.  When track_volume is included
+  // (26 bytes with [0x01, 0x01]), the program enters a volume-tracking code
+  // path that triggers an arithmetic overflow at lib.rs:463 on most tokens.
+  // Omitting it lets the program use its default path which works correctly.
+  const data = Buffer.alloc(24);
   discriminator.copy(data, 0);
   solAmount.toArrayLike(Buffer, 'le', 8).copy(data, 8);
   minTokensOut.toArrayLike(Buffer, 'le', 8).copy(data, 16);
-  // track_volume = Some(true): 0x01 = Some discriminant, 0x01 = true
-  data[24] = 0x01;
-  data[25] = 0x01;
 
   const keys = [
     // 0: global
@@ -513,7 +534,7 @@ function buildBuyExactSolInInstruction(
     { pubkey: PUMP_FUN_EVENT_AUTHORITY, isSigner: false, isWritable: false },
     // 11: program
     { pubkey: PUMP_FUN_PROGRAM_ID, isSigner: false, isWritable: false },
-    // 12: global_volume_accumulator (NOT mutable — read-only per current pump.fun IDL)
+    // 12: global_volume_accumulator (NOT mutable — read-only per IDL)
     { pubkey: globalVolumeAccumulator, isSigner: false, isWritable: false },
     // 13: user_volume_accumulator (mutable)
     { pubkey: userVolumeAccumulator, isSigner: false, isWritable: true },
@@ -521,6 +542,9 @@ function buildBuyExactSolInInstruction(
     { pubkey: feeConfig, isSigner: false, isWritable: false },
     // 15: fee_program (NOT mutable)
     { pubkey: PUMP_FUN_FEE_PROGRAM_ID, isSigner: false, isWritable: false },
+    // 16: bonding_curve_v2 (optional remaining account, read-only)
+    // The reference SDK includes this for all tokens when V2_ACCOUNT_MODE is "on".
+    { pubkey: deriveBondingCurveV2(mint), isSigner: false, isWritable: false },
   ];
 
   return new TransactionInstruction({
@@ -658,53 +682,88 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     // Calculate expected tokens out
     const amountLamports = new BN(Math.floor(amountSol * LAMPORTS_PER_SOL));
 
-    // ─── Fee-adjusted quote ─────────────────────────────────────────────
+    // ─── Fee-adjusted quote (mirrors on-chain formula exactly) ──────────
     // The BuyExactSolIn program deducts protocol + creator fees from
     // spendable_sol_in BEFORE computing the swap.  On-chain formula:
     //
     //   net_sol = floor(spendable_sol_in * 10_000 / (10_000 + fee_bps))
+    //   verify: net_sol + ceil(protocol_fee) + ceil(creator_fee) <= spendable
+    //   tokens_out = floor((net_sol - 1) * vT / (vS + net_sol - 1))
     //
-    // We must mirror this to avoid setting minTokensOut higher than the
-    // on-chain tokens_out, which triggers error 6024 (Overflow).
-    const netSolForQuote = amountLamports
+    const PROTOCOL_FEE_BPS = 95;
+    const CREATOR_FEE_BPS = 30;
+    let netSolForQuote = amountLamports
       .mul(new BN(10000))
       .div(new BN(10000 + PUMP_FUN_TOTAL_FEE_BPS));
 
+    // On-chain fee verification: net_sol + ceil(protocol_fee) + ceil(creator_fee) <= spendable
+    // If rounding causes overshoot, adjust netSol down.
+    if (!netSolForQuote.isZero()) {
+      const ceilProtocolFee = netSolForQuote.mul(new BN(PROTOCOL_FEE_BPS)).add(new BN(9999)).div(new BN(10000));
+      const ceilCreatorFee = netSolForQuote.mul(new BN(CREATOR_FEE_BPS)).add(new BN(9999)).div(new BN(10000));
+      const totalWithFees = netSolForQuote.add(ceilProtocolFee).add(ceilCreatorFee);
+      if (totalWithFees.gt(amountLamports)) {
+        netSolForQuote = netSolForQuote.sub(totalWithFees.sub(amountLamports));
+      }
+    }
+
+    // calculateBuyTokensOut now uses the on-chain formula with (netSol - 1)
     const expectedTokens = calculateBuyTokensOut(state, netSolForQuote);
 
+    // Cap by real token reserves (can't buy more than what the curve holds)
+    const realTokenReservesCap = state.realTokenReserves;
+    const cappedExpectedTokens = expectedTokens.gt(realTokenReservesCap) ? realTokenReservesCap : expectedTokens;
+
     // Guard: reject if bonding curve returns zero or negative tokens
-    if (expectedTokens.isZero() || expectedTokens.isNeg()) {
+    if (cappedExpectedTokens.isZero() || cappedExpectedTokens.isNeg()) {
       return {
         success: false,
-        error: `Bonding curve returned ${expectedTokens.toString()} tokens for ${amountSol} SOL (netSol=${netSolForQuote.toString()}) — curve may be empty or corrupted`,
+        error: `Bonding curve returned ${cappedExpectedTokens.toString()} tokens for ${amountSol} SOL (netSol=${netSolForQuote.toString()}) — curve may be empty or corrupted`,
         actualVerified: false,
       };
     }
 
-    // Apply slippage DOWNWARD on expected tokens - willing to receive FEWER tokens
-    // due to price movement between state-read and tx execution.
-    //
-    // We use BuyExactSolIn semantics:
-    //   - solAmount:    exact lamports to spend (no variability)
-    //   - minTokensOut: floor of acceptable tokens (expectedTokens × (1 - slippage))
-    //
-    // expectedTokens is already fee-adjusted (based on net_sol, not gross), so
-    // the slippage tolerance only needs to cover price movement and any on-chain
-    // rent deductions for creator_vault / user_volume_accumulator accounts.
-    //
-    // BN-native integer arithmetic avoids float64 precision loss for large token
-    // amounts (up to ~10^15 raw units for pump.fun tokens with 6 decimals).
-    const minTokensOut = expectedTokens
+    // ─── Token-2022 transfer fee deduction ──────────────────────────────
+    // For Token-2022 mints, the on-chain TransferChecked withholds a fee
+    // from the transferred tokens.  We must subtract this from our expected
+    // tokens BEFORE applying slippage, otherwise minTokensOut is set higher
+    // than the user will actually receive.
+    let minTokensOutBase = cappedExpectedTokens;
+    if (isToken2022) {
+      try {
+        const mintInfo = await getMint(connection, mint, 'confirmed', tokenProgramId);
+        const transferFeeConfig = getTransferFeeConfig(mintInfo);
+        if (transferFeeConfig) {
+          const epochInfo = await connection.getEpochInfo('confirmed');
+          const feeWithheld = new BN(
+            calculateEpochFee(transferFeeConfig, BigInt(epochInfo.epoch), BigInt(cappedExpectedTokens.toString())).toString()
+          );
+          minTokensOutBase = cappedExpectedTokens.sub(feeWithheld);
+          logger.debug(
+            {
+              transferFeeWithheld: feeWithheld.toString(),
+              tokensAfterFee: minTokensOutBase.toString(),
+              epoch: epochInfo.epoch,
+            },
+            'Token-2022 transfer fee applied to expected tokens'
+          );
+        }
+      } catch (err) {
+        logger.debug({ error: String(err) }, 'Failed to read Token-2022 transfer fee config, proceeding without adjustment');
+      }
+    }
+
+    // Apply slippage DOWNWARD on expected tokens
+    const minTokensOut = minTokensOutBase
       .mul(new BN(10000 - slippageBps))
       .div(new BN(10000));
 
     // Guard: a zero minTokensOut means the program will accept 0 tokens — a total
-    // SOL loss with no token credit.  This can only happen if slippageBps >= 10000
-    // (100 %+) which should be blocked by config validation, but we defend in depth.
+    // SOL loss with no token credit.
     if (minTokensOut.isZero()) {
       return {
         success: false,
-        error: `minTokensOut collapsed to zero (slippageBps=${slippageBps}, expectedTokens=${expectedTokens.toString()}). Buy rejected to prevent zero-token settlement.`,
+        error: `minTokensOut collapsed to zero (slippageBps=${slippageBps}, expectedTokens=${cappedExpectedTokens.toString()}). Buy rejected to prevent zero-token settlement.`,
         actualVerified: false,
       };
     }
@@ -732,7 +791,8 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
         solAmountLamports: amountLamports.toString(),
         netSolForQuote: netSolForQuote.toString(),
         feeBps: PUMP_FUN_TOTAL_FEE_BPS,
-        expectedTokens: expectedTokens.toString(),
+        expectedTokens: cappedExpectedTokens.toString(),
+        minTokensOutBase: minTokensOutBase.toString(),
         minTokensOut: minTokensOut.toString(),
         slippageBps,
         isToken2022,
@@ -742,8 +802,9 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
         globalVolumeAccumulator: globalVolumeAccumulator.toString(),
         userVolumeAccumulator: userVolumeAccumulator.toString(),
         feeConfig: feeConfig.toString(),
+        instructionDataBytes: 24,
       },
-      'Preparing pump.fun buy (BuyExactSolIn)'
+      'Preparing pump.fun buy (BuyExactSolIn, 24-byte compat encoding)'
     );
 
     // Build transaction
@@ -799,7 +860,7 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
         totalExpectedOutflowSol: (outflow.totalExpectedOutflow / LAMPORTS_PER_SOL).toFixed(6),
         walletBalanceLamports: preSolBalanceForGuard,
         walletBalanceSol: (preSolBalanceForGuard / LAMPORTS_PER_SOL).toFixed(6),
-        expectedTokens: expectedTokens.toString(),
+        expectedTokens: cappedExpectedTokens.toString(),
         minTokensOut: minTokensOut.toString(),
         ataExists,
       },
@@ -887,13 +948,13 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       signature,
       wallet: wallet.publicKey,
       mint,
-      expectedTokens: expectedTokens.toNumber(),
+      expectedTokens: cappedExpectedTokens.toNumber(),
       tokenProgramId,
       preBalance: preTokenBalance,
     });
 
     // Use actual tokens if verification succeeded, otherwise fall back to expected
-    const actualTokensReceived = verification.actualTokensReceived ?? expectedTokens.toNumber();
+    const actualTokensReceived = verification.actualTokensReceived ?? cappedExpectedTokens.toNumber();
 
     // Calculate actual SOL spent by comparing pre/post balance
     let actualSolSpent: number | undefined;
@@ -929,7 +990,7 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
         signature,
         amountSol,
         actualSolSpent: actualSolSpent?.toFixed(6),
-        expectedTokens: expectedTokens.toString(),
+        expectedTokens: cappedExpectedTokens.toString(),
         actualTokens: actualTokensReceived,
         verified: verification.success,
         verificationMethod: verification.verificationMethod,
@@ -942,7 +1003,7 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       success: true,
       signature,
       tokensReceived: actualTokensReceived,
-      expectedTokens: expectedTokens.toNumber(),
+      expectedTokens: cappedExpectedTokens.toNumber(),
       actualSolSpent,
       instructionAmountLamports: amountLamports.toNumber(),
       actualVerified: verification.success,
