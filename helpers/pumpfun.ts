@@ -67,6 +67,24 @@ const WSOL_MINT = new PublicKey('So11111111111111111111111111111111111111112');
 const ATA_RENT_LAMPORTS = 2039280;
 
 /**
+ * Total pump.fun fee in basis points (protocol 95 + creator 30 = 125 bps).
+ *
+ * The BuyExactSolIn instruction deducts fees from `spendable_sol_in` before
+ * computing the swap.  The on-chain quote formula is:
+ *
+ *   net_sol = floor(spendable_sol_in * 10_000 / (10_000 + total_fee_bps))
+ *   tokens_out = floor((net_sol - 1) * virt_token_reserves
+ *                      / (virt_sol_reserves + net_sol - 1))
+ *
+ * The client must use the SAME net_sol for its expected-tokens estimate,
+ * otherwise minTokensOut will be set too high and the program returns
+ * error 6024 (Overflow) when the on-chain tokens_out < minTokensOut.
+ *
+ * Source: pump-fun/pump-public-docs  IDL docs for buy_exact_sol_in.
+ */
+const PUMP_FUN_TOTAL_FEE_BPS = 125;
+
+/**
  * Safety margin added to fee estimates (configurable via env, default 10000 lamports = 0.00001 SOL).
  */
 const FEE_SAFETY_MARGIN_LAMPORTS = Number(process.env.FEE_SAFETY_MARGIN_LAMPORTS || 10000);
@@ -639,13 +657,26 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
 
     // Calculate expected tokens out
     const amountLamports = new BN(Math.floor(amountSol * LAMPORTS_PER_SOL));
-    const expectedTokens = calculateBuyTokensOut(state, amountLamports);
+
+    // ─── Fee-adjusted quote ─────────────────────────────────────────────
+    // The BuyExactSolIn program deducts protocol + creator fees from
+    // spendable_sol_in BEFORE computing the swap.  On-chain formula:
+    //
+    //   net_sol = floor(spendable_sol_in * 10_000 / (10_000 + fee_bps))
+    //
+    // We must mirror this to avoid setting minTokensOut higher than the
+    // on-chain tokens_out, which triggers error 6024 (Overflow).
+    const netSolForQuote = amountLamports
+      .mul(new BN(10000))
+      .div(new BN(10000 + PUMP_FUN_TOTAL_FEE_BPS));
+
+    const expectedTokens = calculateBuyTokensOut(state, netSolForQuote);
 
     // Guard: reject if bonding curve returns zero or negative tokens
     if (expectedTokens.isZero() || expectedTokens.isNeg()) {
       return {
         success: false,
-        error: `Bonding curve returned ${expectedTokens.toString()} tokens for ${amountSol} SOL — curve may be empty or corrupted`,
+        error: `Bonding curve returned ${expectedTokens.toString()} tokens for ${amountSol} SOL (netSol=${netSolForQuote.toString()}) — curve may be empty or corrupted`,
         actualVerified: false,
       };
     }
@@ -657,10 +688,9 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     //   - solAmount:    exact lamports to spend (no variability)
     //   - minTokensOut: floor of acceptable tokens (expectedTokens × (1 - slippage))
     //
-    // This is more robust than the old Buy (exact-tokens-out) instruction which
-    // required the caller-supplied tokenAmount to still be below virtualTokenReserves
-    // at execution time.  Competing bots buying first can easily push the price past
-    // the old maxSolCost ceiling and trigger pump.fun error 6024 (Overflow).
+    // expectedTokens is already fee-adjusted (based on net_sol, not gross), so
+    // the slippage tolerance only needs to cover price movement and any on-chain
+    // rent deductions for creator_vault / user_volume_accumulator accounts.
     //
     // BN-native integer arithmetic avoids float64 precision loss for large token
     // amounts (up to ~10^15 raw units for pump.fun tokens with 6 decimals).
@@ -700,6 +730,8 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
         mint: mint.toString(),
         amountSol,
         solAmountLamports: amountLamports.toString(),
+        netSolForQuote: netSolForQuote.toString(),
+        feeBps: PUMP_FUN_TOTAL_FEE_BPS,
         expectedTokens: expectedTokens.toString(),
         minTokensOut: minTokensOut.toString(),
         slippageBps,
