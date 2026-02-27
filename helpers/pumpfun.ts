@@ -432,7 +432,7 @@ export function calculateMarketCapSol(state: BondingCurveState): number {
  * 9: creator_vault (mutable)
  * 10: event_authority
  * 11: program
- * 12: global_volume_accumulator (NOT mutable)
+ * 12: global_volume_accumulator (mutable)
  * 13: user_volume_accumulator (mutable)
  * 14: fee_config (NOT mutable)
  * 15: fee_program (NOT mutable)
@@ -495,8 +495,8 @@ function buildBuyExactSolInInstruction(
     { pubkey: PUMP_FUN_EVENT_AUTHORITY, isSigner: false, isWritable: false },
     // 11: program
     { pubkey: PUMP_FUN_PROGRAM_ID, isSigner: false, isWritable: false },
-    // 12: global_volume_accumulator (NOT mutable)
-    { pubkey: globalVolumeAccumulator, isSigner: false, isWritable: false },
+    // 12: global_volume_accumulator (mutable — pump.fun writes cumulative volume after each trade)
+    { pubkey: globalVolumeAccumulator, isSigner: false, isWritable: true },
     // 13: user_volume_accumulator (mutable)
     { pubkey: userVolumeAccumulator, isSigner: false, isWritable: true },
     // 14: fee_config (NOT mutable)
