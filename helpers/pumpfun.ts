@@ -411,9 +411,15 @@ export function calculateMarketCapSol(state: BondingCurveState): number {
 }
 
 /**
- * Build the buy instruction for pump.fun
+ * Build the buy instruction for pump.fun using BuyExactSolIn semantics.
  *
- * pump.fun Buy instruction accounts (16 total):
+ * BuyExactSolIn spends an exact amount of SOL and accepts at least minTokensOut
+ * tokens.  This is more robust than the older Buy (exact-tokens-out) instruction
+ * because the program computes the token output from the current on-chain
+ * bonding-curve state rather than requiring a caller-specified token count that
+ * may exceed available reserves after competing buys.
+ *
+ * pump.fun BuyExactSolIn instruction accounts (16 total):
  * 0: global
  * 1: fee_recipient
  * 2: mint
@@ -431,30 +437,30 @@ export function calculateMarketCapSol(state: BondingCurveState): number {
  * 14: fee_config (NOT mutable)
  * 15: fee_program (NOT mutable)
  */
-function buildBuyInstruction(
+function buildBuyExactSolInInstruction(
   mint: PublicKey,
   bondingCurve: PublicKey,
   associatedBondingCurve: PublicKey,
   userTokenAccount: PublicKey,
   user: PublicKey,
-  tokenAmount: BN,
-  maxSolCost: BN,
+  solAmount: BN,
+  minTokensOut: BN,
   tokenProgramId: PublicKey,
   creatorVault: PublicKey,
   globalVolumeAccumulator: PublicKey,
   userVolumeAccumulator: PublicKey,
   feeConfig: PublicKey,
 ): TransactionInstruction {
-  // Buy instruction discriminator (first 8 bytes of sha256("global:buy"))
-  const discriminator = Buffer.from([102, 6, 61, 18, 1, 218, 235, 234]);
+  // BuyExactSolIn instruction discriminator (first 8 bytes of sha256("global:buy_exact_sol_in"))
+  const discriminator = Buffer.from([56, 252, 116, 8, 158, 223, 205, 95]);
 
-  // Instruction data: discriminator + tokenAmount (u64) + maxSolCost (u64)
-  // tokenAmount = number of tokens to buy
-  // maxSolCost = maximum SOL (lamports) willing to spend
+  // Instruction data: discriminator + solAmount (u64) + minTokensOut (u64)
+  // solAmount    = exact lamports to spend
+  // minTokensOut = minimum tokens to accept (slippage floor)
   const data = Buffer.alloc(24);
   discriminator.copy(data, 0);
-  tokenAmount.toArrayLike(Buffer, 'le', 8).copy(data, 8);
-  maxSolCost.toArrayLike(Buffer, 'le', 8).copy(data, 16);
+  solAmount.toArrayLike(Buffer, 'le', 8).copy(data, 8);
+  minTokensOut.toArrayLike(Buffer, 'le', 8).copy(data, 16);
 
   const keys = [
     // 0: global
@@ -634,12 +640,19 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       };
     }
 
-    // Apply slippage UPWARD on SOL cost - willing to pay MORE due to price movement
-    // The pump.fun program takes (tokenAmount, maxSolCost):
-    //   - tokenAmount: how many tokens we want to buy
-    //   - maxSolCost: max SOL (lamports) we'll pay (budget + slippage buffer)
-    const slippageMultiplier = (10000 + slippageBps) / 10000;
-    const maxSolCost = new BN(Math.ceil(amountLamports.toNumber() * slippageMultiplier));
+    // Apply slippage DOWNWARD on expected tokens - willing to receive FEWER tokens
+    // due to price movement between state-read and tx execution.
+    //
+    // We use BuyExactSolIn semantics:
+    //   - solAmount:    exact lamports to spend (no variability)
+    //   - minTokensOut: floor of acceptable tokens (expectedTokens × (1 - slippage))
+    //
+    // This is more robust than the old Buy (exact-tokens-out) instruction which
+    // required the caller-supplied tokenAmount to still be below virtualTokenReserves
+    // at execution time.  Competing bots buying first can easily push the price past
+    // the old maxSolCost ceiling and trigger pump.fun error 6024 (Overflow).
+    const slippageMultiplier = (10000 - slippageBps) / 10000;
+    const minTokensOut = new BN(Math.floor(expectedTokens.toNumber() * slippageMultiplier));
 
     // Get or create user token account (using correct token program)
     const userTokenAccount = getAssociatedTokenAddressSync(
@@ -661,8 +674,9 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       {
         mint: mint.toString(),
         amountSol,
+        solAmountLamports: amountLamports.toString(),
         expectedTokens: expectedTokens.toString(),
-        maxSolCostLamports: maxSolCost.toString(),
+        minTokensOut: minTokensOut.toString(),
         slippageBps,
         isToken2022,
         tokenProgramId: tokenProgramId.toString(),
@@ -672,7 +686,7 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
         userVolumeAccumulator: userVolumeAccumulator.toString(),
         feeConfig: feeConfig.toString(),
       },
-      'Preparing pump.fun buy'
+      'Preparing pump.fun buy (BuyExactSolIn)'
     );
 
     // Build transaction
@@ -704,10 +718,12 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
 
     // ═══════════════════════════════════════════════════════════════════════
     // OUTFLOW GUARD: Verify wallet can cover the full transaction cost
+    // With BuyExactSolIn the SOL cost is exactly amountLamports (no slippage
+    // on the SOL side), so pass slippageBps=0 to get the accurate outflow.
     // ═══════════════════════════════════════════════════════════════════════
     const outflow = computeExpectedOutflow(
       amountLamports.toNumber(),
-      slippageBps,
+      0,
       computeUnitLimit,
       computeUnitPrice,
       ataExists,
@@ -726,9 +742,11 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
         totalExpectedOutflowSol: (outflow.totalExpectedOutflow / LAMPORTS_PER_SOL).toFixed(6),
         walletBalanceLamports: preSolBalanceForGuard,
         walletBalanceSol: (preSolBalanceForGuard / LAMPORTS_PER_SOL).toFixed(6),
+        expectedTokens: expectedTokens.toString(),
+        minTokensOut: minTokensOut.toString(),
         ataExists,
       },
-      '[pump.fun] Outflow breakdown',
+      '[pump.fun] Outflow breakdown (BuyExactSolIn)',
     );
 
     if (preSolBalanceForGuard < outflow.totalExpectedOutflow) {
@@ -737,7 +755,7 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
         success: false,
         error: `Outflow guard rejected: wallet ${(preSolBalanceForGuard / LAMPORTS_PER_SOL).toFixed(6)} SOL ` +
                `< required ${(outflow.totalExpectedOutflow / LAMPORTS_PER_SOL).toFixed(6)} SOL ` +
-               `(trade+slippage: ${(outflow.maxSolCostLamports / LAMPORTS_PER_SOL).toFixed(6)}, ` +
+               `(trade: ${(outflow.maxSolCostLamports / LAMPORTS_PER_SOL).toFixed(6)}, ` +
                `ATA: ${(outflow.ataRentLamports / LAMPORTS_PER_SOL).toFixed(6)}, ` +
                `fees: ${(outflow.feeBufferLamports / LAMPORTS_PER_SOL).toFixed(6)}, ` +
                `shortfall: ${shortfall.toFixed(6)} SOL)`,
@@ -745,18 +763,18 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       };
     }
 
-    // Add buy instruction
-    // tokenAmount = expectedTokens (how many tokens we want)
-    // maxSolCost = amountLamports + slippage buffer (max SOL we'll pay)
+    // Add buy instruction (BuyExactSolIn)
+    // solAmount    = amountLamports (exact SOL to spend)
+    // minTokensOut = expectedTokens × (1 - slippage) (minimum tokens to accept)
     transaction.add(
-      buildBuyInstruction(
+      buildBuyExactSolInInstruction(
         mint,
         bondingCurve,
         associatedBondingCurve,
         userTokenAccount,
         wallet.publicKey,
-        expectedTokens,
-        maxSolCost,
+        amountLamports,
+        minTokensOut,
         tokenProgramId,
         creatorVault,
         globalVolumeAccumulator,
