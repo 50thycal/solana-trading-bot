@@ -231,7 +231,7 @@ export class PumpFunListener extends EventEmitter {
     this.lastTokenAcceptedAt = Date.now();
 
     // DEBUG: Log all the log messages for Create transactions
-    logger.info(
+    logger.debug(
       {
         signature,
         createLogLine,
@@ -423,7 +423,7 @@ export class PumpFunListener extends EventEmitter {
             const accounts = ix.accounts;
 
             // DEBUG: Log all accounts for this instruction
-            logger.info(
+            logger.debug(
               {
                 signature,
                 ixIndex,
@@ -446,7 +446,7 @@ export class PumpFunListener extends EventEmitter {
               const creator = isCreateV2 ? accounts[5] : accounts[7];
 
               // DEBUG: Log extracted values
-              logger.info(
+              logger.debug(
                 {
                   signature,
                   extractedMint: mint.toString(),
@@ -504,7 +504,7 @@ export class PumpFunListener extends EventEmitter {
               const accounts = ix.accounts;
 
               // DEBUG: Log inner instruction accounts
-              logger.info(
+              logger.debug(
                 {
                   signature,
                   innerIxIndex: innerIx.index,
@@ -559,7 +559,7 @@ export class PumpFunListener extends EventEmitter {
       const postBalances = tx.meta?.postTokenBalances || [];
       if (postBalances.length > 0) {
         // DEBUG: Log post token balances
-        logger.info(
+        logger.debug(
           {
             signature,
             postBalanceCount: postBalances.length,

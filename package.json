@@ -8,7 +8,8 @@
     "start:prod": "node dist/bootstrap.js",
     "build": "tsc",
     "tsc": "tsc --noEmit",
-    "test-trade": "ts-node scripts/test-pumpfun-stats.ts"
+    "test-trade": "ts-node scripts/test-pumpfun-stats.ts",
+    "compress-logs": "ts-node scripts/compress-logs.ts"
   },
   "dependencies": {
     "@metaplex-foundation/mpl-token-metadata": "^3.2.1",
