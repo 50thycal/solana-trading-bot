@@ -271,13 +271,16 @@ export function validateConfig(): ValidatedConfig {
   }
 
   const buySlippage = requireNumber('BUY_SLIPPAGE', 20);
-  if (buySlippage < 0 || buySlippage > 100) {
-    errors.push({ variable: 'BUY_SLIPPAGE', message: `BUY_SLIPPAGE must be between 0 and 100, got: ${buySlippage}` });
+  // Upper bound is strictly < 100: at exactly 100% the BuyExactSolIn slippage floor
+  // collapses to zero (minTokensOut = expectedTokens × 0 = 0), meaning the program
+  // will accept any outcome including receiving 0 tokens — a total SOL loss.
+  if (buySlippage < 0 || buySlippage >= 100) {
+    errors.push({ variable: 'BUY_SLIPPAGE', message: `BUY_SLIPPAGE must be between 0 and 99 (percent), got: ${buySlippage}` });
   }
 
   const sellSlippage = requireNumber('SELL_SLIPPAGE', 30);
-  if (sellSlippage < 0 || sellSlippage > 100) {
-    errors.push({ variable: 'SELL_SLIPPAGE', message: `SELL_SLIPPAGE must be between 0 and 100, got: ${sellSlippage}` });
+  if (sellSlippage < 0 || sellSlippage >= 100) {
+    errors.push({ variable: 'SELL_SLIPPAGE', message: `SELL_SLIPPAGE must be between 0 and 99 (percent), got: ${sellSlippage}` });
   }
 
   const autoBuyDelay = requireNumber('AUTO_BUY_DELAY', 0);

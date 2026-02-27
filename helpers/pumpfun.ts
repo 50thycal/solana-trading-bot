@@ -452,6 +452,8 @@ function buildBuyExactSolInInstruction(
   feeConfig: PublicKey,
 ): TransactionInstruction {
   // BuyExactSolIn instruction discriminator (first 8 bytes of sha256("global:buy_exact_sol_in"))
+  // Full sha256: 38fc74089edfcd5f315a3e4ee4aa3e277a742f39750fc3bb47ca6ed5fd6b8d26
+  // Verified: echo -n "global:buy_exact_sol_in" | sha256sum
   const discriminator = Buffer.from([56, 252, 116, 8, 158, 223, 205, 95]);
 
   // Instruction data: discriminator + solAmount (u64) + minTokensOut (u64) + trackVolume (OptionBool)
@@ -542,6 +544,8 @@ function buildSellInstruction(
   feeConfig: PublicKey,
 ): TransactionInstruction {
   // Sell instruction discriminator (first 8 bytes of sha256("global:sell"))
+  // Full sha256: 33e685a4017f83ad96d0efcd4fb626bca6f4d46e11c32fd23e5f5198ed6a62eb
+  // Verified: echo -n "global:sell" | sha256sum
   const discriminator = Buffer.from([51, 230, 133, 164, 1, 127, 131, 173]);
 
   // Instruction data: discriminator + amount (u64) + minSolOutput (u64)
@@ -657,8 +661,23 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     // required the caller-supplied tokenAmount to still be below virtualTokenReserves
     // at execution time.  Competing bots buying first can easily push the price past
     // the old maxSolCost ceiling and trigger pump.fun error 6024 (Overflow).
-    const slippageMultiplier = (10000 - slippageBps) / 10000;
-    const minTokensOut = new BN(Math.floor(expectedTokens.toNumber() * slippageMultiplier));
+    //
+    // BN-native integer arithmetic avoids float64 precision loss for large token
+    // amounts (up to ~10^15 raw units for pump.fun tokens with 6 decimals).
+    const minTokensOut = expectedTokens
+      .mul(new BN(10000 - slippageBps))
+      .div(new BN(10000));
+
+    // Guard: a zero minTokensOut means the program will accept 0 tokens — a total
+    // SOL loss with no token credit.  This can only happen if slippageBps >= 10000
+    // (100 %+) which should be blocked by config validation, but we defend in depth.
+    if (minTokensOut.isZero()) {
+      return {
+        success: false,
+        error: `minTokensOut collapsed to zero (slippageBps=${slippageBps}, expectedTokens=${expectedTokens.toString()}). Buy rejected to prevent zero-token settlement.`,
+        actualVerified: false,
+      };
+    }
 
     // Get or create user token account (using correct token program)
     const userTokenAccount = getAssociatedTokenAddressSync(
@@ -945,9 +964,11 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
     const tokenAmountBN = new BN(tokenAmount);
     const expectedSol = calculateSellSolOut(state, tokenAmountBN);
 
-    // Apply slippage - minimum SOL we'll accept
-    const slippageMultiplier = (10000 - slippageBps) / 10000;
-    const minSolOut = new BN(Math.floor(expectedSol.toNumber() * slippageMultiplier));
+    // Apply slippage - minimum SOL we'll accept.
+    // BN-native integer arithmetic avoids float64 precision loss.
+    const minSolOut = expectedSol
+      .mul(new BN(10000 - slippageBps))
+      .div(new BN(10000));
 
     // Derive PDAs needed for the sell instruction
     const creatorVault = deriveCreatorVault(state.creator);
