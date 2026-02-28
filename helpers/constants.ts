@@ -131,6 +131,7 @@ export const HARD_TAKE_PROFIT_PERCENT = config.hardTakeProfitPercent;
 // ============================================================================
 export const TEST_MODE = config.testMode;
 export const SMOKE_TEST_TIMEOUT_MS = config.smokeTestTimeoutMs;
+export const SMOKE_TEST_RUNS = config.smokeTestRuns;
 export const LOG_FORMAT = config.logFormat;
 
 // ============================================================================

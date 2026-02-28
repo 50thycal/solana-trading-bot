@@ -645,6 +645,13 @@ export const ENV_CATEGORIES: EnvCategory[] = [
         description: 'How long smoke test waits for a token',
       },
       {
+        name: 'SMOKE_TEST_RUNS',
+        label: 'Smoke Test Runs',
+        type: 'number',
+        defaultValue: '1',
+        description: 'Number of sequential smoke test runs to perform',
+      },
+      {
         name: 'AB_TEST_DURATION_MINUTES',
         label: 'A/B Test Duration (min)',
         type: 'number',
