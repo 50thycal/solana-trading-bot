@@ -625,6 +625,10 @@ function buildSellInstruction(
     { pubkey: feeConfig, isSigner: false, isWritable: false },
     // 13: fee_program (NOT mutable)
     { pubkey: PUMP_FUN_FEE_PROGRAM_ID, isSigner: false, isWritable: false },
+    // 14: bonding_curve_v2 (optional remaining account, read-only)
+    // Required by the program for post-swap logic on Token-2022 tokens.
+    // Without this, sell hits Overflow at lib.rs:775.
+    { pubkey: deriveBondingCurveV2(mint), isSigner: false, isWritable: false },
   ];
 
   return new TransactionInstruction({
