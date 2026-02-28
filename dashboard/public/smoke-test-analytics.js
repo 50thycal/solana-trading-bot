@@ -200,11 +200,16 @@ function renderRunSelector() {
       }
     }
 
+    const groupTag = (r.totalRuns && r.totalRuns > 1)
+      ? `<span class="run-group-tag">${r.runNumber}/${r.totalRuns}</span>`
+      : '';
+
     return `
       <label class="run-selector-item" data-id="${escapeHtml(id)}">
         <input type="checkbox" class="run-checkbox" value="${escapeHtml(id)}" ${checked}
                onchange="toggleRun('${escapeHtml(id)}', this.checked)">
         <span class="run-result ${statusClass}">${escapeHtml(r.overallResult)}</span>
+        ${groupTag}
         <span class="run-date">${formatDate(r.startedAt)}</span>
         <span class="run-pnl ${pnlClass(pnl)}">${formatPnlShort(pnl)} SOL</span>
         <span class="run-duration">${formatDuration(r.totalDurationMs)}</span>
@@ -1016,9 +1021,13 @@ function renderDetailTable(timeSeries) {
       `;
     }
 
+    const groupTag = (t.totalRuns && t.totalRuns > 1)
+      ? `<span class="run-group-tag">${t.runNumber}/${t.totalRuns}</span>`
+      : '';
+
     return `
       <tr>
-        <td>${formatDate(t.startedAt)}</td>
+        <td>${groupTag}${formatDate(t.startedAt)}</td>
         <td class="${resultClass}">${t.result}</td>
         <td class="${pnlClass(t.pnl)}">${formatPnl(t.pnl)}</td>
         <td>${formatDuration(t.duration)}</td>
