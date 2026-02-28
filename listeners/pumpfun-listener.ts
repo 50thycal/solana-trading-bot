@@ -340,7 +340,7 @@ export class PumpFunListener extends EventEmitter {
         this.platformStats.buyAttempted++;
         this.emit('new-token', detectedToken);
 
-        logger.info(
+        logger.debug(
           {
             mint: token.mint.toString(),
             name: tokenName,

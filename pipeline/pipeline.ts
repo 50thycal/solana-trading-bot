@@ -142,7 +142,6 @@ export class PumpFunPipeline {
 
     // Create log buffer for non-interleaved output
     const logBuffer = new TokenLogBuffer(mintStr, detection.symbol);
-    logBuffer.info(`Detected via ${detection.source}`);
 
     // Initialize context
     const context: PipelineContext = {
