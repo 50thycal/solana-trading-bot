@@ -138,6 +138,7 @@ export interface BondingCurveState {
   tokenTotalSupply: BN;
   complete: boolean;
   creator: PublicKey;
+  isCashbackCoin: boolean;
 }
 
 /**
@@ -296,8 +297,10 @@ export function deriveFeeConfig(): PublicKey {
  * - 8 bytes: tokenTotalSupply (u64)
  * - 1 byte: complete (bool)
  * - 32 bytes: creator (Pubkey)
+ * - 1 byte: is_mayhem_mode (bool)   [offset 81]
+ * - 1 byte: is_cashback_coin (bool) [offset 82]
  *
- * Total: 8 + 40 + 1 + 32 = 81 bytes minimum
+ * Total: 8 + 40 + 1 + 32 + 1 + 1 = 83 bytes
  */
 export function decodeBondingCurveState(data: Buffer): BondingCurveState | null {
   try {
@@ -316,6 +319,8 @@ export function decodeBondingCurveState(data: Buffer): BondingCurveState | null 
     const tokenTotalSupply = new BN(data.slice(offset + 32, offset + 40), 'le');
     const complete = data[offset + 40] === 1;
     const creator = new PublicKey(data.slice(offset + 41, offset + 41 + 32));
+    // offset 81 = is_mayhem_mode (skipped), offset 82 = is_cashback_coin
+    const isCashbackCoin = data.length > 82 ? data[82] === 1 : false;
 
     return {
       virtualTokenReserves,
@@ -325,6 +330,7 @@ export function decodeBondingCurveState(data: Buffer): BondingCurveState | null 
       tokenTotalSupply,
       complete,
       creator,
+      isCashbackCoin,
     };
   } catch (error) {
     logger.debug({ error }, 'Failed to decode bonding curve state');
@@ -555,9 +561,22 @@ function buildBuyExactSolInInstruction(
 }
 
 /**
+ * Parse the fee_recipient pubkey from the on-chain Global account.
+ * Layout: discriminator(8) + initialized(1) + authority(32) + fee_recipient(32)
+ * So fee_recipient starts at offset 41.
+ */
+function parseGlobalFeeRecipient(globalData: Buffer): PublicKey {
+  const offset = 8 + 1 + 32; // = 41
+  if (globalData.length < offset + 32) {
+    throw new Error('Global account data too short to read fee_recipient');
+  }
+  return new PublicKey(globalData.slice(offset, offset + 32));
+}
+
+/**
  * Build the sell instruction for pump.fun
  *
- * pump.fun Sell instruction accounts (14 total):
+ * pump.fun Sell instruction accounts (14 base):
  * 0: global
  * 1: fee_recipient
  * 2: mint
@@ -572,6 +591,10 @@ function buildBuyExactSolInInstruction(
  * 11: program
  * 12: fee_config (NOT mutable)
  * 13: fee_program (NOT mutable)
+ *
+ * remaining_accounts (conditional):
+ * [0]: userVolumeAccumulator (writable) — only if isCashbackCoin
+ * [next]: bondingCurveV2 (read-only) — always included
  */
 function buildSellInstruction(
   mint: PublicKey,
@@ -584,6 +607,8 @@ function buildSellInstruction(
   tokenProgramId: PublicKey,
   creatorVault: PublicKey,
   feeConfig: PublicKey,
+  feeRecipient: PublicKey,
+  isCashbackCoin: boolean,
 ): TransactionInstruction {
   // Sell instruction discriminator (first 8 bytes of sha256("global:sell"))
   // Full sha256: 33e685a4017f83ad96d0efcd4fb626bca6f4d46e11c32fd23e5f5198ed6a62eb
@@ -596,11 +621,11 @@ function buildSellInstruction(
   tokenAmount.toArrayLike(Buffer, 'le', 8).copy(data, 8);
   minSolOutput.toArrayLike(Buffer, 'le', 8).copy(data, 16);
 
-  const keys = [
+  const keys: { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[] = [
     // 0: global
     { pubkey: PUMP_FUN_GLOBAL, isSigner: false, isWritable: false },
-    // 1: fee_recipient
-    { pubkey: PUMP_FUN_FEE_RECIPIENT, isSigner: false, isWritable: true },
+    // 1: fee_recipient (read dynamically from Global account)
+    { pubkey: feeRecipient, isSigner: false, isWritable: true },
     // 2: mint
     { pubkey: mint, isSigner: false, isWritable: false },
     // 3: bonding_curve
@@ -625,11 +650,15 @@ function buildSellInstruction(
     { pubkey: feeConfig, isSigner: false, isWritable: false },
     // 13: fee_program (NOT mutable)
     { pubkey: PUMP_FUN_FEE_PROGRAM_ID, isSigner: false, isWritable: false },
-    // 14: bonding_curve_v2 (optional remaining account, read-only)
-    // Required by the program for post-swap logic on Token-2022 tokens.
-    // Without this, sell hits Overflow at lib.rs:775.
-    { pubkey: deriveBondingCurveV2(mint), isSigner: false, isWritable: false },
   ];
+
+  // remaining_accounts: cashback coins need userVolumeAccumulator BEFORE bondingCurveV2
+  if (isCashbackCoin) {
+    const userVolumeAccumulator = deriveUserVolumeAccumulator(user);
+    keys.push({ pubkey: userVolumeAccumulator, isSigner: false, isWritable: true });
+  }
+  // bondingCurveV2 is always appended last
+  keys.push({ pubkey: deriveBondingCurveV2(mint), isSigner: false, isWritable: false });
 
   return new TransactionInstruction({
     programId: PUMP_FUN_PROGRAM_ID,
@@ -1071,6 +1100,17 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
     const creatorVault = deriveCreatorVault(state.creator);
     const feeConfig = deriveFeeConfig();
 
+    // Read fee_recipient dynamically from Global account (may change on-chain)
+    const globalAccountInfo = await connection.getAccountInfo(PUMP_FUN_GLOBAL);
+    if (!globalAccountInfo?.data) {
+      return {
+        success: false,
+        error: 'Failed to fetch Global account for fee_recipient',
+        actualVerified: false,
+      };
+    }
+    const feeRecipient = parseGlobalFeeRecipient(globalAccountInfo.data);
+
     logger.debug(
       {
         mint: mint.toString(),
@@ -1083,6 +1123,8 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
         creator: state.creator.toString(),
         creatorVault: creatorVault.toString(),
         feeConfig: feeConfig.toString(),
+        feeRecipient: feeRecipient.toString(),
+        isCashbackCoin: state.isCashbackCoin,
       },
       'Preparing pump.fun sell'
     );
@@ -1120,6 +1162,8 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
         tokenProgramId,
         creatorVault,
         feeConfig,
+        feeRecipient,
+        state.isCashbackCoin,
       )
     );
 
