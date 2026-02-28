@@ -72,6 +72,28 @@
     .smoke-meta-value {
       font-weight: 600;
     }
+    .run-group-label {
+      display: inline-block;
+      margin-left: 0.5rem;
+      padding: 0.2rem 0.6rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      font-weight: 600;
+    }
+    .run-group-tag {
+      display: inline-block;
+      padding: 0.1rem 0.4rem;
+      margin-right: 0.4rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 3px;
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+      font-weight: 600;
+    }
   </style>
 </head>
 <body>
@@ -84,6 +106,7 @@
       <div class="header-left">
         <h1>Smoke Test</h1>
         <span class="header-badge" id="smoke-badge">Results</span>
+        <span class="run-group-label" id="run-group-label" style="display:none;"></span>
       </div>
       <div class="header-right">
         <a href="/smoke-analytics" class="btn btn-primary btn-small">Analytics Dashboard</a>

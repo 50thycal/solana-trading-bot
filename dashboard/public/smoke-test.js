@@ -58,6 +58,26 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+function formatTime(timestamp) {
+  if (!timestamp) return '';
+  const d = new Date(timestamp);
+  const h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${m} ${ampm}`;
+}
+
+/**
+ * Build a run group label like "10:30 AM - 2/5" for multi-run sessions.
+ * Returns empty string for single runs.
+ */
+function runGroupLabel(report) {
+  if (!report || !report.totalRuns || report.totalRuns <= 1) return '';
+  const time = formatTime(report.startedAt);
+  return `${time} - ${report.runNumber}/${report.totalRuns}`;
+}
+
 /**
  * Render live progress of a running smoke test
  */
@@ -65,6 +85,17 @@ function renderProgress(progress) {
   const badge = document.getElementById('smoke-badge');
   badge.textContent = 'RUNNING';
   badge.style.background = 'linear-gradient(135deg, #ff9800, #ffcc02)';
+
+  // Show run group label for multi-run sessions
+  const groupEl = document.getElementById('run-group-label');
+  if (groupEl) {
+    if (progress.totalRuns > 1) {
+      groupEl.textContent = `Run ${progress.runNumber} of ${progress.totalRuns}`;
+      groupEl.style.display = '';
+    } else {
+      groupEl.style.display = 'none';
+    }
+  }
 
   document.getElementById('overall-result').textContent = 'Running...';
   document.getElementById('overall-result').className = 'card-value';
@@ -153,6 +184,18 @@ function renderReport(report) {
   } else {
     badge.textContent = 'FAILED';
     badge.style.background = 'linear-gradient(135deg, #ff5252, #ff8a80)';
+  }
+
+  // Show run group label for multi-run sessions
+  const groupEl = document.getElementById('run-group-label');
+  if (groupEl) {
+    const label = runGroupLabel(report);
+    if (label) {
+      groupEl.textContent = label;
+      groupEl.style.display = '';
+    } else {
+      groupEl.style.display = 'none';
+    }
   }
 
   // Summary cards
@@ -352,21 +395,13 @@ async function updateSmokeTestReport() {
   // Don't overwrite when viewing a historical report
   if (viewingReportId !== null) return;
 
-  const report = await fetchApi('/api/smoke-test-report');
-
-  // Re-check after await: user may have clicked a history item while fetch was in-flight
-  if (viewingReportId !== null) return;
-
-  // If a completed report exists, render it
-  if (report && report.status !== 'no_report') {
-    renderReport(report);
-    return;
-  }
-
-  // No report yet - check if a smoke test is running
+  // Check progress FIRST - if a test is actively running, always show live progress.
+  // This is critical for multi-run mode: after run 1 completes, lastReport is set,
+  // but run 2 may already be in progress. Without checking progress first, the
+  // dashboard would get stuck showing the stale run 1 report.
   const progress = await fetchApi('/api/smoke-test-progress');
 
-  // Re-check again after second await
+  // Re-check after await: user may have clicked a history item while fetch was in-flight
   if (viewingReportId !== null) return;
 
   if (progress && progress.running) {
@@ -374,7 +409,12 @@ async function updateSmokeTestReport() {
     return;
   }
 
-  // No report and not running
+  // No test running - show the latest completed report
+  const report = await fetchApi('/api/smoke-test-report');
+
+  // Re-check again after second await
+  if (viewingReportId !== null) return;
+
   renderReport(report);
 }
 
@@ -394,6 +434,8 @@ async function viewReport(reportId) {
   const report = await fetchApi(`/api/smoke-test-reports/${reportId}`);
   if (report && !report.error) {
     renderReport(report);
+    const groupInfo = (report.totalRuns && report.totalRuns > 1) ? ` (Run ${report.runNumber}/${report.totalRuns})` : '';
+    bannerText.textContent = `Viewing smoke test from ${formatDate(Number(reportId))}${groupInfo}`;
   }
 
   // Highlight active row in history
@@ -452,13 +494,16 @@ async function updateHistory() {
     const date = formatDate(report.startedAt);
     const duration = formatDuration(report.totalDurationMs);
     const exitTrigger = report.exitTrigger || '';
+    const groupTag = (report.totalRuns && report.totalRuns > 1)
+      ? `<span class="run-group-tag">${report.runNumber}/${report.totalRuns}</span>`
+      : '';
 
     return `
       <div class="run-history-item history-item-clickable ${isActive ? 'active-report' : ''}"
            data-report-id="${escapeHtml(id)}"
            onclick="viewReport('${escapeHtml(id)}')">
         <div class="run-mode">${escapeHtml(report.overallResult)}</div>
-        <div class="run-summary">${escapeHtml(date)} &middot; ${duration}${exitTrigger ? ' &middot; ' + escapeHtml(exitTrigger) : ''}</div>
+        <div class="run-summary">${groupTag}${escapeHtml(date)} &middot; ${duration}${exitTrigger ? ' &middot; ' + escapeHtml(exitTrigger) : ''}</div>
         <div class="run-pnl ${pnlCls}">${pnlValue}</div>
         <div class="run-status ${statusClass}">${report.passedCount}/${report.totalSteps} steps</div>
         <div class="run-time">${formatTimeAgo(report.startedAt)}</div>
@@ -474,7 +519,8 @@ function buildReportText(report) {
   if (!report || report.status === 'no_report') return 'No smoke test report available.';
 
   const lines = [];
-  lines.push('=== Smoke Test Report ===');
+  const groupInfo = (report.totalRuns && report.totalRuns > 1) ? ` (Run ${report.runNumber}/${report.totalRuns})` : '';
+  lines.push(`=== Smoke Test Report${groupInfo} ===`);
   lines.push(`Result: ${report.overallResult}`);
   lines.push(`Date: ${formatDate(report.startedAt)}`);
   lines.push(`Duration: ${formatDuration(report.totalDurationMs)}`);

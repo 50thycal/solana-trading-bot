@@ -1739,6 +1739,8 @@ export class DashboardServer {
       result: r.overallResult,
       buyFailures: r.buyFailures?.length || 0,
       envSnapshot: r.envSnapshot || {},
+      runNumber: r.runNumber,
+      totalRuns: r.totalRuns,
     }));
 
     // Cumulative P&L for the chart

@@ -148,6 +148,18 @@
   white-space: nowrap;
 }
 
+.run-group-tag {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  margin-right: 0.3rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
 .selector-actions {
   display: flex;
   gap: 0.5rem;
