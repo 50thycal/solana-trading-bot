@@ -118,6 +118,7 @@ export class DeepFiltersStage implements PipelineStage<PipelineContext, DeepFilt
         tokenTotalSupply: new BN(1000000000),
         complete: false,
         creator: detection.creator || PublicKey.default,
+        isCashbackCoin: false,
       };
     }
 
