@@ -104,6 +104,7 @@ export interface ValidatedConfig {
 
   // Smoke Test (applies when botMode='smoke')
   smokeTestTimeoutMs: number;
+  smokeTestRuns: number;
 
   // A/B Test (applies when botMode='ab')
   abTestDurationMs: number;
@@ -480,6 +481,11 @@ export function validateConfig(): ValidatedConfig {
   }
   const smokeTestTimeoutMs = Math.round(smokeTestTimeoutMinutes * 60000);
 
+  const smokeTestRuns = requireNumber('SMOKE_TEST_RUNS', 1);
+  if (smokeTestRuns < 1 || !Number.isInteger(smokeTestRuns)) {
+    errors.push({ variable: 'SMOKE_TEST_RUNS', message: 'SMOKE_TEST_RUNS must be a positive integer (default: 1)' });
+  }
+
   // === A/B TEST (applies when BOT_MODE=ab) ===
   const abTestDurationMinutes = requireNumber('AB_TEST_DURATION_MINUTES', 240); // 4 hours default
   const abTestDurationMs = Math.round(abTestDurationMinutes * 60000);
@@ -636,6 +642,7 @@ export function validateConfig(): ValidatedConfig {
     hardTakeProfitPercent,
     testMode,
     smokeTestTimeoutMs,
+    smokeTestRuns,
     abTestDurationMs,
     abConfigA,
     abConfigB,
@@ -649,7 +656,7 @@ export function validateConfig(): ValidatedConfig {
   } else if (config.botMode === 'standby') {
     logger.warn('BOT_MODE=standby - bot will not connect to Solana or consume RPC credits');
   } else if (config.botMode === 'smoke') {
-    logger.info('BOT_MODE=smoke - will run a single end-to-end test cycle and exit');
+    logger.info(`BOT_MODE=smoke - will run ${config.smokeTestRuns} sequential end-to-end test cycle(s)`);
   } else if (config.botMode === 'ab') {
     logger.info('BOT_MODE=ab - will run A/B paper trade comparison and exit');
   }

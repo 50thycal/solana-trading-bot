@@ -16,6 +16,7 @@
  *   7. After sell -> print report, graceful shutdown
  *
  * Set BOT_MODE=smoke to trigger this instead of the normal bot.
+ * Set SMOKE_TEST_RUNS=N to run N sequential test cycles (default: 1).
  * Uses real mainnet transactions with the configured QUOTE_AMOUNT.
  * Exits with code 0 (pass) or 1 (fail) when done.
  *
@@ -42,6 +43,7 @@ import {
   STOP_LOSS,
   MAX_HOLD_DURATION_MS,
   SMOKE_TEST_TIMEOUT_MS,
+  SMOKE_TEST_RUNS,
   PUMPFUN_MIN_SOL_IN_CURVE,
   PUMPFUN_MAX_SOL_IN_CURVE,
   PUMPFUN_ENABLE_MIN_SOL_FILTER,
@@ -171,6 +173,10 @@ export interface SmokeTestReport {
   sellSignature?: string;
   /** Snapshot of environment variables used for this run (for cross-run analytics) */
   envSnapshot?: Record<string, string | number | boolean>;
+  /** Which run number this is when using SMOKE_TEST_RUNS > 1 (1-indexed) */
+  runNumber?: number;
+  /** Total number of runs configured for this session */
+  totalRuns?: number;
 }
 
 // Shared state for the report endpoint
@@ -186,9 +192,15 @@ interface SmokeTestProgress {
   tokensPipelinePassed: number;
   buyFailures: number;
   steps: SmokeTestStep[];
+  runNumber: number;
+  totalRuns: number;
 }
 
 let liveProgress: SmokeTestProgress | null = null;
+
+/** Current run context for multi-run mode (used by buildReport) */
+let currentRunNumber = 1;
+let currentTotalRuns = 1;
 
 /** File path for persisting smoke test reports across restarts */
 function getReportsFilePath(): string {
@@ -304,7 +316,108 @@ async function runStep(
 // MAIN SMOKE TEST
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * Runs multiple sequential smoke tests based on SMOKE_TEST_RUNS config.
+ * Each run is independent - tracked and persisted as its own report.
+ * Returns the final run's report for backward compatibility.
+ */
 export async function runSmokeTest(): Promise<SmokeTestReport> {
+  const totalRuns = SMOKE_TEST_RUNS;
+
+  if (totalRuns <= 1) {
+    return runSingleSmokeTest(1, 1);
+  }
+
+  logger.info('');
+  logger.info('════════════════════════════════════════════════════════════');
+  logger.info(`  SMOKE TEST MULTI-RUN: ${totalRuns} sequential runs configured`);
+  logger.info('════════════════════════════════════════════════════════════');
+  logger.info('');
+
+  const allReports: SmokeTestReport[] = [];
+
+  for (let run = 1; run <= totalRuns; run++) {
+    logger.info('');
+    logger.info(`────────────────────────────────────────────────────────────`);
+    logger.info(`  Starting run ${run} of ${totalRuns}`);
+    logger.info(`────────────────────────────────────────────────────────────`);
+    logger.info('');
+
+    try {
+      const report = await runSingleSmokeTest(run, totalRuns);
+      allReports.push(report);
+
+      logger.info(`[smoke-test] Run ${run}/${totalRuns} finished: ${report.overallResult}`);
+    } catch (error) {
+      logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        `[smoke-test] Run ${run}/${totalRuns} threw unexpected error`
+      );
+      // Build a minimal failure report so it still gets tracked
+      const failReport: SmokeTestReport = {
+        startedAt: Date.now(),
+        completedAt: Date.now(),
+        totalDurationMs: 0,
+        steps: [],
+        overallResult: 'FAIL',
+        walletBalanceBefore: 0,
+        walletBalanceAfter: 0,
+        netCostSol: 0,
+        passedCount: 0,
+        failedCount: 1,
+        totalSteps: 0,
+        buyFailures: [],
+        tokensEvaluated: 0,
+        tokensPipelinePassed: 0,
+        runNumber: run,
+        totalRuns,
+      };
+      allReports.push(failReport);
+      persistReport(failReport);
+    }
+
+    // Brief pause between runs to let connections clean up
+    if (run < totalRuns) {
+      logger.info(`[smoke-test] Waiting 5s before starting run ${run + 1}...`);
+      await sleep(5000);
+    }
+  }
+
+  // Print multi-run summary
+  const passed = allReports.filter(r => r.overallResult === 'PASS').length;
+  const failed = allReports.filter(r => r.overallResult === 'FAIL').length;
+  const totalNetCost = allReports.reduce((sum, r) => sum + r.netCostSol, 0);
+
+  logger.info('');
+  logger.info('════════════════════════════════════════════════════════════');
+  logger.info('  SMOKE TEST MULTI-RUN SUMMARY');
+  logger.info('════════════════════════════════════════════════════════════');
+  logger.info(`  Total runs:     ${totalRuns}`);
+  logger.info(`  Passed:         ${passed}`);
+  logger.info(`  Failed:         ${failed}`);
+  logger.info(`  Total net cost: ${totalNetCost.toFixed(6)} SOL`);
+  logger.info('');
+  for (let i = 0; i < allReports.length; i++) {
+    const r = allReports[i];
+    const duration = (r.totalDurationMs / 1000).toFixed(1);
+    const cost = r.netCostSol.toFixed(6);
+    const token = r.tradedToken ? ` ${r.tradedToken.symbol}` : '';
+    const trigger = r.exitTrigger ? ` [${r.exitTrigger}]` : '';
+    logger.info(`  Run ${i + 1}: ${r.overallResult} | ${duration}s | ${cost} SOL${token}${trigger}`);
+  }
+  logger.info('');
+  logger.info('════════════════════════════════════════════════════════════');
+  logger.info('');
+
+  // Return the last report for bootstrap.ts compatibility
+  return allReports[allReports.length - 1];
+}
+
+async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise<SmokeTestReport> {
+  // Set module-level run context so buildReport can stamp it on reports
+  currentRunNumber = runNumber;
+  currentTotalRuns = totalRuns;
+
   logger.level = LOG_LEVEL;
   const startedAt = Date.now();
   const config = getConfig();
@@ -312,9 +425,11 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
   const timeoutMs = SMOKE_TEST_TIMEOUT_MS;
   const maxHoldMs = MAX_HOLD_DURATION_MS > 0 ? MAX_HOLD_DURATION_MS : 20000;
 
+  const runLabel = totalRuns > 1 ? ` (Run ${runNumber}/${totalRuns})` : '';
+
   logger.info('');
   logger.info('════════════════════════════════════════');
-  logger.info('  SMOKE TEST MODE (Production-Like)');
+  logger.info(`  SMOKE TEST MODE${runLabel}`);
   logger.info(`  Trade amount: ${tradeAmount} SOL`);
   logger.info(`  Overall timeout: ${timeoutMs / 1000}s`);
   logger.info(`  Max hold duration: ${maxHoldMs / 1000}s`);
@@ -353,6 +468,8 @@ export async function runSmokeTest(): Promise<SmokeTestReport> {
     tokensPipelinePassed: 0,
     buyFailures: 0,
     steps,
+    runNumber,
+    totalRuns,
   };
 
   // Mutable state holder
@@ -1107,6 +1224,7 @@ function buildReport(
     HARD_TAKE_PROFIT_PERCENT,
     // Test config
     SMOKE_TEST_TIMEOUT_MS,
+    SMOKE_TEST_RUNS,
   };
 
   const report: SmokeTestReport = {
@@ -1133,6 +1251,8 @@ function buildReport(
     buySignature,
     sellSignature,
     envSnapshot,
+    runNumber: currentRunNumber,
+    totalRuns: currentTotalRuns,
   };
 
   // Store for dashboard retrieval (in-memory + persisted to file)
@@ -1145,7 +1265,8 @@ function buildReport(
 
   logger.info('');
   logger.info('════════════════════════════════════════════════════════════');
-  logger.info('  SMOKE TEST REPORT');
+  const runTag = currentTotalRuns > 1 ? ` (Run ${currentRunNumber}/${currentTotalRuns})` : '';
+  logger.info(`  SMOKE TEST REPORT${runTag}`);
   logger.info('════════════════════════════════════════════════════════════');
   logger.info(`  Result:          ${overallResult} (${passedCount}/${totalSteps} steps)`);
   logger.info(`  Duration:        ${totalSecs}s`);
