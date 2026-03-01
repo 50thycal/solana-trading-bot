@@ -663,10 +663,41 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
   }
 
   if (!listenAndBuyOk) {
-    try {
-      walletBalanceAfter = (await state.connection!.getBalance(state.wallet!.publicKey, 'confirmed')) / LAMPORTS_PER_SOL;
-    } catch { /* ignore */ }
-    return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceAfter, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
+    // The listen/pipeline step timed out or failed, BUT a buy may have landed
+    // on-chain just as the timeout fired.  The async event handler keeps running
+    // after the promise rejects, so state.passedToken / state.tokensReceived
+    // can be populated even though listenAndBuyOk is false.
+    //
+    // Give the in-flight buy a brief window to settle, then check whether the
+    // wallet actually holds tokens.  If it does, fall through to the normal
+    // POSITION_MONITOR → SELL flow instead of returning early.
+    if (state.passedToken && state.tokensReceived > 0) {
+      logger.warn(
+        { mint: state.passedToken.mint.toString(), tokens: state.tokensReceived },
+        '[smoke-test] Listen/pipeline timed out but buy succeeded — continuing to sell flow',
+      );
+      // Mark BUY_EXECUTE as passed (it was set inside the handler already,
+      // but the LISTEN_AND_PIPELINE step is marked failed).  This way the
+      // report shows what actually happened.
+      steps[3].details += ' (timeout, but buy landed)';
+    } else {
+      // Wait briefly in case buyOnPumpFun is still in-flight
+      await sleep(3000);
+
+      if (state.passedToken && state.tokensReceived > 0) {
+        logger.warn(
+          { mint: state.passedToken.mint.toString(), tokens: state.tokensReceived },
+          '[smoke-test] Buy landed after timeout grace period — continuing to sell flow',
+        );
+        steps[3].details += ' (timeout, but buy landed after grace period)';
+      } else {
+        // Genuinely no buy — return early as before
+        try {
+          walletBalanceAfter = (await state.connection!.getBalance(state.wallet!.publicKey, 'confirmed')) / LAMPORTS_PER_SOL;
+        } catch { /* ignore */ }
+        return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceAfter, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
+      }
+    }
   }
 
   if (liveProgress) liveProgress.currentStep = 'BUY_VERIFY';
@@ -946,6 +977,13 @@ async function runListenPipelineAndBuy(
       // mint all pass through the processingBuy check (which is false for all
       // of them) and run the full pipeline in parallel, leading to duplicate buys.
       const inFlightMints = new Set<string>();
+
+      // Remove any stale 'new-token' handlers from previous runs.
+      // initPumpFunListener() is a singleton — across multi-run smoke tests the
+      // same EventEmitter instance is reused.  Without this cleanup, handlers from
+      // earlier runs remain attached and fire alongside the current run's handler,
+      // causing duplicate pipeline processing (one per stale handler).
+      state.listener!.removeAllListeners('new-token');
 
       state.listener!.on('new-token', async (token: DetectedToken) => {
         if (token.source !== 'pumpfun') return;
