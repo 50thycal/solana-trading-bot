@@ -4,10 +4,14 @@
 
 Across 32 smoke test runs over 24 hours, the bot lost **-0.1667 SOL** total with a
 **50% pass rate** (16/32 runs executed a trade). Of the 16 runs that traded, only
-**2 hit take profit** (12.5% win rate). The bot is bleeding money due to three
-compounding problems: the sniper gate filters too aggressively (50% of runs never
-trade), the trailing stop exits too early relative to fee overhead, and fixed
-transaction costs eat 12-15% of each 0.02 SOL position.
+**3 were profitable** (18.75% win rate). The core problem is that **when the bot
+trades, it mostly loses money** -- no exit strategy or filter tuning can fix a
+12.5% take-profit hit rate.
+
+Three root causes and three code changes to address them:
+1. **BUG: Smoke test never used trailing stop** -- config wasn't passed to position monitor (FIXED)
+2. **Exit triggers ignore fees** -- bonding curve P&L doesn't account for ~15% overhead (FIXED: `COST_ADJUSTED_EXITS`)
+3. **Bot buys at the top** -- sniper gate delay lets price pump before buy (FIXED: `MAX_PRICE_DRIFT_PERCENT`)
 
 ---
 
@@ -288,6 +292,50 @@ Higher SOL in the bonding curve means more liquidity, which means:
 
 ---
 
+## Code Changes Implemented
+
+### 1. BUG FIX: Smoke Test Trailing Stop Config (smoke-test.ts)
+
+**The smoke test was NOT passing trailing stop config to the position monitor.**
+Both initialization sites (`initPumpFunPositionMonitor` at lines 622 and 741) were
+missing `trailingStopEnabled`, `trailingStopActivationPercent`, `trailingStopDistancePercent`,
+and `hardTakeProfitPercent`. This meant `TRAILING_STOP_ENABLED=true` in your env was
+ignored during smoke tests -- all 32 runs used fixed take profit at 50% instead.
+
+**Fix:** Both call sites now pass the full trailing stop config.
+
+### 2. NEW: Cost-Adjusted Exit Triggers (pumpfun-position-monitor.ts)
+
+**Problem:** Exit triggers (TP, SL, trailing stop) use bonding curve P&L which doesn't
+account for transaction costs. The position monitor thinks "+5% bonding curve" is profitable,
+but after ~15% overhead on a 0.02 SOL trade, it's actually a net loss.
+
+**Fix:** New `COST_ADJUSTED_EXITS=true` option. When enabled:
+- Uses `actualCostSol` (ATA rent + gas) as cost basis instead of `entryAmountSol`
+- Subtracts estimated pump.fun sell fee (1.25%) from current value
+- Result: exit triggers fire based on realistic net P&L
+
+Example: On a 0.02 SOL trade with 0.003 SOL buy overhead:
+- Raw bonding curve: "+5%" → triggers look profitable
+- Cost-adjusted: "-11.6%" → triggers correctly see a loss
+
+### 3. NEW: Pre-Buy Price Drift Check (index.ts)
+
+**Problem:** The pipeline fetches bonding curve state during deep filters, then the
+sniper gate spends 10-20+ seconds evaluating. During that delay, the token price can
+pump 50%+. The bot then buys at the top.
+
+**Fix:** New `MAX_PRICE_DRIFT_PERCENT` option. Before executing a buy:
+1. Re-fetches the current bonding curve state
+2. Compares current price to the price seen during pipeline evaluation
+3. If price moved up more than the threshold, the buy is rejected
+4. Logs the drift amount for analytics
+
+This is likely the **highest-impact change** for improving win rate -- it prevents
+the bot from entering positions where the pump has already happened.
+
+---
+
 ## Recommended Optimized Config
 
 ```env
@@ -367,6 +415,10 @@ TRAILING_STOP_ACTIVATION_PERCENT=25      # was 10 → must exceed fee overhead
 TRAILING_STOP_DISTANCE_PERCENT=8         # was 5 → more room for volatility
 HARD_TAKE_PROFIT_PERCENT=80              # was 0 → lock in moonshots
 
+# NEW: Cost-Adjusted Exits + Price Drift Guard
+COST_ADJUSTED_EXITS=true                 # NEW → triggers use real cost basis
+MAX_PRICE_DRIFT_PERCENT=40               # NEW → reject if price pumped >40% during pipeline
+
 # Testing
 SMOKE_TEST_TIMEOUT_MINUTES=45
 SMOKE_TEST_RUNS=5
@@ -386,27 +438,26 @@ SMOKE_TEST_RUNS=5
 | TRAILING_STOP_ACTIVATION_PERCENT | 10 | 25 | Don't trail below break-even |
 | TRAILING_STOP_DISTANCE_PERCENT | 5 | 8 | Room for pump.fun volatility |
 | HARD_TAKE_PROFIT_PERCENT | 0 | 80 | Lock in massive gains |
+| COST_ADJUSTED_EXITS | N/A | true | Triggers use real cost basis |
+| MAX_PRICE_DRIFT_PERCENT | N/A | 40 | Reject buys where price already pumped |
 
 ### Expected Improvement
 
-With these changes, the bot should:
-1. Trade 75-85% of runs (vs 50% currently)
-2. Lose less per losing trade (wider SL but lower fee overhead % at 0.04 SOL)
-3. Keep more profit on winning trades (trail activates well above break-even)
-4. Lock in moonshot gains via hard TP at 80%
-5. Rotate faster via 45s max hold
+The code changes address the two biggest structural problems:
+1. **Price drift check** prevents buying at the top (improves win rate)
+2. **Cost-adjusted exits** prevent selling at "profits" that are actually losses
+3. **Trailing stop bug fix** means smoke tests now reflect production behavior
 
-**Conservative estimate:** From -0.005 SOL avg P&L per run to -0.001 to +0.001 SOL,
-depending on market conditions. The key is reducing the no-trade rate and improving
-the risk/reward math.
+The env variable changes reduce fee overhead and improve risk/reward math.
 
 ---
 
 ## Next Steps
 
-1. Run 10+ smoke tests with the optimized config above
-2. Compare pipeline pass rate (target: >75%)
-3. Compare win rate on executed trades (target: >25%)
-4. If win rate is still low, consider enabling momentum gate as pre-filter
-5. If slippage remains high on sells, increase PUMPFUN_MIN_SOL_IN_CURVE to 10-12
-6. Track fee breakdown per trade to validate overhead reduction
+1. Run 5-10 smoke tests with `COST_ADJUSTED_EXITS=true` and `MAX_PRICE_DRIFT_PERCENT=40`
+2. Compare how many buys are rejected by the price drift check (look for "Price drifted too much" in logs)
+3. Compare win rate on executed trades -- target: improve from 18% to 30%+
+4. Look at `triggerPnl` vs `bondingCurvePnl` in position check logs to see the cost adjustment impact
+5. If price drift rejects too many trades, increase threshold to 50-60%
+6. If price drift rejects too few, lower to 25-30%
+7. Once code changes are validated, tune env variables (TP/SL/trailing stop) based on new data

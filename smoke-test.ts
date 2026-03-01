@@ -86,6 +86,8 @@ import {
   TRAILING_STOP_ACTIVATION_PERCENT,
   TRAILING_STOP_DISTANCE_PERCENT,
   HARD_TAKE_PROFIT_PERCENT,
+  COST_ADJUSTED_EXITS,
+  MAX_PRICE_DRIFT_PERCENT,
 } from './helpers';
 import {
   buyOnPumpFun,
@@ -624,6 +626,11 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
       takeProfit: TAKE_PROFIT,
       stopLoss: STOP_LOSS,
       maxHoldDurationMs: maxHoldMs,
+      trailingStopEnabled: TRAILING_STOP_ENABLED,
+      trailingStopActivationPercent: TRAILING_STOP_ACTIVATION_PERCENT,
+      trailingStopDistancePercent: TRAILING_STOP_DISTANCE_PERCENT,
+      hardTakeProfitPercent: HARD_TAKE_PROFIT_PERCENT,
+      costAdjustedExits: COST_ADJUSTED_EXITS,
     });
 
     // Initialize listener
@@ -743,6 +750,11 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
       takeProfit: TAKE_PROFIT,
       stopLoss: STOP_LOSS,
       maxHoldDurationMs: maxHoldMs,
+      trailingStopEnabled: TRAILING_STOP_ENABLED,
+      trailingStopActivationPercent: TRAILING_STOP_ACTIVATION_PERCENT,
+      trailingStopDistancePercent: TRAILING_STOP_DISTANCE_PERCENT,
+      hardTakeProfitPercent: HARD_TAKE_PROFIT_PERCENT,
+      costAdjustedExits: COST_ADJUSTED_EXITS,
     });
 
     // Add the position to monitor
@@ -1279,6 +1291,8 @@ function buildReport(
     TRAILING_STOP_ACTIVATION_PERCENT,
     TRAILING_STOP_DISTANCE_PERCENT,
     HARD_TAKE_PROFIT_PERCENT,
+    COST_ADJUSTED_EXITS,
+    MAX_PRICE_DRIFT_PERCENT,
     // Test config
     SMOKE_TEST_TIMEOUT_MS,
     SMOKE_TEST_RUNS,

@@ -48,6 +48,7 @@ export interface ValidatedConfig {
   maxTradesPerHour: number;
   minWalletBufferSol: number;
   maxHoldDurationMs: number;
+  maxPriceDriftPercent: number;
 
   // Execution Quality
   simulateTransaction: boolean;
@@ -101,6 +102,7 @@ export interface ValidatedConfig {
   trailingStopActivationPercent: number;
   trailingStopDistancePercent: number;
   hardTakeProfitPercent: number;
+  costAdjustedExits: boolean;
 
   // Smoke Test (applies when botMode='smoke')
   smokeTestTimeoutMs: number;
@@ -333,6 +335,12 @@ export function validateConfig(): ValidatedConfig {
   }
   const maxHoldDurationMs = Math.round(maxHoldDurationSeconds * 1000);
 
+  // Max price drift - reject buy if price moved up more than this % during pipeline (0 = disabled)
+  const maxPriceDriftPercent = requireNumber('MAX_PRICE_DRIFT_PERCENT', 0);
+  if (maxPriceDriftPercent < 0) {
+    errors.push({ variable: 'MAX_PRICE_DRIFT_PERCENT', message: 'cannot be negative' });
+  }
+
   // === EXECUTION QUALITY ===
   const simulateTransaction = requireBoolean('SIMULATE_TRANSACTION', true);
   const useDynamicFee = requireBoolean('USE_DYNAMIC_FEE', false);
@@ -474,6 +482,8 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'HARD_TAKE_PROFIT_PERCENT', message: 'cannot be negative' });
   }
 
+  const costAdjustedExits = requireBoolean('COST_ADJUSTED_EXITS', false);
+
   // === SMOKE TEST (applies when BOT_MODE=smoke) ===
   const smokeTestTimeoutMinutes = requireNumber('SMOKE_TEST_TIMEOUT_MINUTES', 5);
   if (smokeTestTimeoutMinutes < 0.5) {
@@ -603,6 +613,7 @@ export function validateConfig(): ValidatedConfig {
     maxTradesPerHour,
     minWalletBufferSol,
     maxHoldDurationMs,
+    maxPriceDriftPercent,
     simulateTransaction,
     useDynamicFee,
     priorityFeePercentile,
@@ -640,6 +651,7 @@ export function validateConfig(): ValidatedConfig {
     trailingStopActivationPercent,
     trailingStopDistancePercent,
     hardTakeProfitPercent,
+    costAdjustedExits,
     testMode,
     smokeTestTimeoutMs,
     smokeTestRuns,

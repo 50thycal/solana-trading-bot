@@ -579,6 +579,21 @@ export const ENV_CATEGORIES: EnvCategory[] = [
         description: 'Sells immediately at this level even with trailing stop (0 = disabled)',
         hint: '0 = disabled',
       },
+      {
+        name: 'COST_ADJUSTED_EXITS',
+        label: 'Cost-Adjusted Exits',
+        type: 'boolean',
+        defaultValue: 'false',
+        description: 'Exit triggers use actual cost basis + estimated sell fee instead of raw bonding curve P&L. Prevents trailing stop from selling at perceived profits that are actually net losses after fees.',
+      },
+      {
+        name: 'MAX_PRICE_DRIFT_PERCENT',
+        label: 'Max Price Drift %',
+        type: 'number',
+        defaultValue: '0',
+        description: 'Reject buy if token price drifted up more than this % during pipeline evaluation (0 = disabled). Prevents buying at the top after sniper gate delay.',
+        hint: '0 = disabled, recommended: 30-50',
+      },
     ],
   },
   {

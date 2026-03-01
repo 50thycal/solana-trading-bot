@@ -64,6 +64,7 @@ export const MAX_TOTAL_EXPOSURE_SOL = config.maxTotalExposureSol;
 export const MAX_TRADES_PER_HOUR = config.maxTradesPerHour;
 export const MIN_WALLET_BUFFER_SOL = config.minWalletBufferSol;
 export const MAX_HOLD_DURATION_MS = config.maxHoldDurationMs;
+export const MAX_PRICE_DRIFT_PERCENT = config.maxPriceDriftPercent;
 
 // ============================================================================
 // EXECUTION QUALITY
@@ -125,6 +126,7 @@ export const TRAILING_STOP_ENABLED = config.trailingStopEnabled;
 export const TRAILING_STOP_ACTIVATION_PERCENT = config.trailingStopActivationPercent;
 export const TRAILING_STOP_DISTANCE_PERCENT = config.trailingStopDistancePercent;
 export const HARD_TAKE_PROFIT_PERCENT = config.hardTakeProfitPercent;
+export const COST_ADJUSTED_EXITS = config.costAdjustedExits;
 
 // ============================================================================
 // TEST MODE
