@@ -135,6 +135,11 @@ export class PumpFunListener extends EventEmitter {
   private processedSignatures: Set<string> = new Set();
   private maxProcessedSignatures: number = 10000;
 
+  // Track recently emitted mints to avoid emitting duplicate 'new-token' events
+  // for the same mint address (different signatures can reference the same mint)
+  private recentlyEmittedMints: Set<string> = new Set();
+  private maxRecentlyEmittedMints: number = 5000;
+
   constructor(connection: Connection, cooldownMs: number = PUMPFUN_DETECTION_COOLDOWN_MS) {
     super();
     this.connection = connection;
@@ -335,6 +340,17 @@ export class PumpFunListener extends EventEmitter {
           },
           rawLogs,
         };
+
+        // Mint-level dedup: prevent emitting the same mint multiple times
+        const mintStr = token.mint.toString();
+        if (this.recentlyEmittedMints.has(mintStr)) {
+          logger.debug(
+            { mint: mintStr, signature },
+            '[pump.fun] Skipping duplicate mint emission — already emitted recently'
+          );
+          return;
+        }
+        this.addRecentlyEmittedMint(mintStr);
 
         // Update stats and emit unified event
         this.platformStats.buyAttempted++;
@@ -762,6 +778,24 @@ export class PumpFunListener extends EventEmitter {
         const value = iterator.next().value;
         if (value) {
           this.processedSignatures.delete(value);
+        }
+      }
+    }
+  }
+
+  /**
+   * Add a mint to the recently emitted set with size limit
+   */
+  private addRecentlyEmittedMint(mint: string): void {
+    this.recentlyEmittedMints.add(mint);
+
+    if (this.recentlyEmittedMints.size > this.maxRecentlyEmittedMints) {
+      const toRemove = Math.floor(this.maxRecentlyEmittedMints * 0.2);
+      const iterator = this.recentlyEmittedMints.values();
+      for (let i = 0; i < toRemove; i++) {
+        const value = iterator.next().value;
+        if (value) {
+          this.recentlyEmittedMints.delete(value);
         }
       }
     }

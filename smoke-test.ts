@@ -940,10 +940,26 @@ async function runListenPipelineAndBuy(
       // Track whether we're currently processing a pipeline+buy attempt
       let processingBuy = false;
 
+      // In-memory guard: prevents the same mint from entering the pipeline
+      // concurrently when duplicate websocket events arrive before the async
+      // pipeline completes. Without this, 3-4 duplicate events for the same
+      // mint all pass through the processingBuy check (which is false for all
+      // of them) and run the full pipeline in parallel, leading to duplicate buys.
+      const inFlightMints = new Set<string>();
+
       state.listener!.on('new-token', async (token: DetectedToken) => {
         if (token.source !== 'pumpfun') return;
         if (buySucceeded) return; // Already got a successful buy
         if (processingBuy) return; // Don't overlap buy attempts
+
+        const mintStr = token.mint.toString();
+        if (inFlightMints.has(mintStr)) {
+          logger.debug({ mint: mintStr }, '[smoke-test] Duplicate mint event, already in-flight — skipping');
+          return;
+        }
+        inFlightMints.add(mintStr);
+
+        try {
 
         tokensEvaluated++;
         setTokensEvaluated(tokensEvaluated);
@@ -969,7 +985,7 @@ async function runListenPipelineAndBuy(
 
         if (!result.success) {
           logger.debug(
-            { mint: token.mint.toString(), symbol: token.symbol, reason: result.rejectionReason },
+            { mint: mintStr, symbol: token.symbol, reason: result.rejectionReason },
             '[smoke-test] Token rejected by pipeline'
           );
           return;
@@ -982,7 +998,7 @@ async function runListenPipelineAndBuy(
         // token to exit the pipeline and reach here will proceed to buy.
         if (buySucceeded || processingBuy) {
           logger.debug(
-            { mint: token.mint.toString(), symbol: token.symbol },
+            { mint: mintStr, symbol: token.symbol },
             '[smoke-test] Pipeline passed but another token already claimed the buy slot - skipping'
           );
           return;
@@ -995,7 +1011,7 @@ async function runListenPipelineAndBuy(
         tokensPipelinePassed++;
         setTokensPipelinePassed(tokensPipelinePassed);
         logger.info(
-          { mint: token.mint.toString(), symbol: token.symbol, score: result.context.deepFilters?.filterResults?.score },
+          { mint: mintStr, symbol: token.symbol, score: result.context.deepFilters?.filterResults?.score },
           '[smoke-test] Token passed pipeline - attempting buy'
         );
 
@@ -1032,8 +1048,7 @@ async function runListenPipelineAndBuy(
             // Wrapped in try-catch so persistence errors never block the sell flow
             try {
               const stateStore = getStateStore();
-              const mintStr = token.mint.toString();
-              const bondingCurveStr = token.bondingCurve!.toString();
+              const bCurveStr = token.bondingCurve!.toString();
               const solSpent = state.actualSolSpent ?? tradeAmount;
 
               if (stateStore) {
@@ -1041,7 +1056,7 @@ async function runListenPipelineAndBuy(
                 const entryPrice = tokensRcvd > 0 ? solSpent / tokensRcvd : 0;
                 stateStore.createPosition({
                   tokenMint: mintStr,
-                  poolId: bondingCurveStr,
+                  poolId: bCurveStr,
                   amountSol: solSpent,
                   amountToken: tokensRcvd,
                   entryPrice,
@@ -1054,7 +1069,7 @@ async function runListenPipelineAndBuy(
                 tokenSymbol: token.symbol,
                 amountSol: solSpent,
                 amountToken: state.tokensReceived,
-                poolId: bondingCurveStr,
+                poolId: bCurveStr,
                 txSignature: state.buySignature,
               });
             } catch (persistError) {
@@ -1070,7 +1085,7 @@ async function runListenPipelineAndBuy(
             steps[4].durationMs = 0;
 
             resolve(
-              `Pipeline passed: ${token.symbol || 'Unknown'} (${token.mint.toString().substring(0, 12)}...), ` +
+              `Pipeline passed: ${token.symbol || 'Unknown'} (${mintStr.substring(0, 12)}...), ` +
               `score: ${result.context.deepFilters?.filterResults?.score ?? 'N/A'}, ` +
               `evaluated: ${tokensEvaluated}, pipeline passed: ${tokensPipelinePassed}`
             );
@@ -1079,14 +1094,14 @@ async function runListenPipelineAndBuy(
             const failReason = buyResult.error || 'Unknown buy error';
             buyFailures.push({
               tokenSymbol: token.symbol || 'Unknown',
-              tokenMint: token.mint.toString(),
+              tokenMint: mintStr,
               reason: failReason,
               timestamp: Date.now(),
             });
             if (liveProgress) liveProgress.buyFailures = buyFailures.length;
 
             logger.warn(
-              { mint: token.mint.toString(), symbol: token.symbol, error: failReason },
+              { mint: mintStr, symbol: token.symbol, error: failReason },
               `[smoke-test] Buy failed (attempt ${buyFailures.length}) - continuing to listen`
             );
 
@@ -1096,18 +1111,22 @@ async function runListenPipelineAndBuy(
           const failReason = error instanceof Error ? error.message : String(error);
           buyFailures.push({
             tokenSymbol: token.symbol || 'Unknown',
-            tokenMint: token.mint.toString(),
+            tokenMint: mintStr,
             reason: failReason,
             timestamp: Date.now(),
           });
           if (liveProgress) liveProgress.buyFailures = buyFailures.length;
 
           logger.warn(
-            { mint: token.mint.toString(), error: failReason },
+            { mint: mintStr, error: failReason },
             `[smoke-test] Buy threw error (attempt ${buyFailures.length}) - continuing to listen`
           );
 
           processingBuy = false;
+        }
+
+        } finally {
+          inFlightMints.delete(mintStr);
         }
       });
 
