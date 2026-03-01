@@ -90,6 +90,7 @@ import {
 import {
   buyOnPumpFun,
   sellOnPumpFun,
+  deriveBondingCurve,
 } from './helpers/pumpfun';
 import { initTradeAuditManager } from './helpers/trade-audit';
 import { initRpcManager } from './helpers/rpc-manager';
@@ -663,6 +664,18 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
   }
 
   if (!listenAndBuyOk) {
+    // Safety net: a stale handler or race condition may have bought a token
+    // even though the listen/pipeline step reported failure.  Scan the wallet
+    // and sell any stranded tokens so SOL isn't left locked in dead positions.
+    try {
+      await cleanupStrandedTokens(state.connection!, state.wallet!);
+    } catch (cleanupErr) {
+      logger.warn(
+        { error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr) },
+        '[smoke-test] Stranded token cleanup failed (non-fatal)',
+      );
+    }
+
     try {
       walletBalanceAfter = (await state.connection!.getBalance(state.wallet!.publicKey, 'confirmed')) / LAMPORTS_PER_SOL;
     } catch { /* ignore */ }
@@ -883,7 +896,113 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
   } finally {
     // Always clear live progress so the dashboard never shows a stale "Running..." state
     liveProgress = null;
+
+    // Last-resort safety net: if we get here with tokens still in the wallet
+    // (e.g. unexpected throw before sell, monitor crash, etc.), try to clean up.
+    if (state.connection && state.wallet) {
+      try {
+        await cleanupStrandedTokens(state.connection, state.wallet);
+      } catch {
+        // Swallow — we're in a finally block, nothing more we can do
+      }
+    }
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// STRANDED TOKEN CLEANUP
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Scans the wallet for any non-zero token balances and attempts to sell them
+ * on pump.fun.  This is a safety net for cases where a buy succeeded (possibly
+ * via a stale event handler) but the test flow never reached the sell steps —
+ * e.g. LISTEN_AND_PIPELINE timed out while a concurrent buy was in-flight.
+ *
+ * Non-pump.fun tokens will fail the sell gracefully (bonding curve won't exist)
+ * and are simply skipped.
+ */
+async function cleanupStrandedTokens(
+  connection: Connection,
+  wallet: Keypair,
+): Promise<{ cleaned: number; failed: number }> {
+  let cleaned = 0;
+  let failed = 0;
+
+  for (const programId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
+    const isToken2022 = programId.equals(TOKEN_2022_PROGRAM_ID);
+    try {
+      const accounts = await connection.getParsedTokenAccountsByOwner(
+        wallet.publicKey,
+        { programId },
+        'confirmed',
+      );
+
+      for (const { account } of accounts.value) {
+        const info = account.data.parsed?.info;
+        if (!info) continue;
+
+        const rawAmount = Number(info.tokenAmount?.amount ?? 0);
+        if (rawAmount <= 0) continue;
+
+        const mint = new PublicKey(info.mint);
+        const mintStr = mint.toString();
+
+        logger.warn(
+          { mint: mintStr, amount: rawAmount, isToken2022 },
+          '[smoke-test] Found stranded token — attempting emergency sell',
+        );
+
+        try {
+          const bondingCurve = deriveBondingCurve(mint);
+          const slippageBps = Math.max(SELL_SLIPPAGE * 100, 5000); // at least 50%
+
+          const result = await sellOnPumpFun({
+            connection,
+            wallet,
+            mint,
+            bondingCurve,
+            tokenAmount: rawAmount,
+            slippageBps,
+            computeUnitLimit: COMPUTE_UNIT_LIMIT,
+            computeUnitPrice: COMPUTE_UNIT_PRICE,
+            isToken2022,
+          });
+
+          if (result.success) {
+            cleaned++;
+            logger.info(
+              { mint: mintStr, sig: result.signature, solReceived: result.solReceived },
+              '[smoke-test] Emergency sell succeeded — recovered SOL',
+            );
+          } else {
+            failed++;
+            logger.warn(
+              { mint: mintStr, error: result.error },
+              '[smoke-test] Emergency sell failed — token may not be a pump.fun token or bonding curve is closed',
+            );
+          }
+        } catch (sellError) {
+          failed++;
+          logger.warn(
+            { mint: mintStr, error: sellError instanceof Error ? sellError.message : String(sellError) },
+            '[smoke-test] Emergency sell threw error',
+          );
+        }
+      }
+    } catch (scanError) {
+      logger.warn(
+        { programId: programId.toString(), error: scanError instanceof Error ? scanError.message : String(scanError) },
+        '[smoke-test] Failed to scan token accounts for cleanup',
+      );
+    }
+  }
+
+  if (cleaned > 0 || failed > 0) {
+    logger.info({ cleaned, failed }, '[smoke-test] Stranded token cleanup complete');
+  }
+
+  return { cleaned, failed };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
