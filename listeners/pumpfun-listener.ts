@@ -822,6 +822,7 @@ export class PumpFunListener extends EventEmitter {
 
     this.isRunning = false;
     this.processedSignatures.clear();
+    this.recentlyEmittedMints.clear();
 
     this.emit('stopped');
     logger.info('pump.fun listener stopped');

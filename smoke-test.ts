@@ -947,6 +947,13 @@ async function runListenPipelineAndBuy(
       // of them) and run the full pipeline in parallel, leading to duplicate buys.
       const inFlightMints = new Set<string>();
 
+      // Remove any stale 'new-token' handlers from previous runs.
+      // initPumpFunListener() is a singleton — across multi-run smoke tests the
+      // same EventEmitter instance is reused.  Without this cleanup, handlers from
+      // earlier runs remain attached and fire alongside the current run's handler,
+      // causing duplicate pipeline processing (one per stale handler).
+      state.listener!.removeAllListeners('new-token');
+
       state.listener!.on('new-token', async (token: DetectedToken) => {
         if (token.source !== 'pumpfun') return;
         if (buySucceeded) return; // Already got a successful buy
