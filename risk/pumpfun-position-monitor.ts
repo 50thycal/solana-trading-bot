@@ -71,6 +71,8 @@ export interface PumpFunMonitorConfig {
   trailingStopActivationPercent?: number; // default: 15 (activate at +15% PnL)
   trailingStopDistancePercent?: number;   // default: 10 (sell if 10% below high water)
   hardTakeProfitPercent?: number;         // default: 0 (0 = disabled)
+  // Cost-adjusted exits: use actual cost basis + estimated sell overhead for triggers
+  costAdjustedExits?: boolean;            // default: false
 }
 
 /**
@@ -102,6 +104,7 @@ export class PumpFunPositionMonitor extends EventEmitter {
     const trailingActivation = config.trailingStopActivationPercent ?? 15;
     const trailingDistance = config.trailingStopDistancePercent ?? 10;
     const hardTp = config.hardTakeProfitPercent ?? 0;
+    const costAdjusted = config.costAdjustedExits ?? false;
 
     logger.info(
       {
@@ -115,6 +118,7 @@ export class PumpFunPositionMonitor extends EventEmitter {
           ? `enabled (activate at +${trailingActivation}%, trail ${trailingDistance}%)`
           : 'disabled',
         hardTakeProfit: hardTp > 0 ? `${hardTp}%` : 'disabled',
+        costAdjustedExits: costAdjusted ? 'enabled (triggers use actual cost basis + sell fee estimate)' : 'disabled',
       },
       '[pump.fun] Position monitor initialized',
     );
@@ -297,15 +301,35 @@ export class PumpFunPositionMonitor extends EventEmitter {
       return;
     }
 
-    // Calculate bonding curve P&L (used for TP/SL triggers)
-    const pnlSol = currentValueSol - position.entryAmountSol;
-    const pnlPercent = (pnlSol / position.entryAmountSol) * 100;
+    // Calculate bonding curve P&L (raw, before fees)
+    const rawPnlSol = currentValueSol - position.entryAmountSol;
+    const rawPnlPercent = (rawPnlSol / position.entryAmountSol) * 100;
 
-    // Calculate total-cost P&L (includes ATA rent + gas fees, for reporting only)
+    // Calculate total-cost P&L (includes ATA rent + gas fees)
     let totalCostPnlPercent: number | undefined;
     if (position.actualCostSol !== undefined && position.actualCostSol > 0) {
       const totalCostPnlSol = currentValueSol - position.actualCostSol;
       totalCostPnlPercent = (totalCostPnlSol / position.actualCostSol) * 100;
+    }
+
+    // ═══════════════ COST-ADJUSTED P&L FOR EXIT TRIGGERS ═══════════════
+    // When enabled, exit triggers use a more realistic P&L that accounts for:
+    // - Actual buy cost (ATA rent + gas) via actualCostSol
+    // - Estimated pump.fun sell fee (1.25% of sell proceeds)
+    // This prevents the trailing stop from selling at bonding curve "profits"
+    // that are actually net losses after transaction costs.
+    const costAdjustedExits = this.config.costAdjustedExits ?? false;
+    let pnlPercent: number;
+
+    if (costAdjustedExits && position.actualCostSol !== undefined && position.actualCostSol > 0) {
+      // Estimate net sell proceeds: currentValue minus pump.fun sell fee (1.25%)
+      const PUMP_FUN_SELL_FEE_RATE = 0.0125;
+      const estimatedNetSellProceeds = currentValueSol * (1 - PUMP_FUN_SELL_FEE_RATE);
+      // Use actual buy cost as the cost basis
+      const adjustedPnlSol = estimatedNetSellProceeds - position.actualCostSol;
+      pnlPercent = (adjustedPnlSol / position.actualCostSol) * 100;
+    } else {
+      pnlPercent = rawPnlPercent;
     }
 
     // Store current value for unrealized PnL tracking
@@ -318,7 +342,8 @@ export class PumpFunPositionMonitor extends EventEmitter {
         entryAmountSol: position.entryAmountSol,
         actualCostSol: position.actualCostSol,
         currentValueSol: currentValueSol.toFixed(4),
-        bondingCurvePnl: pnlPercent.toFixed(2) + '%',
+        bondingCurvePnl: rawPnlPercent.toFixed(2) + '%',
+        triggerPnl: pnlPercent.toFixed(2) + '%' + (costAdjustedExits ? ' (cost-adjusted)' : ''),
         totalCostPnl: totalCostPnlPercent !== undefined
           ? totalCostPnlPercent.toFixed(2) + '%'
           : 'N/A',

@@ -50,9 +50,13 @@ import {
   PUMPFUN_MIN_SCORE_REQUIRED,
   RUN_BOT,
   PRODUCTION_TIME_LIMIT_MS,
+  MAX_PRICE_DRIFT_PERCENT,
+  COST_ADJUSTED_EXITS,
 } from './helpers';
 import {
   buyOnPumpFun,
+  getBondingCurveState,
+  calculatePrice,
 } from './helpers/pumpfun';
 import { initTradeAuditManager, getTradeAuditManager } from './helpers/trade-audit';
 import { initLogSummarizer, getLogSummarizer } from './helpers/log-summarizer';
@@ -502,6 +506,7 @@ const runListener = async () => {
     trailingStopActivationPercent: config.trailingStopActivationPercent,
     trailingStopDistancePercent: config.trailingStopDistancePercent,
     hardTakeProfitPercent: config.hardTakeProfitPercent,
+    costAdjustedExits: config.costAdjustedExits,
   });
 
   pumpFunMonitor.on('trigger', async (event: PumpFunTriggerEvent) => {
@@ -802,6 +807,60 @@ const runListener = async () => {
         tokenMint: baseMintStr,
         actionTaken: 'buy_attempted',
       });
+    }
+
+    // ═══════════════ PRE-BUY PRICE DRIFT CHECK ═══════════════
+    // Re-fetch bonding curve state and compare to pipeline snapshot.
+    // If price moved up too much during sniper gate delay, skip the buy
+    // to avoid buying at the top of a pump.
+    if (MAX_PRICE_DRIFT_PERCENT > 0) {
+      try {
+        const freshState = await getBondingCurveState(connection, token.bondingCurve!);
+        if (freshState && !freshState.complete) {
+          const pipelinePrice = calculatePrice(bondingCurveState);
+          const currentPrice = calculatePrice(freshState);
+          const driftPercent = ((currentPrice - pipelinePrice) / pipelinePrice) * 100;
+
+          if (driftPercent > MAX_PRICE_DRIFT_PERCENT) {
+            logger.warn(
+              {
+                mint: baseMintStr,
+                pipelinePrice: pipelinePrice.toFixed(12),
+                currentPrice: currentPrice.toFixed(12),
+                driftPercent: driftPercent.toFixed(2),
+                maxAllowed: MAX_PRICE_DRIFT_PERCENT,
+              },
+              '[pump.fun] Price drifted too much during pipeline - skipping buy',
+            );
+            if (stateStore) {
+              stateStore.recordPoolDetection({
+                poolId: bondingCurveStr,
+                tokenMint: baseMintStr,
+                action: 'skipped',
+                poolType: 'pumpfun',
+                filterResults: [],
+                riskCheckPassed: false,
+                summary: `Price drift ${driftPercent.toFixed(1)}% > max ${MAX_PRICE_DRIFT_PERCENT}%`,
+              });
+            }
+            return;
+          }
+
+          logger.debug(
+            {
+              mint: baseMintStr,
+              driftPercent: driftPercent.toFixed(2),
+              maxAllowed: MAX_PRICE_DRIFT_PERCENT,
+            },
+            '[pump.fun] Price drift check passed',
+          );
+        }
+      } catch (error) {
+        logger.warn(
+          { mint: baseMintStr, error },
+          '[pump.fun] Price drift check failed (RPC error) - proceeding with buy',
+        );
+      }
     }
 
     if (DRY_RUN) {
