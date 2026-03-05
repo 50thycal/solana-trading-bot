@@ -556,19 +556,43 @@ function renderFeeBreakdown(report) {
     </div>
     ${sectionDivider}
     <div style="font-size:0.75rem;color:var(--text-secondary);padding:0.25rem 0.5rem;text-transform:uppercase;letter-spacing:0.05em;">Transaction Executor</div>
-    ${fb.bundleExecutorActive ? `
-    <div class="smoke-meta-item">
-      <span class="smoke-meta-label">${fb.executorType === 'jito' ? 'Jito' : 'Warp'} Tip (per tx)</span>
-      <span class="smoke-meta-value negative">${fmtSol(fb.jitoTipPerTx)} <span style="font-size:0.7rem;color:#00c853;">ACTIVE</span></span>
-    </div>
-    <div style="font-size:0.7rem;color:#00c853;padding:0 0.75rem 0.25rem;">Transactions sent via ${fb.executorType} bundle (MEV protected)</div>
-    ` : `
+    ${(() => {
+      if (!fb.bundleExecutorActive) {
+        return `
     <div class="smoke-meta-item">
       <span class="smoke-meta-label">Jito Tip (configured per tx)</span>
       <span class="smoke-meta-value" style="opacity:0.5;">${fmtSol(fb.jitoTipPerTx)} <span style="font-size:0.7rem;color:#ff9800;">NOT SENT</span></span>
     </div>
-    <div style="font-size:0.7rem;color:#ff9800;padding:0 0.75rem 0.25rem;">TRANSACTION_EXECUTOR=${fb.executorType || 'default'} — set to "jito" or "warp" to enable bundles</div>
-    `}
+    <div style="font-size:0.7rem;color:#ff9800;padding:0 0.75rem 0.25rem;">TRANSACTION_EXECUTOR=${fb.executorType || 'default'} — set to "jito" or "warp" to enable bundles</div>`;
+      }
+      const buyExec = fb.buyExecutorUsed || 'unknown';
+      const sellExec = fb.sellExecutorUsed || 'unknown';
+      const buyIsJito = buyExec === 'jito';
+      const sellIsJito = sellExec === 'jito';
+      const bothJito = buyIsJito && sellIsJito;
+      const neitherJito = !buyIsJito && !sellIsJito;
+      const statusColor = bothJito ? '#00c853' : neitherJito ? '#ff5252' : '#ff9800';
+      const statusLabel = bothJito ? 'SENT' : neitherJito ? 'FAILED → RPC' : 'PARTIAL';
+      const detailText = bothJito
+        ? 'Both transactions sent via Jito bundle (MEV protected)'
+        : neitherJito
+        ? 'Jito bundles failed — fell back to default RPC (no tip sent)'
+        : 'Buy: ' + (buyIsJito ? 'Jito ✓' : 'default RPC ✗') + ' | Sell: ' + (sellIsJito ? 'Jito ✓' : 'default RPC ✗');
+      return `
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">${fb.executorType === 'jito' ? 'Jito' : 'Warp'} Tip (per tx)</span>
+      <span class="smoke-meta-value negative">${fmtSol(fb.jitoTipPerTx)} <span style="font-size:0.7rem;color:${statusColor};">${statusLabel}</span></span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Buy Executor</span>
+      <span class="smoke-meta-value" style="color:${buyIsJito ? '#00c853' : '#ff5252'};">${buyExec}${buyIsJito ? ' ✓' : ' (fallback)'}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Sell Executor</span>
+      <span class="smoke-meta-value" style="color:${sellIsJito ? '#00c853' : '#ff5252'};">${sellExec}${sellIsJito ? ' ✓' : ' (fallback)'}</span>
+    </div>
+    <div style="font-size:0.7rem;color:${statusColor};padding:0 0.75rem 0.25rem;">${detailText}</div>`;
+    })()}
     ${sellReceivedHtml}
     ${sectionDivider}
     <div class="smoke-meta-item" style="padding-top: 0.25rem;">
@@ -933,7 +957,13 @@ function buildReportText(report) {
     lines.push(`Pump Buy Fee (~1%, est):      ${fb.estimatedPumpBuyFee.toFixed(6)} SOL`);
     lines.push(`Pump Sell Fee (~1.25%, est):   ${fb.estimatedPumpSellFee.toFixed(6)} SOL`);
     if (fb.bundleExecutorActive) {
-      lines.push(`${fb.executorType} Tip (per tx):          ${fb.jitoTipPerTx.toFixed(6)} SOL ✓ ACTIVE`);
+      const buyExec = fb.buyExecutorUsed || 'unknown';
+      const sellExec = fb.sellExecutorUsed || 'unknown';
+      const bothJito = buyExec === 'jito' && sellExec === 'jito';
+      const tipNote = bothJito ? '✓ SENT via Jito' : `buy: ${buyExec}, sell: ${sellExec}`;
+      lines.push(`${fb.executorType} Tip (per tx):          ${fb.jitoTipPerTx.toFixed(6)} SOL ${tipNote}`);
+      lines.push(`Buy Executor Used:            ${buyExec}`);
+      lines.push(`Sell Executor Used:           ${sellExec}`);
     } else {
       lines.push(`Jito Tip (configured/tx):     ${fb.jitoTipPerTx.toFixed(6)} SOL ⚠ NOT SENT (set TRANSACTION_EXECUTOR=jito)`);
     }

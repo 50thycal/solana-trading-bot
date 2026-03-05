@@ -26,18 +26,18 @@ export class FallbackTransactionExecutor implements TransactionExecutor {
     const txSignature = bs58.encode(transaction.signatures[0]);
 
     // Try primary executor first
-    logger.debug(`Attempting transaction with ${this.primaryName} executor`);
+    logger.info(`[tx-executor] Attempting transaction with ${this.primaryName} executor`);
     const primaryResult = await this.primary.executeAndConfirm(transaction, payer, latestBlockhash);
 
     if (primaryResult.confirmed) {
-      logger.debug(`Transaction confirmed via ${this.primaryName} executor`);
-      return primaryResult;
+      logger.info(`[tx-executor] Transaction confirmed via ${this.primaryName} executor`);
+      return { ...primaryResult, executorUsed: this.primaryName };
     }
 
     // Primary failed, try fallback
-    logger.debug(
+    logger.warn(
       { error: primaryResult.error },
-      `${this.primaryName} executor failed, falling back to ${this.fallbackName}`
+      `[tx-executor] ${this.primaryName} executor FAILED — falling back to ${this.fallbackName} (no tip will be sent)`
     );
 
     // For fallback, we may need a fresh blockhash if significant time has passed
@@ -50,8 +50,8 @@ export class FallbackTransactionExecutor implements TransactionExecutor {
     );
 
     if (fallbackResult.confirmed) {
-      logger.debug(`Transaction confirmed via ${this.fallbackName} executor`);
-      return fallbackResult;
+      logger.warn(`[tx-executor] Transaction confirmed via ${this.fallbackName} executor (${this.primaryName} was unavailable — NO TIP SENT)`);
+      return { ...fallbackResult, executorUsed: this.fallbackName };
     }
 
     // Check if the fallback failed because the transaction was already processed
@@ -67,6 +67,7 @@ export class FallbackTransactionExecutor implements TransactionExecutor {
         confirmed: true,
         signature: primaryResult.signature || txSignature,
         error: undefined,
+        executorUsed: this.primaryName,
       };
     }
 

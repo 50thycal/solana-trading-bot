@@ -204,6 +204,8 @@ export interface PumpFunTxResult {
   actualVerified: boolean;      // Whether the amount was verified post-tx
   verificationMethod?: VerificationMethod;  // How verification was performed
   slippagePercent?: number;     // Actual slippage vs expected
+  /** Which executor actually handled the tx (e.g. 'jito', 'default') — only set when using an executor */
+  executorUsed?: string;
 }
 
 /**
@@ -963,6 +965,7 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
 
     // Send and confirm — via executor (Jito bundle) or direct RPC
     let signature: string;
+    let executorUsed: string | undefined;
     if (executor) {
       // Convert legacy Transaction → VersionedTransaction for the executor
       const messageV0 = new TransactionMessage({
@@ -983,6 +986,7 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
         };
       }
       signature = execResult.signature;
+      executorUsed = execResult.executorUsed;
     } else {
       signature = await connection.sendRawTransaction(transaction.serialize(), {
         skipPreflight: false,
@@ -1076,6 +1080,7 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
       actualVerified: verification.success,
       verificationMethod: verification.verificationMethod,
       slippagePercent: verification.tokenSlippagePercent,
+      executorUsed,
     };
   } catch (error) {
     logger.error({ error, mint: mint.toString() }, 'pump.fun buy failed');
@@ -1214,6 +1219,7 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
 
     // Send and confirm — via executor (Jito bundle) or direct RPC
     let signature: string;
+    let executorUsed: string | undefined;
     if (executor) {
       // Convert legacy Transaction → VersionedTransaction for the executor
       const messageV0 = new TransactionMessage({
@@ -1234,6 +1240,7 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
         };
       }
       signature = execResult.signature;
+      executorUsed = execResult.executorUsed;
     } else {
       signature = await connection.sendRawTransaction(transaction.serialize(), {
         skipPreflight: false,
@@ -1299,6 +1306,7 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
       actualVerified: verification.success,
       verificationMethod: verification.verificationMethod,
       slippagePercent: verification.solSlippagePercent,
+      executorUsed,
     };
   } catch (error) {
     logger.error({ error, mint: mint.toString() }, 'pump.fun sell failed');
