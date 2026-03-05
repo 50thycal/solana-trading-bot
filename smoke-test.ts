@@ -89,6 +89,8 @@ import {
   COST_ADJUSTED_EXITS,
   MAX_PRICE_DRIFT_PERCENT,
   CUSTOM_FEE,
+  JITO_BUNDLE_TIMEOUT,
+  JITO_BUNDLE_POLL_INTERVAL,
 } from './helpers';
 import {
   buyOnPumpFun,
@@ -97,6 +99,11 @@ import {
 import { initTradeAuditManager } from './helpers/trade-audit';
 import { initRpcManager } from './helpers/rpc-manager';
 import { getConfig } from './helpers/config-validator';
+import { TransactionExecutor } from './transactions/transaction-executor.interface';
+import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
+import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
+import { DefaultTransactionExecutor } from './transactions/default-transaction-executor';
+import { FallbackTransactionExecutor } from './transactions/fallback-transaction-executor';
 import {
   PumpFunListener,
   initPumpFunListener,
@@ -154,13 +161,19 @@ export interface FeeBreakdown {
   /** Estimated pump.fun sell fee (~1.25% of sell proceeds, deducted from SOL received) */
   estimatedPumpSellFee: number;
 
-  // ── Jito tip (from config — shown for context) ──
-  /** Configured Jito/Warp tip per transaction (from CUSTOM_FEE env var) */
+  // ── Jito tip (from config — shown for reference) ──
+  /** Configured Jito/Warp tip per transaction (from CUSTOM_FEE env var).
+   *  NOTE: pump.fun buy/sell currently use sendRawTransaction directly,
+   *  bypassing the Jito/Warp executor, so this tip is NOT actually sent. */
   jitoTipPerTx: number;
 
   // ── All-in totals ──
   /** Total friction = walletOverhead + estimatedPumpBuyFee + estimatedPumpSellFee */
   totalOverhead: number;
+  /** Whether the bundle executor (Jito/Warp) is active for this run */
+  bundleExecutorActive: boolean;
+  /** Which executor is configured: 'jito', 'warp', or 'default' */
+  executorType: string;
 }
 
 export interface SmokeTestReport {
@@ -552,6 +565,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     sellExpectedSol: number | undefined;
     priceHistory: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
     highWaterMarkPercent: number | undefined;
+    executor: TransactionExecutor | undefined;
   } = {
     connection: null,
     wallet: null,
@@ -573,6 +587,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     sellExpectedSol: undefined,
     priceHistory: [],
     highWaterMarkPercent: undefined,
+    executor: undefined,
   };
 
   // Wrap the entire test body in try/finally to guarantee liveProgress is
@@ -701,10 +716,31 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
       costAdjustedExits: COST_ADJUSTED_EXITS,
     });
 
+    // Initialize transaction executor (Jito/Warp bundle support)
+    if (TRANSACTION_EXECUTOR === 'jito') {
+      const jitoExecutor = new JitoTransactionExecutor(
+        CUSTOM_FEE, state.connection!, SIMULATE_TRANSACTION,
+        JITO_BUNDLE_TIMEOUT, JITO_BUNDLE_POLL_INTERVAL,
+      );
+      if (USE_FALLBACK_EXECUTOR) {
+        const defaultExecutor = new DefaultTransactionExecutor(state.connection!);
+        state.executor = new FallbackTransactionExecutor(jitoExecutor, defaultExecutor, 'jito', 'default');
+      } else {
+        state.executor = jitoExecutor;
+      }
+      logger.info({ tip: CUSTOM_FEE }, '[smoke-test] Jito bundle executor enabled');
+    } else if (TRANSACTION_EXECUTOR === 'warp') {
+      state.executor = new WarpTransactionExecutor(CUSTOM_FEE, state.connection!);
+      logger.info({ tip: CUSTOM_FEE }, '[smoke-test] Warp executor enabled');
+    } else {
+      logger.info('[smoke-test] Using default RPC (no bundle executor)');
+    }
+
     // Initialize listener
     state.listener = initPumpFunListener(state.connection!);
 
-    return `Pipeline, position monitor (TP:${TAKE_PROFIT}%/SL:${STOP_LOSS}%/Hold:${maxHoldMs / 1000}s), and listener initialized`;
+    const executorLabel = state.executor ? `${TRANSACTION_EXECUTOR} bundles (tip: ${CUSTOM_FEE})` : 'direct RPC';
+    return `Pipeline, position monitor (TP:${TAKE_PROFIT}%/SL:${STOP_LOSS}%/Hold:${maxHoldMs / 1000}s), listener, tx: ${executorLabel}`;
   });
 
   if (!bootOk) return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceBefore, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
@@ -893,6 +929,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
         computeUnitLimit: COMPUTE_UNIT_LIMIT,
         computeUnitPrice: COMPUTE_UNIT_PRICE,
         isToken2022: state.isToken2022,
+        executor: state.executor,
       });
 
       if (sellResult.success) {
@@ -1002,6 +1039,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
       sellExpectedSol: state.sellExpectedSol,
       priceHistory: state.priceHistory.length > 0 ? state.priceHistory : undefined,
       highWaterMarkPercent: state.highWaterMarkPercent,
+      bundleExecutorActive: state.executor !== undefined,
     },
   );
 
@@ -1043,6 +1081,7 @@ async function runListenPipelineAndBuy(
     sellExpectedSol: number | undefined;
     priceHistory: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
     highWaterMarkPercent: number | undefined;
+    executor: TransactionExecutor | undefined;
   },
   tradeAmount: number,
   timeoutMs: number,
@@ -1167,6 +1206,7 @@ async function runListenPipelineAndBuy(
             computeUnitLimit: COMPUTE_UNIT_LIMIT,
             computeUnitPrice: COMPUTE_UNIT_PRICE,
             isToken2022,
+            executor: state.executor,
           });
 
           if (buyResult.success) {
@@ -1302,6 +1342,7 @@ interface BuildReportExtras {
   sellExpectedSol?: number;
   priceHistory?: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
   highWaterMarkPercent?: number;
+  bundleExecutorActive?: boolean;
 }
 
 function buildReport(
@@ -1368,12 +1409,16 @@ function buildReport(
     const estimatedPumpBuyFee = tradeAmount * 0.01;       // ~1% on buys
     const estimatedPumpSellFee = sellSolReceived * 0.0125; // ~1.25% on sells
 
-    // ── Jito tip (from config, for context) ──
+    // ── Jito tip (from config, for reference only) ──
+    // NOTE: buyOnPumpFun/sellOnPumpFun use connection.sendRawTransaction()
+    // directly, bypassing the Jito/Warp executor. This tip is configured but
+    // NOT actually sent in the current pump.fun transaction path.
     const jitoTipPerTx = parseFloat(CUSTOM_FEE) || 0;
 
     // ── All-in total: wallet overhead + protocol fees ──
     const totalOverhead = walletOverhead + estimatedPumpBuyFee + estimatedPumpSellFee;
 
+    const bundleExecutorActive = extras?.bundleExecutorActive ?? false;
     feeBreakdown = {
       buyOverhead: measuredBuyOverhead,
       sellOverhead,
@@ -1382,6 +1427,8 @@ function buildReport(
       estimatedPumpSellFee,
       jitoTipPerTx,
       totalOverhead,
+      bundleExecutorActive,
+      executorType: TRANSACTION_EXECUTOR,
     };
   }
 
@@ -1599,7 +1646,11 @@ function buildReport(
     logger.info(`    Wallet overhead: ${fb.walletOverhead.toFixed(6)} SOL (measured)`);
     logger.info(`    Pump buy fee:    ~${fb.estimatedPumpBuyFee.toFixed(6)} SOL (~1%%, estimated)`);
     logger.info(`    Pump sell fee:   ~${fb.estimatedPumpSellFee.toFixed(6)} SOL (~1.25%%, estimated)`);
-    logger.info(`    Jito tip/tx:     ${fb.jitoTipPerTx.toFixed(6)} SOL (configured)`);
+    if (fb.bundleExecutorActive) {
+      logger.info(`    ${fb.executorType} tip/tx:  ${fb.jitoTipPerTx.toFixed(6)} SOL (ACTIVE — bundle executor enabled)`);
+    } else {
+      logger.info(`    Jito tip/tx:     ${fb.jitoTipPerTx.toFixed(6)} SOL (configured, NOT sent — set TRANSACTION_EXECUTOR=jito)`);
+    }
     logger.info(`    Total overhead:  ${fb.totalOverhead.toFixed(6)} SOL (wallet + protocol fees)`);
   }
   if (exitTrigger) {
