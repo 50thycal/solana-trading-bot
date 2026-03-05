@@ -44,6 +44,8 @@ export interface PumpFunPosition {
   sniperWallets?: string[];
   // Trailing stop: highest PnL % seen (updated each check)
   highWaterMarkPercent?: number;
+  /** Price snapshots captured during position monitoring (for sparkline charts) */
+  priceHistory?: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
 }
 
 /**
@@ -335,6 +337,11 @@ export class PumpFunPositionMonitor extends EventEmitter {
     // Store current value for unrealized PnL tracking
     position.lastCurrentValueSol = currentValueSol;
     position.lastCheckTimestamp = Date.now();
+
+    // Append price snapshot for sparkline charts (capped at 200 entries)
+    if (!position.priceHistory) position.priceHistory = [];
+    position.priceHistory.push({ timestamp: Date.now(), valueSol: currentValueSol, pnlPercent: rawPnlPercent });
+    if (position.priceHistory.length > 200) position.priceHistory.shift();
 
     logger.debug(
       {

@@ -101,6 +101,14 @@ function renderProgress(progress) {
   document.getElementById('overall-result').className = 'card-value';
 
   document.getElementById('pnl-value').textContent = '--';
+  document.getElementById('trade-return').textContent = '--';
+  document.getElementById('trade-return').className = 'card-value';
+  document.getElementById('total-overhead').textContent = '--';
+  document.getElementById('total-overhead').className = 'card-value';
+  document.getElementById('pnl-percent-with').textContent = '--';
+  document.getElementById('pnl-percent-with').className = 'card-value';
+  document.getElementById('pnl-percent-without').textContent = '--';
+  document.getElementById('pnl-percent-without').className = 'card-value';
   document.getElementById('steps-passed').textContent = '--';
   document.getElementById('steps-failed').textContent = '--';
   document.getElementById('steps-failed').className = 'card-value';
@@ -116,7 +124,22 @@ function renderProgress(progress) {
     walletBefore.textContent = '--';
   }
 
+  document.getElementById('wallet-after').textContent = '--';
   document.getElementById('net-cost').textContent = '--';
+
+  document.getElementById('efficiency-score').textContent = '--';
+  document.getElementById('efficiency-score').className = 'card-value big';
+  document.getElementById('hold-duration').textContent = '--';
+  document.getElementById('high-water-mark').textContent = '--';
+  document.getElementById('high-water-mark').className = 'card-value';
+
+  // Hide panels during progress
+  const feePanel = document.getElementById('fee-breakdown-panel');
+  if (feePanel) feePanel.style.display = 'none';
+  const slippagePanel = document.getElementById('slippage-panel');
+  if (slippagePanel) slippagePanel.style.display = 'none';
+  const pricePanel = document.getElementById('price-chart-panel');
+  if (pricePanel) pricePanel.style.display = 'none';
 
   // Steps list from live progress
   const stepsList = document.getElementById('steps-list');
@@ -213,6 +236,79 @@ function renderReport(report) {
     pnlEl.textContent = '--';
   }
 
+  // Trade return (ex-overhead)
+  const tradeReturnEl = document.getElementById('trade-return');
+  if (report.tradeReturnSol !== undefined) {
+    tradeReturnEl.textContent = formatPnl(report.tradeReturnSol);
+    tradeReturnEl.className = `card-value ${pnlClass(report.tradeReturnSol)}`;
+  } else {
+    tradeReturnEl.textContent = '--';
+    tradeReturnEl.className = 'card-value';
+  }
+
+  // Total overhead
+  const totalOverheadEl = document.getElementById('total-overhead');
+  if (report.feeBreakdown && report.feeBreakdown.totalOverhead !== undefined) {
+    totalOverheadEl.textContent = `${report.feeBreakdown.totalOverhead.toFixed(6)} SOL`;
+    totalOverheadEl.className = 'card-value negative';
+  } else {
+    totalOverheadEl.textContent = '--';
+    totalOverheadEl.className = 'card-value';
+  }
+
+  // % Return with overhead
+  const pctWithEl = document.getElementById('pnl-percent-with');
+  if (report.pnlPercentWithOverhead !== undefined) {
+    const sign = report.pnlPercentWithOverhead >= 0 ? '+' : '';
+    pctWithEl.textContent = `${sign}${report.pnlPercentWithOverhead.toFixed(2)}%`;
+    pctWithEl.className = `card-value ${pnlClass(report.pnlPercentWithOverhead)}`;
+  } else {
+    pctWithEl.textContent = '--';
+    pctWithEl.className = 'card-value';
+  }
+
+  // % Return without overhead
+  const pctWithoutEl = document.getElementById('pnl-percent-without');
+  if (report.pnlPercentWithoutOverhead !== undefined) {
+    const sign = report.pnlPercentWithoutOverhead >= 0 ? '+' : '';
+    pctWithoutEl.textContent = `${sign}${report.pnlPercentWithoutOverhead.toFixed(2)}%`;
+    pctWithoutEl.className = `card-value ${pnlClass(report.pnlPercentWithoutOverhead)}`;
+  } else {
+    pctWithoutEl.textContent = '--';
+    pctWithoutEl.className = 'card-value';
+  }
+
+  // Efficiency score
+  const effEl = document.getElementById('efficiency-score');
+  if (report.tradeEfficiencyScore !== undefined) {
+    effEl.textContent = `${report.tradeEfficiencyScore}/100`;
+    const effClass = report.tradeEfficiencyScore >= 70 ? 'positive'
+      : report.tradeEfficiencyScore >= 40 ? '' : 'negative';
+    effEl.className = `card-value big ${effClass}`;
+  } else {
+    effEl.textContent = '--';
+    effEl.className = 'card-value big';
+  }
+
+  // Hold duration
+  const holdEl = document.getElementById('hold-duration');
+  if (report.holdDurationMs) {
+    holdEl.textContent = formatDuration(report.holdDurationMs);
+  } else {
+    holdEl.textContent = '--';
+  }
+
+  // High water mark
+  const hwmEl = document.getElementById('high-water-mark');
+  if (report.highWaterMarkPercent !== undefined) {
+    const sign = report.highWaterMarkPercent >= 0 ? '+' : '';
+    hwmEl.textContent = `${sign}${report.highWaterMarkPercent.toFixed(2)}%`;
+    hwmEl.className = `card-value ${pnlClass(report.highWaterMarkPercent)}`;
+  } else {
+    hwmEl.textContent = '--';
+    hwmEl.className = 'card-value';
+  }
+
   const passedEl = document.getElementById('steps-passed');
   passedEl.textContent = `${report.passedCount}/${report.totalSteps}`;
 
@@ -235,11 +331,27 @@ function renderReport(report) {
     walletBefore.textContent = `${report.walletBalanceBefore.toFixed(4)} SOL`;
   }
 
+  const walletAfter = document.getElementById('wallet-after');
+  if (report.walletBalanceAfter !== undefined) {
+    walletAfter.textContent = `${report.walletBalanceAfter.toFixed(4)} SOL`;
+  } else {
+    walletAfter.textContent = '--';
+  }
+
   const netCost = document.getElementById('net-cost');
   if (report.netCostSol !== undefined) {
     netCost.textContent = `${report.netCostSol.toFixed(6)} SOL`;
     netCost.className = `card-value ${report.netCostSol > 0 ? 'negative' : 'positive'}`;
   }
+
+  // Fee breakdown panel
+  renderFeeBreakdown(report);
+
+  // Slippage analysis panel
+  renderSlippageAnalysis(report);
+
+  // Price chart panel
+  renderPriceChart(report);
 
   // Steps list
   const stepsList = document.getElementById('steps-list');
@@ -389,6 +501,254 @@ function renderTradedToken(report) {
 }
 
 /**
+ * Render the Fee Breakdown panel for a completed report.
+ * Shows itemized overhead costs and estimated protocol fees.
+ */
+function renderFeeBreakdown(report) {
+  const panel = document.getElementById('fee-breakdown-panel');
+  const meta = document.getElementById('fee-breakdown-meta');
+  const subtitle = document.getElementById('fee-breakdown-subtitle');
+  if (!panel || !meta) return;
+
+  const fb = report.feeBreakdown;
+  if (!fb) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  subtitle.textContent = `${fb.totalOverhead.toFixed(6)} SOL total overhead`;
+
+  const fmtSol = (v) => v !== undefined && v !== null ? `${v.toFixed(6)} SOL` : '—';
+
+  const sellReceivedHtml = report.sellSolReceived !== undefined
+    ? `<div class="smoke-meta-item">
+        <span class="smoke-meta-label">SOL Received from Sell</span>
+        <span class="smoke-meta-value">${fmtSol(report.sellSolReceived)}</span>
+      </div>`
+    : '';
+
+  meta.innerHTML = `
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Buy Overhead (gas+tips+rent)</span>
+      <span class="smoke-meta-value negative">${fmtSol(fb.buyOverhead)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Sell Overhead (gas+tips)</span>
+      <span class="smoke-meta-value negative">${fmtSol(fb.sellOverhead)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Jito Tip (per tx)</span>
+      <span class="smoke-meta-value">${fmtSol(fb.jitoTipPerTx)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Est. Pump Buy Fee (~1%)</span>
+      <span class="smoke-meta-value">${fmtSol(fb.estimatedPumpBuyFee)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Est. Pump Sell Fee (~1.25%)</span>
+      <span class="smoke-meta-value">${fmtSol(fb.estimatedPumpSellFee)}</span>
+    </div>
+    ${sellReceivedHtml}
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Total Overhead</span>
+      <span class="smoke-meta-value negative" style="font-weight:700;">${fmtSol(fb.totalOverhead)}</span>
+    </div>
+  `;
+}
+
+/**
+ * Render the Slippage Analysis panel.
+ */
+function renderSlippageAnalysis(report) {
+  const panel = document.getElementById('slippage-panel');
+  const meta = document.getElementById('slippage-meta');
+  const subtitle = document.getElementById('slippage-subtitle');
+  if (!panel || !meta) return;
+
+  const s = report.slippage;
+  if (!s) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  const totalCost = (s.buySlippageCostSol || 0) + (s.sellSlippageCostSol || 0);
+  subtitle.textContent = totalCost > 0 ? `~${totalCost.toFixed(6)} SOL lost to slippage` : 'Minimal slippage';
+
+  const fmtPct = (v) => {
+    if (v === undefined || v === null) return '—';
+    const sign = v >= 0 ? '+' : '';
+    return `${sign}${v.toFixed(2)}%`;
+  };
+  const fmtSol = (v) => v !== undefined && v !== null ? `${v.toFixed(6)} SOL` : '—';
+  const fmtTokens = (v) => {
+    if (v === undefined || v === null) return '—';
+    if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+    if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
+    if (v >= 1e3) return `${(v / 1e3).toFixed(2)}K`;
+    return v.toFixed(0);
+  };
+
+  const buySlipClass = (s.buySlippagePercent ?? 0) < -2 ? 'negative' : (s.buySlippagePercent ?? 0) > 0 ? 'positive' : '';
+  const sellSlipClass = (s.sellSlippagePercent ?? 0) < -2 ? 'negative' : (s.sellSlippagePercent ?? 0) > 0 ? 'positive' : '';
+
+  meta.innerHTML = `
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Buy Slippage</span>
+      <span class="smoke-meta-value ${buySlipClass}">${fmtPct(s.buySlippagePercent)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Expected / Actual Tokens</span>
+      <span class="smoke-meta-value">${fmtTokens(s.buyExpectedTokens)} / ${fmtTokens(s.buyActualTokens)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Buy Slippage Cost</span>
+      <span class="smoke-meta-value ${s.buySlippageCostSol > 0 ? 'negative' : ''}">${fmtSol(s.buySlippageCostSol)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Sell Slippage</span>
+      <span class="smoke-meta-value ${sellSlipClass}">${fmtPct(s.sellSlippagePercent)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Expected / Actual SOL</span>
+      <span class="smoke-meta-value">${fmtSol(s.sellExpectedSol)} / ${fmtSol(s.sellActualSol)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Sell Slippage Cost</span>
+      <span class="smoke-meta-value ${s.sellSlippageCostSol > 0 ? 'negative' : ''}">${fmtSol(s.sellSlippageCostSol)}</span>
+    </div>
+  `;
+}
+
+/**
+ * Render the Price During Hold sparkline chart using Canvas.
+ * No external chart library needed — draws a simple line chart.
+ */
+function renderPriceChart(report) {
+  const panel = document.getElementById('price-chart-panel');
+  const subtitle = document.getElementById('price-chart-subtitle');
+  const canvas = document.getElementById('price-sparkline');
+  if (!panel || !canvas) return;
+
+  const history = report.priceHistory;
+  if (!history || history.length < 2) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+
+  const minPnl = Math.min(...history.map(p => p.pnlPercent));
+  const maxPnl = Math.max(...history.map(p => p.pnlPercent));
+  subtitle.textContent = `${history.length} snapshots · PnL range: ${minPnl.toFixed(1)}% to ${maxPnl.toFixed(1)}%`;
+
+  // Draw on canvas
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+
+  const w = rect.width;
+  const h = rect.height;
+  const padding = { top: 20, right: 15, bottom: 25, left: 50 };
+  const plotW = w - padding.left - padding.right;
+  const plotH = h - padding.top - padding.bottom;
+
+  // Clear
+  ctx.clearRect(0, 0, w, h);
+
+  // Value range for Y axis
+  const values = history.map(p => p.pnlPercent);
+  let yMin = Math.min(...values, 0);
+  let yMax = Math.max(...values, 0);
+  const yPad = Math.max((yMax - yMin) * 0.1, 0.5);
+  yMin -= yPad;
+  yMax += yPad;
+
+  // Time range for X axis
+  const tMin = history[0].timestamp;
+  const tMax = history[history.length - 1].timestamp;
+  const tRange = tMax - tMin || 1;
+
+  const xScale = (t) => padding.left + ((t - tMin) / tRange) * plotW;
+  const yScale = (v) => padding.top + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+  // Draw zero line
+  const zeroY = yScale(0);
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(padding.left, zeroY);
+  ctx.lineTo(w - padding.right, zeroY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Draw Y axis labels
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText('0%', padding.left - 5, zeroY + 4);
+  ctx.fillText(`${yMax.toFixed(1)}%`, padding.left - 5, padding.top + 4);
+  ctx.fillText(`${yMin.toFixed(1)}%`, padding.left - 5, h - padding.bottom + 4);
+
+  // Draw X axis labels (start and end time)
+  ctx.textAlign = 'center';
+  const fmtT = (ts) => {
+    const d = new Date(ts);
+    const m = String(d.getMinutes()).padStart(2, '0');
+    const s = String(d.getSeconds()).padStart(2, '0');
+    return `${d.getHours()}:${m}:${s}`;
+  };
+  ctx.fillText(fmtT(tMin), padding.left, h - 5);
+  ctx.fillText(fmtT(tMax), w - padding.right, h - 5);
+
+  // Draw gradient fill
+  const gradient = ctx.createLinearGradient(0, padding.top, 0, h - padding.bottom);
+  const lastVal = values[values.length - 1];
+  if (lastVal >= 0) {
+    gradient.addColorStop(0, 'rgba(0, 200, 83, 0.3)');
+    gradient.addColorStop(1, 'rgba(0, 200, 83, 0.02)');
+  } else {
+    gradient.addColorStop(0, 'rgba(255, 82, 82, 0.02)');
+    gradient.addColorStop(1, 'rgba(255, 82, 82, 0.3)');
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(xScale(history[0].timestamp), yScale(history[0].pnlPercent));
+  for (let i = 1; i < history.length; i++) {
+    ctx.lineTo(xScale(history[i].timestamp), yScale(history[i].pnlPercent));
+  }
+  // Close the fill area down to zero line
+  ctx.lineTo(xScale(history[history.length - 1].timestamp), zeroY);
+  ctx.lineTo(xScale(history[0].timestamp), zeroY);
+  ctx.closePath();
+  ctx.fillStyle = gradient;
+  ctx.fill();
+
+  // Draw the line
+  ctx.beginPath();
+  ctx.moveTo(xScale(history[0].timestamp), yScale(history[0].pnlPercent));
+  for (let i = 1; i < history.length; i++) {
+    ctx.lineTo(xScale(history[i].timestamp), yScale(history[i].pnlPercent));
+  }
+  ctx.strokeStyle = lastVal >= 0 ? '#00c853' : '#ff5252';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Draw endpoint dot
+  const lastX = xScale(history[history.length - 1].timestamp);
+  const lastY = yScale(history[history.length - 1].pnlPercent);
+  ctx.beginPath();
+  ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+  ctx.fillStyle = lastVal >= 0 ? '#00c853' : '#ff5252';
+  ctx.fill();
+}
+
+/**
  * Load and render the current (live) smoke test report or in-progress status
  */
 async function updateSmokeTestReport() {
@@ -528,9 +888,48 @@ function buildReportText(report) {
 
   if (report.exitTrigger) lines.push(`Exit Trigger: ${report.exitTrigger}`);
   if (report.walletBalanceBefore !== undefined) lines.push(`Wallet Before: ${report.walletBalanceBefore.toFixed(4)} SOL`);
+  if (report.walletBalanceAfter !== undefined) lines.push(`Wallet After: ${report.walletBalanceAfter.toFixed(4)} SOL`);
   if (report.netCostSol !== undefined) {
     lines.push(`Net Cost: ${report.netCostSol.toFixed(6)} SOL`);
-    lines.push(`P&L: ${formatPnl(-report.netCostSol)}`);
+    lines.push(`P&L (All-in): ${formatPnl(-report.netCostSol)}`);
+  }
+  if (report.tradeReturnSol !== undefined) lines.push(`Trade Return (ex-overhead): ${formatPnl(report.tradeReturnSol)}`);
+  if (report.pnlPercentWithOverhead !== undefined) {
+    const sign = report.pnlPercentWithOverhead >= 0 ? '+' : '';
+    lines.push(`% Return (All-in): ${sign}${report.pnlPercentWithOverhead.toFixed(2)}%`);
+  }
+  if (report.pnlPercentWithoutOverhead !== undefined) {
+    const sign = report.pnlPercentWithoutOverhead >= 0 ? '+' : '';
+    lines.push(`% Return (Trade only): ${sign}${report.pnlPercentWithoutOverhead.toFixed(2)}%`);
+  }
+  if (report.feeBreakdown) {
+    const fb = report.feeBreakdown;
+    lines.push('');
+    lines.push('--- Fee Breakdown ---');
+    lines.push(`Buy Overhead (gas+tips+rent): ${fb.buyOverhead.toFixed(6)} SOL`);
+    lines.push(`Sell Overhead (gas+tips):     ${fb.sellOverhead.toFixed(6)} SOL`);
+    lines.push(`Jito Tip (per tx):            ${fb.jitoTipPerTx.toFixed(6)} SOL`);
+    lines.push(`Est. Pump Buy Fee (~1%):      ${fb.estimatedPumpBuyFee.toFixed(6)} SOL`);
+    lines.push(`Est. Pump Sell Fee (~1.25%):   ${fb.estimatedPumpSellFee.toFixed(6)} SOL`);
+    lines.push(`Total Overhead:               ${fb.totalOverhead.toFixed(6)} SOL`);
+    if (report.sellSolReceived !== undefined) lines.push(`SOL Received from Sell:       ${report.sellSolReceived.toFixed(6)} SOL`);
+  }
+
+  if (report.tradeEfficiencyScore !== undefined) lines.push(`Trade Efficiency Score: ${report.tradeEfficiencyScore}/100`);
+  if (report.holdDurationMs) lines.push(`Hold Duration: ${formatDuration(report.holdDurationMs)}`);
+  if (report.highWaterMarkPercent !== undefined) {
+    const sign = report.highWaterMarkPercent >= 0 ? '+' : '';
+    lines.push(`High Water Mark: ${sign}${report.highWaterMarkPercent.toFixed(2)}%`);
+  }
+
+  if (report.slippage) {
+    const s = report.slippage;
+    lines.push('');
+    lines.push('--- Slippage Analysis ---');
+    if (s.buySlippagePercent !== undefined) lines.push(`Buy Slippage:    ${s.buySlippagePercent.toFixed(2)}%`);
+    if (s.sellSlippagePercent !== undefined) lines.push(`Sell Slippage:   ${s.sellSlippagePercent.toFixed(2)}%`);
+    if (s.buySlippageCostSol !== undefined) lines.push(`Buy Slip Cost:   ${s.buySlippageCostSol.toFixed(6)} SOL`);
+    if (s.sellSlippageCostSol !== undefined) lines.push(`Sell Slip Cost:  ${s.sellSlippageCostSol.toFixed(6)} SOL`);
   }
 
   if (report.tradedToken && report.tradedToken.mint) {
