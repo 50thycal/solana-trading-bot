@@ -7,7 +7,7 @@ import {
   TransactionMessage,
   VersionedTransaction,
 } from '@solana/web3.js';
-import { TransactionExecutor } from './transaction-executor.interface';
+import { TransactionExecutor, TransactionExecutorResult } from './transaction-executor.interface';
 import {
   logger,
   SIMULATE_TRANSACTION,
@@ -58,7 +58,7 @@ export class JitoTransactionExecutor implements TransactionExecutor {
     transaction: VersionedTransaction,
     payer: Keypair,
     latestBlockhash: BlockhashWithExpiryBlockHeight,
-  ): Promise<{ confirmed: boolean; signature?: string; error?: string }> {
+  ): Promise<TransactionExecutorResult> {
     logger.debug('Starting Jito transaction execution...');
 
     // Simulate the main transaction first if enabled
