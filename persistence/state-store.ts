@@ -35,12 +35,16 @@ import {
   RecordSniperGateObservationsInput,
   RecordPaperTradeEntryInput,
   UpdatePaperTradeExitInput,
+  RunJournalRecord,
+  CreateRunJournalInput,
+  CloseRunJournalInput,
+  MarketSnapshotRecord,
 } from './models';
 
 /**
  * Current schema version - increment when making schema changes
  */
-const CURRENT_SCHEMA_VERSION = 4;
+const CURRENT_SCHEMA_VERSION = 5;
 
 /**
  * SQLite State Store - manages all persistent data
@@ -144,6 +148,10 @@ export class StateStore {
 
       if (currentVersion < 4) {
         this.migrateToV4();
+      }
+
+      if (currentVersion < 5) {
+        this.migrateToV5();
       }
 
       logger.info({ version: CURRENT_SCHEMA_VERSION }, 'Database migrations complete');
@@ -361,6 +369,60 @@ export class StateStore {
     `);
 
     logger.info('Applied migration v4: sniper_gate_observations and paper_trades tables');
+  }
+
+  /**
+   * Migration to version 5 - Run journal and market snapshots for AI analysis
+   */
+  private migrateToV5(): void {
+    this.db.exec(`
+      -- Run journal: captures hypothesis + config for each bot session
+      CREATE TABLE IF NOT EXISTS run_journal (
+        session_id TEXT PRIMARY KEY,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        hypothesis TEXT DEFAULT '',
+        config_snapshot TEXT NOT NULL,
+        bot_mode TEXT NOT NULL,
+        quote_amount_sol REAL,
+        take_profit_pct REAL,
+        stop_loss_pct REAL,
+        max_hold_duration_s INTEGER,
+        sniper_gate_enabled INTEGER DEFAULT 0,
+        momentum_gate_enabled INTEGER DEFAULT 0,
+        trailing_stop_enabled INTEGER DEFAULT 0,
+        total_detections INTEGER DEFAULT 0,
+        total_trades INTEGER DEFAULT 0,
+        total_wins INTEGER DEFAULT 0,
+        total_losses INTEGER DEFAULT 0,
+        realized_pnl_sol REAL DEFAULT 0,
+        outcome_notes TEXT,
+        tags TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_run_journal_started_at ON run_journal(started_at DESC);
+
+      -- Market snapshots derived from own detection data
+      CREATE TABLE IF NOT EXISTS market_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        captured_at INTEGER NOT NULL,
+        period_from INTEGER NOT NULL,
+        period_to INTEGER NOT NULL,
+        tokens_created INTEGER DEFAULT 0,
+        tokens_bought INTEGER DEFAULT 0,
+        tokens_filtered INTEGER DEFAULT 0,
+        avg_sol_in_curve REAL,
+        top_rejection_reason TEXT,
+        source TEXT DEFAULT 'self'
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_market_snapshots_captured_at ON market_snapshots(captured_at DESC);
+
+      -- Record migration
+      INSERT INTO schema_version (version, applied_at) VALUES (5, ${Date.now()});
+    `);
+
+    logger.info('Applied migration v5: run_journal and market_snapshots tables');
   }
 
   /**
@@ -1418,6 +1480,276 @@ export class StateStore {
       seenPools: this.getSeenPoolCount(),
       blacklist: this.getBlacklistStats(),
       poolDetections: this.getPoolDetectionStats(),
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // RUN JOURNAL
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Create a new run journal entry at bot startup
+   */
+  createJournalEntry(input: CreateRunJournalInput): string {
+    if (!this.initialized) return '';
+    const sessionId = `run_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const now = Date.now();
+
+    this.db.prepare(`
+      INSERT INTO run_journal (
+        session_id, started_at, hypothesis, config_snapshot, bot_mode,
+        quote_amount_sol, take_profit_pct, stop_loss_pct, max_hold_duration_s,
+        sniper_gate_enabled, momentum_gate_enabled, trailing_stop_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      sessionId,
+      now,
+      input.hypothesis,
+      input.configSnapshot,
+      input.botMode,
+      input.quoteAmountSol,
+      input.takeProfitPct,
+      input.stopLossPct,
+      input.maxHoldDurationS,
+      input.sniperGateEnabled ? 1 : 0,
+      input.momentumGateEnabled ? 1 : 0,
+      input.trailingStopEnabled ? 1 : 0,
+    );
+
+    logger.info({ sessionId, hypothesis: input.hypothesis || '(none)' }, 'Run journal entry created');
+    return sessionId;
+  }
+
+  /**
+   * Close a run journal entry with final stats
+   */
+  closeJournalEntry(input: CloseRunJournalInput): void {
+    if (!this.initialized) return;
+
+    this.db.prepare(`
+      UPDATE run_journal
+      SET ended_at = ?, total_detections = ?, total_trades = ?,
+          total_wins = ?, total_losses = ?, realized_pnl_sol = ?
+      WHERE session_id = ?
+    `).run(
+      Date.now(),
+      input.totalDetections,
+      input.totalTrades,
+      input.totalWins,
+      input.totalLosses,
+      input.realizedPnlSol,
+      input.sessionId,
+    );
+
+    logger.info({ sessionId: input.sessionId }, 'Run journal entry closed');
+  }
+
+  /**
+   * Update outcome notes for a journal entry
+   */
+  updateJournalNotes(sessionId: string, notes: string): void {
+    if (!this.initialized) return;
+    this.db.prepare(
+      'UPDATE run_journal SET outcome_notes = ? WHERE session_id = ?'
+    ).run(notes, sessionId);
+  }
+
+  /**
+   * Update tags for a journal entry
+   */
+  updateJournalTags(sessionId: string, tags: string): void {
+    if (!this.initialized) return;
+    this.db.prepare(
+      'UPDATE run_journal SET tags = ? WHERE session_id = ?'
+    ).run(tags, sessionId);
+  }
+
+  /**
+   * Get journal entries, most recent first
+   */
+  getJournalEntries(limit: number = 20): RunJournalRecord[] {
+    if (!this.initialized) return [];
+    const rows = this.db.prepare(
+      'SELECT * FROM run_journal ORDER BY started_at DESC LIMIT ?'
+    ).all(limit) as any[];
+
+    return rows.map(row => this.rowToJournalEntry(row));
+  }
+
+  /**
+   * Get a single journal entry by session ID
+   */
+  getJournalEntry(sessionId: string): RunJournalRecord | null {
+    if (!this.initialized) return null;
+    const row = this.db.prepare(
+      'SELECT * FROM run_journal WHERE session_id = ?'
+    ).get(sessionId);
+
+    return row ? this.rowToJournalEntry(row) : null;
+  }
+
+  /**
+   * Get the most recent journal entry (current or last session)
+   */
+  getLatestJournalEntry(): RunJournalRecord | null {
+    if (!this.initialized) return null;
+    const row = this.db.prepare(
+      'SELECT * FROM run_journal ORDER BY started_at DESC LIMIT 1'
+    ).get();
+
+    return row ? this.rowToJournalEntry(row) : null;
+  }
+
+  private rowToJournalEntry(row: any): RunJournalRecord {
+    return {
+      sessionId: row.session_id,
+      startedAt: row.started_at,
+      endedAt: row.ended_at ?? undefined,
+      hypothesis: row.hypothesis || '',
+      configSnapshot: row.config_snapshot,
+      botMode: row.bot_mode,
+      quoteAmountSol: row.quote_amount_sol,
+      takeProfitPct: row.take_profit_pct,
+      stopLossPct: row.stop_loss_pct,
+      maxHoldDurationS: row.max_hold_duration_s,
+      sniperGateEnabled: row.sniper_gate_enabled === 1,
+      momentumGateEnabled: row.momentum_gate_enabled === 1,
+      trailingStopEnabled: row.trailing_stop_enabled === 1,
+      totalDetections: row.total_detections || 0,
+      totalTrades: row.total_trades || 0,
+      totalWins: row.total_wins || 0,
+      totalLosses: row.total_losses || 0,
+      realizedPnlSol: row.realized_pnl_sol || 0,
+      outcomeNotes: row.outcome_notes ?? undefined,
+      tags: row.tags ?? undefined,
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // MARKET SNAPSHOTS (self-derived from pool detections)
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Record a market snapshot
+   */
+  recordMarketSnapshot(snapshot: Omit<MarketSnapshotRecord, 'id'>): void {
+    if (!this.initialized) return;
+
+    this.db.prepare(`
+      INSERT INTO market_snapshots (
+        captured_at, period_from, period_to, tokens_created, tokens_bought,
+        tokens_filtered, avg_sol_in_curve, top_rejection_reason, source
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      snapshot.capturedAt,
+      snapshot.periodFrom,
+      snapshot.periodTo,
+      snapshot.tokensCreated,
+      snapshot.tokensBought,
+      snapshot.tokensFiltered,
+      snapshot.avgSolInCurve ?? null,
+      snapshot.topRejectionReason ?? null,
+      snapshot.source,
+    );
+  }
+
+  /**
+   * Get market snapshots for a time range
+   */
+  getMarketSnapshots(from: number, to: number): MarketSnapshotRecord[] {
+    if (!this.initialized) return [];
+    const rows = this.db.prepare(
+      'SELECT * FROM market_snapshots WHERE captured_at >= ? AND captured_at <= ? ORDER BY captured_at ASC'
+    ).all(from, to) as any[];
+
+    return rows.map(row => ({
+      id: row.id,
+      capturedAt: row.captured_at,
+      periodFrom: row.period_from,
+      periodTo: row.period_to,
+      tokensCreated: row.tokens_created,
+      tokensBought: row.tokens_bought,
+      tokensFiltered: row.tokens_filtered,
+      avgSolInCurve: row.avg_sol_in_curve ?? undefined,
+      topRejectionReason: row.top_rejection_reason ?? undefined,
+      source: row.source,
+    }));
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // ANALYSIS QUERY HELPERS
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Get all closed positions with their buy/sell trades for analysis
+   */
+  getClosedPositionsWithTrades(): Array<{
+    position: PositionRecord;
+    buyTrade: TradeRecord | null;
+    sellTrade: TradeRecord | null;
+    detection: PoolDetectionRecord | null;
+  }> {
+    if (!this.initialized) return [];
+
+    const positions = this.db.prepare(
+      "SELECT * FROM positions WHERE status = 'closed' ORDER BY entry_timestamp ASC"
+    ).all().map((row) => this.rowToPosition(row));
+
+    return positions.map(pos => {
+      const trades = this.getTradesForToken(pos.tokenMint);
+      const buyTrade = trades.find(t => t.type === 'buy' && t.status === 'confirmed') || null;
+      const sellTrade = trades.find(t => t.type === 'sell' && t.status === 'confirmed') || null;
+      const detection = this.getPoolDetectionByPoolId(pos.poolId);
+      return { position: pos, buyTrade, sellTrade, detection };
+    });
+  }
+
+  /**
+   * Get pool detection stats for a specific time range (for market context)
+   */
+  getPoolDetectionStatsForRange(from: number, to: number): {
+    total: number;
+    bought: number;
+    filtered: number;
+    topRejections: Record<string, number>;
+    avgQuoteReserve: number | null;
+  } {
+    if (!this.initialized) return { total: 0, bought: 0, filtered: 0, topRejections: {}, avgQuoteReserve: null };
+
+    const stats = this.db.prepare(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN action = 'bought' THEN 1 ELSE 0 END) as bought,
+        SUM(CASE WHEN action = 'filtered' THEN 1 ELSE 0 END) as filtered,
+        AVG(pool_quote_reserve) as avg_reserve
+      FROM pool_detections
+      WHERE detected_at >= ? AND detected_at <= ?
+    `).get(from, to) as any;
+
+    // Get rejection reasons for this range
+    const filteredPools = this.db.prepare(`
+      SELECT filter_results FROM pool_detections
+      WHERE action = 'filtered' AND detected_at >= ? AND detected_at <= ?
+    `).all(from, to) as { filter_results: string }[];
+
+    const topRejections: Record<string, number> = {};
+    for (const pool of filteredPools) {
+      try {
+        const results: StoredFilterResult[] = JSON.parse(pool.filter_results);
+        for (const f of results) {
+          if (f.checked && !f.passed) {
+            topRejections[f.displayName || f.name] = (topRejections[f.displayName || f.name] || 0) + 1;
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    return {
+      total: stats.total || 0,
+      bought: stats.bought || 0,
+      filtered: stats.filtered || 0,
+      topRejections,
+      avgQuoteReserve: stats.avg_reserve ?? null,
     };
   }
 }

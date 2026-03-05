@@ -375,3 +375,81 @@ export interface UpdatePaperTradeExitInput {
   realizedPnlSol: number;
   realizedPnlPercent: number;
 }
+
+// ============================================================
+// RUN JOURNAL MODELS (Phase 6 - AI Analysis)
+// ============================================================
+
+/**
+ * Run journal entry — captures hypothesis, config, and outcome for each bot session
+ */
+export interface RunJournalRecord {
+  sessionId: string;
+  startedAt: number;
+  endedAt?: number;
+  hypothesis: string;
+  configSnapshot: string;         // JSON blob of full config (secrets redacted)
+  botMode: string;
+  quoteAmountSol: number;
+  takeProfitPct: number;
+  stopLossPct: number;
+  maxHoldDurationS: number;
+  sniperGateEnabled: boolean;
+  momentumGateEnabled: boolean;
+  trailingStopEnabled: boolean;
+  totalDetections: number;
+  totalTrades: number;
+  totalWins: number;
+  totalLosses: number;
+  realizedPnlSol: number;
+  outcomeNotes?: string;
+  tags?: string;
+}
+
+/**
+ * Input for creating a run journal entry
+ */
+export interface CreateRunJournalInput {
+  hypothesis: string;
+  configSnapshot: string;
+  botMode: string;
+  quoteAmountSol: number;
+  takeProfitPct: number;
+  stopLossPct: number;
+  maxHoldDurationS: number;
+  sniperGateEnabled: boolean;
+  momentumGateEnabled: boolean;
+  trailingStopEnabled: boolean;
+}
+
+/**
+ * Input for closing a run journal entry with final stats
+ */
+export interface CloseRunJournalInput {
+  sessionId: string;
+  totalDetections: number;
+  totalTrades: number;
+  totalWins: number;
+  totalLosses: number;
+  realizedPnlSol: number;
+}
+
+// ============================================================
+// MARKET SNAPSHOTS MODELS (Phase 6 - AI Analysis)
+// ============================================================
+
+/**
+ * Market snapshot derived from own detection data
+ */
+export interface MarketSnapshotRecord {
+  id: number;
+  capturedAt: number;
+  periodFrom: number;
+  periodTo: number;
+  tokensCreated: number;
+  tokensBought: number;
+  tokensFiltered: number;
+  avgSolInCurve?: number;
+  topRejectionReason?: string;
+  source: string;
+}
