@@ -127,8 +127,24 @@
         <div class="card-value" id="overall-result">--</div>
       </div>
       <div class="card card-accent">
-        <div class="card-label">P&L</div>
+        <div class="card-label">P&L (All-in)</div>
         <div class="card-value big" id="pnl-value">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Trade Return</div>
+        <div class="card-value" id="trade-return">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Total Overhead</div>
+        <div class="card-value" id="total-overhead">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">% Return (All-in)</div>
+        <div class="card-value" id="pnl-percent-with">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">% Return (Trade)</div>
+        <div class="card-value" id="pnl-percent-without">--</div>
       </div>
       <div class="card">
         <div class="card-label">Steps Passed</div>
@@ -151,9 +167,22 @@
         <div class="card-value" id="wallet-before">--</div>
       </div>
       <div class="card">
+        <div class="card-label">Wallet After</div>
+        <div class="card-value" id="wallet-after">--</div>
+      </div>
+      <div class="card">
         <div class="card-label">Net Cost</div>
         <div class="card-value" id="net-cost">--</div>
       </div>
+    </section>
+
+    <!-- Fee Breakdown Panel -->
+    <section class="panel" id="fee-breakdown-panel" style="display:none;">
+      <div class="panel-header">
+        <h2>Fee Breakdown</h2>
+        <span class="panel-subtitle" id="fee-breakdown-subtitle"></span>
+      </div>
+      <div class="smoke-meta" id="fee-breakdown-meta"></div>
     </section>
 
     <!-- Progress info (visible during running test) -->

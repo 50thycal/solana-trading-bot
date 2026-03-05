@@ -88,6 +88,7 @@ import {
   HARD_TAKE_PROFIT_PERCENT,
   COST_ADJUSTED_EXITS,
   MAX_PRICE_DRIFT_PERCENT,
+  CUSTOM_FEE,
 } from './helpers';
 import {
   buyOnPumpFun,
@@ -138,6 +139,21 @@ interface BuyFailureRecord {
   timestamp: number;
 }
 
+export interface FeeBreakdown {
+  /** Total non-trade costs (gas + tips + rent) — measured from wallet delta */
+  totalOverhead: number;
+  /** Buy-side overhead: actualSolSpent - tradeAmount (measured) */
+  buyOverhead: number;
+  /** Sell-side overhead: totalOverhead - buyOverhead (estimated) */
+  sellOverhead: number;
+  /** Estimated Jito/Warp tip per transaction (from CUSTOM_FEE config) */
+  jitoTipPerTx: number;
+  /** Estimated pump.fun buy fee (~1% of trade amount, embedded in price) */
+  estimatedPumpBuyFee: number;
+  /** Estimated pump.fun sell fee (~1.25% of sell proceeds, embedded in price) */
+  estimatedPumpSellFee: number;
+}
+
 export interface SmokeTestReport {
   startedAt: number;
   completedAt: number;
@@ -173,6 +189,16 @@ export interface SmokeTestReport {
   buySignature?: string;
   /** Sell transaction signature */
   sellSignature?: string;
+  /** SOL received from the sell transaction */
+  sellSolReceived?: number;
+  /** Trade return ignoring overhead: sellSolReceived - tradeAmount */
+  tradeReturnSol?: number;
+  /** Itemized fee breakdown (overhead costs + estimated protocol fees) */
+  feeBreakdown?: FeeBreakdown;
+  /** P&L as percentage of total cost (includes all overhead) */
+  pnlPercentWithOverhead?: number;
+  /** P&L as percentage of trade amount only (ignores gas/tips overhead) */
+  pnlPercentWithoutOverhead?: number;
   /** Snapshot of environment variables used for this run (for cross-run analytics) */
   envSnapshot?: Record<string, string | number | boolean>;
   /** Which run number this is when using SMOKE_TEST_RUNS > 1 (1-indexed) */
@@ -921,6 +947,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     buyFailures, tokensEvaluated, tokensPipelinePassed, state.actualSolSpent, tradeAmount,
     tradedToken, state.buyTimestamp || undefined, state.sellTimestamp || undefined,
     state.buySignature || undefined, state.sellSignature || undefined,
+    state.sellSolReceived || undefined,
   );
 
   } finally {
@@ -1219,6 +1246,7 @@ function buildReport(
   sellTimestamp?: number,
   buySignature?: string,
   sellSignature?: string,
+  sellSolReceived?: number,
 ): SmokeTestReport {
   const completedAt = Date.now();
   const passedCount = steps.filter((s) => s.status === 'passed').length;
@@ -1229,6 +1257,50 @@ function buildReport(
   const buyOverhead = (actualSolSpentOnBuy !== undefined && tradeAmount !== undefined)
     ? actualSolSpentOnBuy - tradeAmount
     : undefined;
+
+  // Compute trade return and fee breakdown when we have sell data
+  const netCostSol = walletBefore - walletAfter;
+  let tradeReturnSol: number | undefined;
+  let feeBreakdown: FeeBreakdown | undefined;
+  let pnlPercentWithOverhead: number | undefined;
+  let pnlPercentWithoutOverhead: number | undefined;
+
+  if (sellSolReceived !== undefined && tradeAmount !== undefined && tradeAmount > 0) {
+    // Trade return: pure trade P&L ignoring gas/tips overhead
+    tradeReturnSol = sellSolReceived - tradeAmount;
+
+    // % return on the trade amount only (ignores overhead)
+    pnlPercentWithoutOverhead = (tradeReturnSol / tradeAmount) * 100;
+
+    // % return on actual total cost (includes all overhead)
+    if (actualSolSpentOnBuy !== undefined && actualSolSpentOnBuy > 0) {
+      const allInPnl = sellSolReceived - actualSolSpentOnBuy;
+      pnlPercentWithOverhead = (allInPnl / actualSolSpentOnBuy) * 100;
+    }
+
+    // Fee breakdown
+    const measuredBuyOverhead = buyOverhead ?? 0;
+    // Total overhead = difference between trade return and actual P&L
+    // totalOverhead = tradeReturn - P&L = tradeReturn + netCostSol
+    const totalOverhead = tradeReturnSol + netCostSol;
+    const sellOverhead = Math.max(0, totalOverhead - measuredBuyOverhead);
+
+    // Parse CUSTOM_FEE for jito tip estimate
+    const jitoTipPerTx = parseFloat(CUSTOM_FEE) || 0;
+
+    // Pump.fun protocol fees (embedded in price, shown as estimates)
+    const estimatedPumpBuyFee = tradeAmount * 0.01;       // ~1% on buys
+    const estimatedPumpSellFee = sellSolReceived * 0.0125; // ~1.25% on sells
+
+    feeBreakdown = {
+      totalOverhead,
+      buyOverhead: measuredBuyOverhead,
+      sellOverhead,
+      jitoTipPerTx,
+      estimatedPumpBuyFee,
+      estimatedPumpSellFee,
+    };
+  }
 
   // Capture environment variables snapshot for cross-run analytics
   // Include all tunable parameters so the dashboard can analyze impact of any setting
@@ -1306,7 +1378,7 @@ function buildReport(
     overallResult,
     walletBalanceBefore: walletBefore,
     walletBalanceAfter: walletAfter,
-    netCostSol: walletBefore - walletAfter,
+    netCostSol,
     passedCount,
     failedCount,
     totalSteps,
@@ -1321,6 +1393,11 @@ function buildReport(
     sellTimestamp,
     buySignature,
     sellSignature,
+    sellSolReceived,
+    tradeReturnSol,
+    feeBreakdown,
+    pnlPercentWithOverhead,
+    pnlPercentWithoutOverhead,
     envSnapshot,
     runNumber: currentRunNumber,
     totalRuns: currentTotalRuns,
@@ -1346,6 +1423,31 @@ function buildReport(
   if (report.actualSolSpentOnBuy !== undefined) {
     const overhead = report.buyOverheadSol ?? 0;
     logger.info(`  Buy cost:        ${report.actualSolSpentOnBuy.toFixed(6)} SOL (trade: ${(report.actualSolSpentOnBuy - overhead).toFixed(6)}, overhead: ${overhead.toFixed(6)})`);
+  }
+  if (report.sellSolReceived !== undefined) {
+    logger.info(`  Sell received:   ${report.sellSolReceived.toFixed(6)} SOL`);
+  }
+  if (report.tradeReturnSol !== undefined) {
+    const sign = report.tradeReturnSol >= 0 ? '+' : '';
+    logger.info(`  Trade return:    ${sign}${report.tradeReturnSol.toFixed(6)} SOL (ex-overhead)`);
+  }
+  if (report.pnlPercentWithOverhead !== undefined) {
+    const sign = report.pnlPercentWithOverhead >= 0 ? '+' : '';
+    logger.info(`  Return % (all-in): ${sign}${report.pnlPercentWithOverhead.toFixed(2)}%`);
+  }
+  if (report.pnlPercentWithoutOverhead !== undefined) {
+    const sign = report.pnlPercentWithoutOverhead >= 0 ? '+' : '';
+    logger.info(`  Return % (trade):  ${sign}${report.pnlPercentWithoutOverhead.toFixed(2)}%`);
+  }
+  if (report.feeBreakdown) {
+    const fb = report.feeBreakdown;
+    logger.info(`  Fee breakdown:`);
+    logger.info(`    Total overhead:  ${fb.totalOverhead.toFixed(6)} SOL`);
+    logger.info(`    Buy overhead:    ${fb.buyOverhead.toFixed(6)} SOL (gas+tips+rent)`);
+    logger.info(`    Sell overhead:   ${fb.sellOverhead.toFixed(6)} SOL (gas+tips)`);
+    logger.info(`    Jito tip/tx:     ${fb.jitoTipPerTx.toFixed(6)} SOL`);
+    logger.info(`    Pump buy fee:    ~${fb.estimatedPumpBuyFee.toFixed(6)} SOL (~1%%)`);
+    logger.info(`    Pump sell fee:   ~${fb.estimatedPumpSellFee.toFixed(6)} SOL (~1.25%%)`);
   }
   if (exitTrigger) {
     logger.info(`  Exit trigger:    ${exitTrigger}`);

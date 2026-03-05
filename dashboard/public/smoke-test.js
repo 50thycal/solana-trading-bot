@@ -101,6 +101,14 @@ function renderProgress(progress) {
   document.getElementById('overall-result').className = 'card-value';
 
   document.getElementById('pnl-value').textContent = '--';
+  document.getElementById('trade-return').textContent = '--';
+  document.getElementById('trade-return').className = 'card-value';
+  document.getElementById('total-overhead').textContent = '--';
+  document.getElementById('total-overhead').className = 'card-value';
+  document.getElementById('pnl-percent-with').textContent = '--';
+  document.getElementById('pnl-percent-with').className = 'card-value';
+  document.getElementById('pnl-percent-without').textContent = '--';
+  document.getElementById('pnl-percent-without').className = 'card-value';
   document.getElementById('steps-passed').textContent = '--';
   document.getElementById('steps-failed').textContent = '--';
   document.getElementById('steps-failed').className = 'card-value';
@@ -116,7 +124,12 @@ function renderProgress(progress) {
     walletBefore.textContent = '--';
   }
 
+  document.getElementById('wallet-after').textContent = '--';
   document.getElementById('net-cost').textContent = '--';
+
+  // Hide fee breakdown during progress
+  const feePanel = document.getElementById('fee-breakdown-panel');
+  if (feePanel) feePanel.style.display = 'none';
 
   // Steps list from live progress
   const stepsList = document.getElementById('steps-list');
@@ -213,6 +226,48 @@ function renderReport(report) {
     pnlEl.textContent = '--';
   }
 
+  // Trade return (ex-overhead)
+  const tradeReturnEl = document.getElementById('trade-return');
+  if (report.tradeReturnSol !== undefined) {
+    tradeReturnEl.textContent = formatPnl(report.tradeReturnSol);
+    tradeReturnEl.className = `card-value ${pnlClass(report.tradeReturnSol)}`;
+  } else {
+    tradeReturnEl.textContent = '--';
+    tradeReturnEl.className = 'card-value';
+  }
+
+  // Total overhead
+  const totalOverheadEl = document.getElementById('total-overhead');
+  if (report.feeBreakdown && report.feeBreakdown.totalOverhead !== undefined) {
+    totalOverheadEl.textContent = `${report.feeBreakdown.totalOverhead.toFixed(6)} SOL`;
+    totalOverheadEl.className = 'card-value negative';
+  } else {
+    totalOverheadEl.textContent = '--';
+    totalOverheadEl.className = 'card-value';
+  }
+
+  // % Return with overhead
+  const pctWithEl = document.getElementById('pnl-percent-with');
+  if (report.pnlPercentWithOverhead !== undefined) {
+    const sign = report.pnlPercentWithOverhead >= 0 ? '+' : '';
+    pctWithEl.textContent = `${sign}${report.pnlPercentWithOverhead.toFixed(2)}%`;
+    pctWithEl.className = `card-value ${pnlClass(report.pnlPercentWithOverhead)}`;
+  } else {
+    pctWithEl.textContent = '--';
+    pctWithEl.className = 'card-value';
+  }
+
+  // % Return without overhead
+  const pctWithoutEl = document.getElementById('pnl-percent-without');
+  if (report.pnlPercentWithoutOverhead !== undefined) {
+    const sign = report.pnlPercentWithoutOverhead >= 0 ? '+' : '';
+    pctWithoutEl.textContent = `${sign}${report.pnlPercentWithoutOverhead.toFixed(2)}%`;
+    pctWithoutEl.className = `card-value ${pnlClass(report.pnlPercentWithoutOverhead)}`;
+  } else {
+    pctWithoutEl.textContent = '--';
+    pctWithoutEl.className = 'card-value';
+  }
+
   const passedEl = document.getElementById('steps-passed');
   passedEl.textContent = `${report.passedCount}/${report.totalSteps}`;
 
@@ -235,11 +290,21 @@ function renderReport(report) {
     walletBefore.textContent = `${report.walletBalanceBefore.toFixed(4)} SOL`;
   }
 
+  const walletAfter = document.getElementById('wallet-after');
+  if (report.walletBalanceAfter !== undefined) {
+    walletAfter.textContent = `${report.walletBalanceAfter.toFixed(4)} SOL`;
+  } else {
+    walletAfter.textContent = '--';
+  }
+
   const netCost = document.getElementById('net-cost');
   if (report.netCostSol !== undefined) {
     netCost.textContent = `${report.netCostSol.toFixed(6)} SOL`;
     netCost.className = `card-value ${report.netCostSol > 0 ? 'negative' : 'positive'}`;
   }
+
+  // Fee breakdown panel
+  renderFeeBreakdown(report);
 
   // Steps list
   const stepsList = document.getElementById('steps-list');
@@ -389,6 +454,63 @@ function renderTradedToken(report) {
 }
 
 /**
+ * Render the Fee Breakdown panel for a completed report.
+ * Shows itemized overhead costs and estimated protocol fees.
+ */
+function renderFeeBreakdown(report) {
+  const panel = document.getElementById('fee-breakdown-panel');
+  const meta = document.getElementById('fee-breakdown-meta');
+  const subtitle = document.getElementById('fee-breakdown-subtitle');
+  if (!panel || !meta) return;
+
+  const fb = report.feeBreakdown;
+  if (!fb) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  subtitle.textContent = `${fb.totalOverhead.toFixed(6)} SOL total overhead`;
+
+  const fmtSol = (v) => v !== undefined && v !== null ? `${v.toFixed(6)} SOL` : '—';
+
+  const sellReceivedHtml = report.sellSolReceived !== undefined
+    ? `<div class="smoke-meta-item">
+        <span class="smoke-meta-label">SOL Received from Sell</span>
+        <span class="smoke-meta-value">${fmtSol(report.sellSolReceived)}</span>
+      </div>`
+    : '';
+
+  meta.innerHTML = `
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Buy Overhead (gas+tips+rent)</span>
+      <span class="smoke-meta-value negative">${fmtSol(fb.buyOverhead)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Sell Overhead (gas+tips)</span>
+      <span class="smoke-meta-value negative">${fmtSol(fb.sellOverhead)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Jito Tip (per tx)</span>
+      <span class="smoke-meta-value">${fmtSol(fb.jitoTipPerTx)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Est. Pump Buy Fee (~1%)</span>
+      <span class="smoke-meta-value">${fmtSol(fb.estimatedPumpBuyFee)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Est. Pump Sell Fee (~1.25%)</span>
+      <span class="smoke-meta-value">${fmtSol(fb.estimatedPumpSellFee)}</span>
+    </div>
+    ${sellReceivedHtml}
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Total Overhead</span>
+      <span class="smoke-meta-value negative" style="font-weight:700;">${fmtSol(fb.totalOverhead)}</span>
+    </div>
+  `;
+}
+
+/**
  * Load and render the current (live) smoke test report or in-progress status
  */
 async function updateSmokeTestReport() {
@@ -528,9 +650,31 @@ function buildReportText(report) {
 
   if (report.exitTrigger) lines.push(`Exit Trigger: ${report.exitTrigger}`);
   if (report.walletBalanceBefore !== undefined) lines.push(`Wallet Before: ${report.walletBalanceBefore.toFixed(4)} SOL`);
+  if (report.walletBalanceAfter !== undefined) lines.push(`Wallet After: ${report.walletBalanceAfter.toFixed(4)} SOL`);
   if (report.netCostSol !== undefined) {
     lines.push(`Net Cost: ${report.netCostSol.toFixed(6)} SOL`);
-    lines.push(`P&L: ${formatPnl(-report.netCostSol)}`);
+    lines.push(`P&L (All-in): ${formatPnl(-report.netCostSol)}`);
+  }
+  if (report.tradeReturnSol !== undefined) lines.push(`Trade Return (ex-overhead): ${formatPnl(report.tradeReturnSol)}`);
+  if (report.pnlPercentWithOverhead !== undefined) {
+    const sign = report.pnlPercentWithOverhead >= 0 ? '+' : '';
+    lines.push(`% Return (All-in): ${sign}${report.pnlPercentWithOverhead.toFixed(2)}%`);
+  }
+  if (report.pnlPercentWithoutOverhead !== undefined) {
+    const sign = report.pnlPercentWithoutOverhead >= 0 ? '+' : '';
+    lines.push(`% Return (Trade only): ${sign}${report.pnlPercentWithoutOverhead.toFixed(2)}%`);
+  }
+  if (report.feeBreakdown) {
+    const fb = report.feeBreakdown;
+    lines.push('');
+    lines.push('--- Fee Breakdown ---');
+    lines.push(`Buy Overhead (gas+tips+rent): ${fb.buyOverhead.toFixed(6)} SOL`);
+    lines.push(`Sell Overhead (gas+tips):     ${fb.sellOverhead.toFixed(6)} SOL`);
+    lines.push(`Jito Tip (per tx):            ${fb.jitoTipPerTx.toFixed(6)} SOL`);
+    lines.push(`Est. Pump Buy Fee (~1%):      ${fb.estimatedPumpBuyFee.toFixed(6)} SOL`);
+    lines.push(`Est. Pump Sell Fee (~1.25%):   ${fb.estimatedPumpSellFee.toFixed(6)} SOL`);
+    lines.push(`Total Overhead:               ${fb.totalOverhead.toFixed(6)} SOL`);
+    if (report.sellSolReceived !== undefined) lines.push(`SOL Received from Sell:       ${report.sellSolReceived.toFixed(6)} SOL`);
   }
 
   if (report.tradedToken && report.tradedToken.mint) {
