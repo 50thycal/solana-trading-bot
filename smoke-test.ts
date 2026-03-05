@@ -174,6 +174,10 @@ export interface FeeBreakdown {
   bundleExecutorActive: boolean;
   /** Which executor is configured: 'jito', 'warp', or 'default' */
   executorType: string;
+  /** Which executor actually handled the buy tx (e.g. 'jito' or 'default' if fallback kicked in) */
+  buyExecutorUsed?: string;
+  /** Which executor actually handled the sell tx */
+  sellExecutorUsed?: string;
 }
 
 export interface SmokeTestReport {
@@ -566,6 +570,8 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     priceHistory: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
     highWaterMarkPercent: number | undefined;
     executor: TransactionExecutor | undefined;
+    buyExecutorUsed: string | undefined;
+    sellExecutorUsed: string | undefined;
   } = {
     connection: null,
     wallet: null,
@@ -588,6 +594,8 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     priceHistory: [],
     highWaterMarkPercent: undefined,
     executor: undefined,
+    buyExecutorUsed: undefined,
+    sellExecutorUsed: undefined,
   };
 
   // Wrap the entire test body in try/finally to guarantee liveProgress is
@@ -938,6 +946,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
         state.sellTimestamp = Date.now();
         state.sellSlippagePercent = sellResult.slippagePercent;
         state.sellExpectedSol = sellResult.expectedSol;
+        state.sellExecutorUsed = sellResult.executorUsed;
         return `Sold on attempt ${attempt}/${maxAttempts} for ${state.sellSolReceived.toFixed(6)} SOL, sig: ${state.sellSignature.substring(0, 12)}...`;
       }
 
@@ -1040,6 +1049,8 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
       priceHistory: state.priceHistory.length > 0 ? state.priceHistory : undefined,
       highWaterMarkPercent: state.highWaterMarkPercent,
       bundleExecutorActive: state.executor !== undefined,
+      buyExecutorUsed: state.buyExecutorUsed,
+      sellExecutorUsed: state.sellExecutorUsed,
     },
   );
 
@@ -1082,6 +1093,8 @@ async function runListenPipelineAndBuy(
     priceHistory: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
     highWaterMarkPercent: number | undefined;
     executor: TransactionExecutor | undefined;
+    buyExecutorUsed: string | undefined;
+    sellExecutorUsed: string | undefined;
   },
   tradeAmount: number,
   timeoutMs: number,
@@ -1220,6 +1233,7 @@ async function runListenPipelineAndBuy(
             state.actualSolSpent = buyResult.actualSolSpent;
             state.buySlippagePercent = buyResult.slippagePercent;
             state.buyExpectedTokens = buyResult.expectedTokens;
+            state.buyExecutorUsed = buyResult.executorUsed;
             buySucceeded = true;
 
             clearTimeout(overallTimeout);
@@ -1343,6 +1357,8 @@ interface BuildReportExtras {
   priceHistory?: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
   highWaterMarkPercent?: number;
   bundleExecutorActive?: boolean;
+  buyExecutorUsed?: string;
+  sellExecutorUsed?: string;
 }
 
 function buildReport(
@@ -1429,6 +1445,8 @@ function buildReport(
       totalOverhead,
       bundleExecutorActive,
       executorType: TRANSACTION_EXECUTOR,
+      buyExecutorUsed: extras?.buyExecutorUsed,
+      sellExecutorUsed: extras?.sellExecutorUsed,
     };
   }
 
@@ -1647,7 +1665,13 @@ function buildReport(
     logger.info(`    Pump buy fee:    ~${fb.estimatedPumpBuyFee.toFixed(6)} SOL (~1%%, estimated)`);
     logger.info(`    Pump sell fee:   ~${fb.estimatedPumpSellFee.toFixed(6)} SOL (~1.25%%, estimated)`);
     if (fb.bundleExecutorActive) {
-      logger.info(`    ${fb.executorType} tip/tx:  ${fb.jitoTipPerTx.toFixed(6)} SOL (ACTIVE — bundle executor enabled)`);
+      const buyExec = fb.buyExecutorUsed ?? 'unknown';
+      const sellExec = fb.sellExecutorUsed ?? 'unknown';
+      const bothJito = buyExec === 'jito' && sellExec === 'jito';
+      const tipStatus = bothJito
+        ? 'SENT via Jito bundle'
+        : `buy: ${buyExec}, sell: ${sellExec}`;
+      logger.info(`    ${fb.executorType} tip/tx:  ${fb.jitoTipPerTx.toFixed(6)} SOL (${tipStatus})`);
     } else {
       logger.info(`    Jito tip/tx:     ${fb.jitoTipPerTx.toFixed(6)} SOL (configured, NOT sent — set TRANSACTION_EXECUTOR=jito)`);
     }

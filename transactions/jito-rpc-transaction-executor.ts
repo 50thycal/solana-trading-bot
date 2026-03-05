@@ -94,6 +94,8 @@ export class JitoTransactionExecutor implements TransactionExecutor {
       jitoFeeTx.sign([payer]);
 
       const jitoTxsignature = bs58.encode(jitoFeeTx.signatures[0]);
+      // The main transaction's signature — this is what callers need for verification
+      const mainTxSignature = bs58.encode(transaction.signatures[0]);
 
       // Serialize the transactions once here
       const serializedjitoFeeTx = bs58.encode(jitoFeeTx.serialize());
@@ -134,11 +136,12 @@ export class JitoTransactionExecutor implements TransactionExecutor {
           const bundleStatus = await this.pollBundleStatus(bundleId, endpoints[0]);
 
           if (bundleStatus.landed) {
-            logger.debug({ bundleId }, 'Bundle landed successfully');
-            // Also confirm the transaction on-chain for the signature
-            return await this.confirm(jitoTxsignature, latestBlockhash);
+            logger.info({ bundleId }, 'Jito bundle landed successfully');
+            // Confirm the tip tx on-chain (proves bundle executed), but return the MAIN tx signature
+            const confirmation = await this.confirm(jitoTxsignature, latestBlockhash);
+            return { ...confirmation, signature: mainTxSignature, executorUsed: 'jito' };
           } else {
-            logger.debug({ bundleId, status: bundleStatus.status }, 'Bundle did not land');
+            logger.warn({ bundleId, status: bundleStatus.status }, 'Jito bundle did not land');
             return {
               confirmed: false,
               error: `Bundle status: ${bundleStatus.status || 'unknown'}`,
@@ -147,7 +150,8 @@ export class JitoTransactionExecutor implements TransactionExecutor {
         } else {
           // Fallback to old confirmation method if no bundle ID returned
           logger.debug('No bundle ID in response, using legacy confirmation');
-          return await this.confirm(jitoTxsignature, latestBlockhash);
+          const confirmation = await this.confirm(jitoTxsignature, latestBlockhash);
+          return { ...confirmation, signature: mainTxSignature, executorUsed: 'jito' };
         }
       } else {
         logger.debug('No successful responses received from Jito endpoints');
