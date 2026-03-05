@@ -12,6 +12,8 @@ const NAV_LINKS = [
   { path: '/ab-test', label: 'A/B Test', modes: ['ab'] },
   { path: '/diagnostic.html', label: 'Diagnostics' },
   { path: '/env-config', label: 'Config' },
+  { path: '/journal', label: 'Journal' },
+  { path: '/ai-report', label: 'AI Report' },
 ];
 
 /**

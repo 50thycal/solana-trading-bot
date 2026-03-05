@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Run Journal - Pump.fun Trading Bot</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .journal-entry { background: var(--bg-secondary, #1a1a2e); border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+    .journal-entry.active { border-color: #4ecdc4; }
+    .journal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .journal-id { font-family: monospace; font-size: 0.85em; color: var(--text-muted, #888); }
+    .journal-hypothesis { font-size: 1.1em; font-weight: 600; color: var(--text-primary, #eee); margin: 8px 0; }
+    .journal-config { display: flex; gap: 12px; flex-wrap: wrap; font-size: 0.9em; color: var(--text-secondary, #aaa); }
+    .journal-config span { background: var(--bg-tertiary, #252540); padding: 2px 8px; border-radius: 4px; }
+    .journal-stats { display: flex; gap: 16px; margin-top: 8px; font-size: 0.9em; }
+    .journal-stats .stat { display: flex; flex-direction: column; }
+    .journal-stats .stat-label { color: var(--text-muted, #888); font-size: 0.8em; }
+    .journal-stats .stat-value { font-weight: 600; }
+    .journal-stats .positive { color: #4ecdc4; }
+    .journal-stats .negative { color: #ff6b6b; }
+    .journal-notes { margin-top: 12px; }
+    .journal-notes textarea { width: 100%; background: var(--bg-tertiary, #252540); border: 1px solid var(--border, #333); color: var(--text-primary, #eee); border-radius: 4px; padding: 8px; font-size: 0.9em; resize: vertical; min-height: 60px; }
+    .journal-notes button { margin-top: 4px; padding: 4px 12px; background: #4ecdc4; color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em; }
+    .copy-btn { padding: 6px 16px; background: var(--bg-tertiary, #252540); color: var(--text-primary, #eee); border: 1px solid var(--border, #333); border-radius: 4px; cursor: pointer; font-size: 0.9em; }
+    .copy-btn:hover { background: var(--border, #333); }
+    .copy-toast { position: fixed; bottom: 20px; right: 20px; background: #4ecdc4; color: #000; padding: 8px 16px; border-radius: 4px; display: none; z-index: 1000; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <nav id="nav-bar" class="nav-bar"></nav>
+
+    <section class="overview-header">
+      <div class="overview-header-left">
+        <h1>Run Journal</h1>
+        <p style="color: var(--text-muted, #888); margin-top: 4px;">Track hypotheses, configs, and outcomes across runs</p>
+      </div>
+      <div class="overview-header-right">
+        <button class="copy-btn" id="copy-compact-btn">Copy for Claude</button>
+      </div>
+    </section>
+
+    <div id="toast" class="copy-toast"></div>
+    <div id="journal-list"></div>
+    <div id="empty-state" style="display: none; text-align: center; padding: 40px; color: var(--text-muted, #888);">
+      <p>No journal entries yet.</p>
+      <p>Set <code>RUN_HYPOTHESIS</code> env var before each run to describe what you're testing.</p>
+    </div>
+  </div>
+
+  <script src="/nav.js"></script>
+  <script>
+    async function loadJournal() {
+      try {
+        const res = await fetch('/api/journal?limit=20');
+        const data = await res.json();
+        const list = document.getElementById('journal-list');
+        const empty = document.getElementById('empty-state');
+
+        if (!data.entries || data.entries.length === 0) {
+          empty.style.display = 'block';
+          return;
+        }
+
+        list.innerHTML = data.entries.map((e, i) => {
+          const start = new Date(e.startedAt).toISOString().replace('T', ' ').substring(0, 19);
+          const end = e.endedAt ? new Date(e.endedAt).toISOString().replace('T', ' ').substring(0, 19) : 'running';
+          const pnlClass = e.realizedPnlSol >= 0 ? 'positive' : 'negative';
+          const pnlSign = e.realizedPnlSol >= 0 ? '+' : '';
+          const isActive = !e.endedAt;
+
+          return `
+            <div class="journal-entry${isActive ? ' active' : ''}">
+              <div class="journal-header">
+                <span class="journal-id">${e.sessionId}</span>
+                <span style="font-size: 0.85em; color: var(--text-muted, #888);">${start} → ${end}</span>
+              </div>
+              ${e.hypothesis ? `<div class="journal-hypothesis">"${e.hypothesis}"</div>` : '<div class="journal-hypothesis" style="color: var(--text-muted, #888);">(no hypothesis set)</div>'}
+              <div class="journal-config">
+                <span>TP=${e.takeProfitPct}%</span>
+                <span>SL=${e.stopLossPct}%</span>
+                <span>HOLD=${e.maxHoldDurationS}s</span>
+                <span>AMOUNT=${e.quoteAmountSol} SOL</span>
+                ${e.sniperGateEnabled ? '<span>sniper_gate</span>' : ''}
+                ${e.momentumGateEnabled ? '<span>momentum_gate</span>' : ''}
+                ${e.trailingStopEnabled ? '<span>trailing_stop</span>' : ''}
+              </div>
+              <div class="journal-stats">
+                <div class="stat"><span class="stat-label">Trades</span><span class="stat-value">${e.totalTrades}</span></div>
+                <div class="stat"><span class="stat-label">Wins</span><span class="stat-value">${e.totalWins}</span></div>
+                <div class="stat"><span class="stat-label">P&L</span><span class="stat-value ${pnlClass}">${pnlSign}${e.realizedPnlSol.toFixed(4)} SOL</span></div>
+                <div class="stat"><span class="stat-label">Detections</span><span class="stat-value">${e.totalDetections}</span></div>
+              </div>
+              <div class="journal-notes">
+                <textarea id="notes-${i}" placeholder="Add outcome notes...">${e.outcomeNotes || ''}</textarea>
+                <button onclick="saveNotes('${e.sessionId}', ${i})">Save Notes</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (err) {
+        console.error('Failed to load journal:', err);
+      }
+    }
+
+    async function saveNotes(sessionId, index) {
+      const textarea = document.getElementById('notes-' + index);
+      try {
+        await fetch('/api/journal/' + sessionId + '/notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notes: textarea.value }),
+        });
+        showToast('Notes saved');
+      } catch (err) {
+        showToast('Failed to save notes');
+      }
+    }
+
+    document.getElementById('copy-compact-btn').addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/journal/compact?last=5');
+        const text = await res.text();
+        await navigator.clipboard.writeText(text);
+        showToast('Copied to clipboard');
+      } catch (err) {
+        showToast('Failed to copy');
+      }
+    });
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 2000);
+    }
+
+    loadJournal();
+  </script>
+</body>
+</html>

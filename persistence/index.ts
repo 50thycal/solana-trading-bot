@@ -37,6 +37,11 @@ export {
   AddBlacklistInput,
   RecordPoolDetectionInput,
   PoolDetectionQueryOptions,
+  // Run Journal (Phase 6)
+  RunJournalRecord,
+  CreateRunJournalInput,
+  CloseRunJournalInput,
+  MarketSnapshotRecord,
   // Constants
   PENDING_TRADE_TIMEOUT_MS,
 } from './models';

@@ -119,6 +119,10 @@ export interface ValidatedConfig {
 
   // Production Time Limit
   productionTimeLimitMs: number;
+
+  // AI Analysis (Phase 6)
+  runHypothesis: string;
+  researchBotUrl: string;
 }
 
 interface ValidationError {
@@ -512,6 +516,10 @@ export function validateConfig(): ValidatedConfig {
   }
   const productionTimeLimitMs = productionTimeLimitMinutes * 60000;
 
+  // === AI ANALYSIS (Phase 6) ===
+  const runHypothesis = getEnv('RUN_HYPOTHESIS', '');
+  const researchBotUrl = getEnv('RESEARCH_BOT_URL', '');
+
   // Validate private key format (base58)
   if (privateKey) {
     try {
@@ -660,6 +668,8 @@ export function validateConfig(): ValidatedConfig {
     abConfigB,
     runBot,
     productionTimeLimitMs,
+    runHypothesis,
+    researchBotUrl,
   };
 
   // Log mode info
@@ -696,4 +706,37 @@ export function getConfig(): ValidatedConfig {
  */
 export function isDryRun(): boolean {
   return getConfig().dryRun;
+}
+
+/**
+ * Get a JSON snapshot of the config with secrets redacted.
+ * Used by the run journal to capture what config was active for each session.
+ */
+export function getRedactedConfigSnapshot(): string {
+  const config = getConfig();
+  const snapshot: Record<string, any> = { ...config };
+
+  // Redact secrets
+  snapshot.privateKey = '***REDACTED***';
+
+  // Redact RPC URLs (may contain API keys)
+  if (snapshot.rpcEndpoint) {
+    try {
+      const url = new URL(snapshot.rpcEndpoint);
+      snapshot.rpcEndpoint = `${url.protocol}//${url.hostname}${url.pathname ? url.pathname : ''}`;
+    } catch {
+      snapshot.rpcEndpoint = '***REDACTED***';
+    }
+  }
+  if (snapshot.rpcWebsocketEndpoint) {
+    try {
+      const url = new URL(snapshot.rpcWebsocketEndpoint);
+      snapshot.rpcWebsocketEndpoint = `${url.protocol}//${url.hostname}${url.pathname ? url.pathname : ''}`;
+    } catch {
+      snapshot.rpcWebsocketEndpoint = '***REDACTED***';
+    }
+  }
+  snapshot.rpcBackupEndpoints = (snapshot.rpcBackupEndpoints || []).map(() => '***REDACTED***');
+
+  return JSON.stringify(snapshot);
 }

@@ -23,6 +23,8 @@ import { getLogSummarizer } from '../helpers/log-summarizer';
 import { ABTestStore } from '../ab-test/ab-store';
 import { ABReportGenerator } from '../ab-test/ab-report';
 import { ABAnalyzer } from '../ab-test/ab-analyzer';
+import { generateAnalysisReport, generateCompactReport } from '../helpers/ai-analysis';
+import { generateRecommendations, formatRecommendations } from '../helpers/recommendations';
 import { version } from '../package.json';
 import { ENV_CATEGORIES, getCurrentEnvValues, getAllowedPushVarNames } from '../helpers/env-metadata';
 import { isRailwayConfigured, pushVariablesToRailway, redeployRailwayService } from '../helpers/railway-api';
@@ -388,6 +390,39 @@ export class DashboardServer {
           data = this.getAbResultsSessions();
           break;
 
+        // ══════════════════════════════════════════════════════
+        // AI ANALYSIS ENDPOINTS (Phase 6)
+        // ══════════════════════════════════════════════════════
+        case '/api/journal':
+          data = this.getApiJournal(url);
+          break;
+
+        case '/api/journal/compact': {
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end(this.getJournalCompactReport(url));
+          return;
+        }
+
+        case '/api/ai-report':
+          data = this.getApiAiReport(url);
+          break;
+
+        case '/api/ai-report/compact': {
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end(this.getAiReportCompact(url));
+          return;
+        }
+
+        case '/api/recommendations':
+          data = this.getApiRecommendations(url);
+          break;
+
+        case '/api/recommendations/compact': {
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end(this.getRecommendationsCompact(url));
+          return;
+        }
+
         default:
           // Check for /api/ab-results/session/:id pattern
           if (pathname.startsWith('/api/ab-results/session/')) {
@@ -410,6 +445,17 @@ export class DashboardServer {
           else if (pathname.startsWith('/api/sniper-gate/token/')) {
             const mint = pathname.substring('/api/sniper-gate/token/'.length);
             data = this.getApiSniperGateToken(mint);
+          }
+          // Check for /api/journal/:sessionId pattern
+          else if (pathname.startsWith('/api/journal/') && !pathname.includes('/compact') && !pathname.includes('/notes')) {
+            const sessionId = pathname.substring('/api/journal/'.length);
+            const store = getStateStore();
+            if (store) {
+              const entry = store.getJournalEntry(sessionId);
+              data = entry || { error: 'Journal entry not found' };
+            } else {
+              data = { error: 'State store not available' };
+            }
           } else {
             res.writeHead(404, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'API endpoint not found' }));
@@ -466,6 +512,14 @@ export class DashboardServer {
       if (pathname === '/api/railway/push') {
         const body = await this.parseRequestBody(req);
         await this.handleRailwayPush(body, res);
+        return;
+      }
+
+      // Journal notes/tags update (needs body + path param)
+      if (pathname.startsWith('/api/journal/') && pathname.endsWith('/notes')) {
+        const sessionId = pathname.replace('/api/journal/', '').replace('/notes', '');
+        const body = await this.parseRequestBody(req);
+        this.handleJournalNotesUpdate(sessionId, body, res);
         return;
       }
 
@@ -1776,6 +1830,8 @@ export class DashboardServer {
       '/ab-test': '/ab-results.html',
       '/ab-results': '/ab-results.html',
       '/env-config': '/env-config.html',
+      '/journal': '/journal.html',
+      '/ai-report': '/ai-report.html',
     };
     let filePath = pageRoutes[pathname] || pathname;
 
@@ -2000,6 +2056,98 @@ export class DashboardServer {
     parts.push(`${secs}s`);
 
     return parts.join(' ');
+  }
+
+  // ============================================================
+  // AI ANALYSIS & JOURNAL ENDPOINTS (Phase 6)
+  // ============================================================
+
+  private getApiJournal(url: URL) {
+    const store = getStateStore();
+    if (!store) return { entries: [], error: 'State store not available' };
+
+    const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+    const entries = store.getJournalEntries(limit);
+    return { entries };
+  }
+
+  private getJournalCompactReport(url: URL): string {
+    const store = getStateStore();
+    if (!store) return 'No data available.';
+
+    const limit = parseInt(url.searchParams.get('last') || '5', 10);
+    const entries = store.getJournalEntries(limit);
+
+    if (entries.length === 0) return 'No run journal entries found.\n';
+
+    const lines: string[] = ['# Run Journal'];
+    for (const e of entries) {
+      const start = new Date(e.startedAt).toISOString().substring(0, 19);
+      const end = e.endedAt ? new Date(e.endedAt).toISOString().substring(0, 19) : 'running';
+      const pnlSign = e.realizedPnlSol >= 0 ? '+' : '';
+      lines.push(`\n## ${e.sessionId}`);
+      lines.push(`Period: ${start} → ${end}`);
+      if (e.hypothesis) lines.push(`Hypothesis: "${e.hypothesis}"`);
+      lines.push(`Config: TP=${e.takeProfitPct}% SL=${e.stopLossPct}% HOLD=${e.maxHoldDurationS}s`);
+      lines.push(`Trades: ${e.totalTrades} | P&L: ${pnlSign}${e.realizedPnlSol.toFixed(4)} SOL`);
+      if (e.outcomeNotes) lines.push(`Notes: ${e.outcomeNotes}`);
+      if (e.tags) lines.push(`Tags: ${e.tags}`);
+    }
+    return lines.join('\n');
+  }
+
+  private getApiAiReport(url: URL) {
+    const sessionId = url.searchParams.get('session') || undefined;
+    return generateAnalysisReport(sessionId);
+  }
+
+  private getAiReportCompact(url: URL): string {
+    const sessionId = url.searchParams.get('session') || undefined;
+    const lastN = url.searchParams.get('last');
+    const report = generateCompactReport(sessionId, lastN ? parseInt(lastN, 10) : undefined);
+
+    // Append recommendations
+    const analysisReport = generateAnalysisReport(sessionId);
+    const recs = generateRecommendations(analysisReport);
+    const recsText = formatRecommendations(recs);
+
+    return recsText ? `${report}\n${recsText}\n` : report;
+  }
+
+  private getApiRecommendations(url: URL) {
+    const sessionId = url.searchParams.get('session') || undefined;
+    const report = generateAnalysisReport(sessionId);
+    return { recommendations: generateRecommendations(report) };
+  }
+
+  private getRecommendationsCompact(url: URL): string {
+    const sessionId = url.searchParams.get('session') || undefined;
+    const report = generateAnalysisReport(sessionId);
+    const recs = generateRecommendations(report);
+    return formatRecommendations(recs) || 'No recommendations (insufficient data or no issues detected).';
+  }
+
+  private handleJournalNotesUpdate(
+    sessionId: string,
+    body: any,
+    res: http.ServerResponse,
+  ): void {
+    const store = getStateStore();
+    if (!store) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'State store not available' }));
+      return;
+    }
+
+    if (body.notes !== undefined) {
+      store.updateJournalNotes(sessionId, String(body.notes));
+    }
+    if (body.tags !== undefined) {
+      store.updateJournalTags(sessionId, String(body.tags));
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
   }
 }
 

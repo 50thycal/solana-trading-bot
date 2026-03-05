@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Analysis Report - Pump.fun Trading Bot</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .report-section { background: var(--bg-secondary, #1a1a2e); border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .report-section h2 { font-size: 1.1em; color: var(--text-primary, #eee); margin: 0 0 12px 0; border-bottom: 1px solid var(--border, #333); padding-bottom: 8px; }
+    .metric-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+    .metric { text-align: center; }
+    .metric-value { font-size: 1.4em; font-weight: 700; }
+    .metric-label { font-size: 0.8em; color: var(--text-muted, #888); }
+    .positive { color: #4ecdc4; }
+    .negative { color: #ff6b6b; }
+    .neutral { color: var(--text-secondary, #aaa); }
+    .compact-output { background: var(--bg-tertiary, #252540); border: 1px solid var(--border, #333); border-radius: 4px; padding: 12px; font-family: monospace; font-size: 0.85em; white-space: pre-wrap; word-break: break-word; max-height: 600px; overflow-y: auto; color: var(--text-primary, #eee); line-height: 1.5; }
+    .rec-item { padding: 8px 12px; margin: 4px 0; border-radius: 4px; font-size: 0.9em; }
+    .rec-item.action { background: rgba(255, 107, 107, 0.1); border-left: 3px solid #ff6b6b; }
+    .rec-item.warning { background: rgba(255, 200, 50, 0.1); border-left: 3px solid #ffc832; }
+    .rec-item.info { background: rgba(78, 205, 196, 0.1); border-left: 3px solid #4ecdc4; }
+    .rec-title { font-weight: 600; }
+    .rec-detail { color: var(--text-secondary, #aaa); margin-top: 2px; }
+    .rec-suggestion { color: #4ecdc4; margin-top: 2px; }
+    .btn-row { display: flex; gap: 8px; margin-bottom: 16px; }
+    .btn-primary { padding: 8px 20px; background: #4ecdc4; color: #000; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; }
+    .btn-secondary { padding: 8px 20px; background: var(--bg-tertiary, #252540); color: var(--text-primary, #eee); border: 1px solid var(--border, #333); border-radius: 4px; cursor: pointer; }
+    .btn-secondary:hover { background: var(--border, #333); }
+    .exit-table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+    .exit-table th, .exit-table td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border, #333); }
+    .exit-table th { color: var(--text-muted, #888); font-weight: 600; }
+    .copy-toast { position: fixed; bottom: 20px; right: 20px; background: #4ecdc4; color: #000; padding: 8px 16px; border-radius: 4px; display: none; z-index: 1000; }
+    .tab-bar { display: flex; gap: 4px; margin-bottom: 16px; }
+    .tab { padding: 6px 16px; background: var(--bg-tertiary, #252540); color: var(--text-secondary, #aaa); border: 1px solid var(--border, #333); border-radius: 4px 4px 0 0; cursor: pointer; }
+    .tab.active { background: var(--bg-secondary, #1a1a2e); color: var(--text-primary, #eee); border-bottom-color: transparent; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <nav id="nav-bar" class="nav-bar"></nav>
+
+    <section class="overview-header">
+      <div class="overview-header-left">
+        <h1>AI Analysis Report</h1>
+        <p style="color: var(--text-muted, #888); margin-top: 4px;">Trade performance analysis optimized for Claude</p>
+      </div>
+    </section>
+
+    <div class="btn-row">
+      <button class="btn-primary" id="copy-btn">Copy for Claude</button>
+      <button class="btn-secondary" id="refresh-btn">Refresh</button>
+      <select id="session-select" class="btn-secondary" style="min-width: 200px;">
+        <option value="">Latest session</option>
+      </select>
+    </div>
+
+    <div id="toast" class="copy-toast"></div>
+
+    <div class="tab-bar">
+      <div class="tab active" data-tab="visual">Visual</div>
+      <div class="tab" data-tab="compact">Compact Text</div>
+    </div>
+
+    <!-- Visual Tab -->
+    <div id="tab-visual" class="tab-content active">
+      <!-- Performance Cards -->
+      <div class="report-section">
+        <h2>Performance</h2>
+        <div class="metric-grid" id="perf-metrics"></div>
+      </div>
+
+      <!-- Pipeline -->
+      <div class="report-section">
+        <h2>Pipeline</h2>
+        <div id="pipeline-info"></div>
+      </div>
+
+      <!-- Exit Analysis -->
+      <div class="report-section">
+        <h2>Exit Analysis</h2>
+        <div id="exit-info"></div>
+      </div>
+
+      <!-- Recommendations -->
+      <div class="report-section">
+        <h2>Recommendations</h2>
+        <div id="recs-list"></div>
+      </div>
+    </div>
+
+    <!-- Compact Text Tab -->
+    <div id="tab-compact" class="tab-content">
+      <div class="compact-output" id="compact-text">Loading...</div>
+    </div>
+  </div>
+
+  <script src="/nav.js"></script>
+  <script>
+    // Tab switching
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+      });
+    });
+
+    async function loadSessions() {
+      try {
+        const res = await fetch('/api/journal?limit=20');
+        const data = await res.json();
+        const select = document.getElementById('session-select');
+        if (data.entries) {
+          data.entries.forEach(e => {
+            const opt = document.createElement('option');
+            opt.value = e.sessionId;
+            const date = new Date(e.startedAt).toISOString().substring(5, 16).replace('T', ' ');
+            opt.textContent = `${date} - ${e.hypothesis || 'no hypothesis'}`;
+            select.appendChild(opt);
+          });
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    async function loadReport() {
+      const sessionId = document.getElementById('session-select').value;
+      const qs = sessionId ? `?session=${sessionId}` : '';
+
+      try {
+        const [reportRes, compactRes, recsRes] = await Promise.all([
+          fetch('/api/ai-report' + qs),
+          fetch('/api/ai-report/compact' + qs),
+          fetch('/api/recommendations' + qs),
+        ]);
+
+        const report = await reportRes.json();
+        const compactText = await compactRes.text();
+        const recsData = await recsRes.json();
+
+        renderPerformance(report.performance);
+        renderPipeline(report.pipeline);
+        renderExits(report.exitAnalysis);
+        renderRecommendations(recsData.recommendations || []);
+        document.getElementById('compact-text').textContent = compactText;
+      } catch (err) {
+        console.error('Failed to load report:', err);
+      }
+    }
+
+    function renderPerformance(perf) {
+      const pnlClass = perf.totalPnlSol >= 0 ? 'positive' : 'negative';
+      const pnlSign = perf.totalPnlSol >= 0 ? '+' : '';
+      const wrClass = perf.winRate >= 0.5 ? 'positive' : perf.winRate >= 0.3 ? 'neutral' : 'negative';
+      const expClass = perf.expectancySol >= 0 ? 'positive' : 'negative';
+
+      document.getElementById('perf-metrics').innerHTML = `
+        <div class="metric"><div class="metric-value">${perf.totalTrades}</div><div class="metric-label">Total Trades</div></div>
+        <div class="metric"><div class="metric-value ${wrClass}">${(perf.winRate * 100).toFixed(1)}%</div><div class="metric-label">Win Rate (${perf.wins}W/${perf.losses}L)</div></div>
+        <div class="metric"><div class="metric-value ${pnlClass}">${pnlSign}${perf.totalPnlSol.toFixed(4)}</div><div class="metric-label">P&L (SOL)</div></div>
+        <div class="metric"><div class="metric-value ${expClass}">${perf.expectancySol >= 0 ? '+' : ''}${perf.expectancySol.toFixed(4)}</div><div class="metric-label">Expectancy/Trade</div></div>
+        <div class="metric"><div class="metric-value positive">+${perf.avgWinSol.toFixed(4)}</div><div class="metric-label">Avg Win</div></div>
+        <div class="metric"><div class="metric-value negative">${perf.avgLossSol.toFixed(4)}</div><div class="metric-label">Avg Loss</div></div>
+      `;
+    }
+
+    function renderPipeline(pipeline) {
+      const html = `
+        <div style="font-size: 0.9em; line-height: 1.8;">
+          Detected: <strong>${pipeline.totalDetected}</strong> →
+          Bought: <strong>${pipeline.bought}</strong>
+          (${(pipeline.buyRate * 100).toFixed(1)}% buy rate)
+          ${pipeline.bought > 0 ? `| Profitable: <strong>${pipeline.profitableOfBought}/${pipeline.bought}</strong> (${(pipeline.profitableRate * 100).toFixed(0)}%)` : ''}
+        </div>
+        ${pipeline.topRejections.length > 0 ? `
+          <div style="margin-top: 8px; font-size: 0.85em; color: var(--text-secondary, #aaa);">
+            <strong>Top rejections:</strong> ${pipeline.topRejections.slice(0, 5).map(r => `${r.reason} (${r.count})`).join(', ')}
+          </div>
+        ` : ''}
+      `;
+      document.getElementById('pipeline-info').innerHTML = html;
+    }
+
+    function renderExits(exits) {
+      if (exits.totalExits === 0) {
+        document.getElementById('exit-info').innerHTML = '<div style="color: var(--text-muted, #888);">No completed exits yet.</div>';
+        return;
+      }
+      const rows = exits.byReason.map(r => {
+        const avgClass = r.avgPnlSol >= 0 ? 'positive' : 'negative';
+        return `<tr><td>${r.reason}</td><td>${r.count}</td><td class="${avgClass}">${r.avgPnlSol >= 0 ? '+' : ''}${r.avgPnlSol.toFixed(4)} SOL</td></tr>`;
+      }).join('');
+      document.getElementById('exit-info').innerHTML = `
+        <table class="exit-table">
+          <thead><tr><th>Reason</th><th>Count</th><th>Avg P&L</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    function renderRecommendations(recs) {
+      if (recs.length === 0) {
+        document.getElementById('recs-list').innerHTML = '<div style="color: var(--text-muted, #888);">No recommendations (insufficient data or no issues detected).</div>';
+        return;
+      }
+      document.getElementById('recs-list').innerHTML = recs.map(r => `
+        <div class="rec-item ${r.severity}">
+          <div class="rec-title">[${r.severity.toUpperCase()}] ${r.title}</div>
+          <div class="rec-detail">${r.detail}</div>
+          ${r.suggestion ? `<div class="rec-suggestion">→ ${r.suggestion}</div>` : ''}
+        </div>
+      `).join('');
+    }
+
+    document.getElementById('copy-btn').addEventListener('click', async () => {
+      const sessionId = document.getElementById('session-select').value;
+      const qs = sessionId ? `?session=${sessionId}` : '';
+      try {
+        const res = await fetch('/api/ai-report/compact' + qs);
+        const text = await res.text();
+        await navigator.clipboard.writeText(text);
+        showToast('Copied to clipboard');
+      } catch (err) {
+        showToast('Failed to copy');
+      }
+    });
+
+    document.getElementById('refresh-btn').addEventListener('click', loadReport);
+    document.getElementById('session-select').addEventListener('change', loadReport);
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 2000);
+    }
+
+    loadSessions();
+    loadReport();
+  </script>
+</body>
+</html>

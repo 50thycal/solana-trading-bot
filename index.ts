@@ -63,7 +63,7 @@ import { initLogSummarizer, getLogSummarizer } from './helpers/log-summarizer';
 import { initRpcManager } from './helpers/rpc-manager';
 import { startDashboardServer, DashboardServer } from './dashboard';
 import { version } from './package.json';
-import { getConfig } from './helpers/config-validator';
+import { getConfig, getRedactedConfigSnapshot } from './helpers/config-validator';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
 import {
@@ -104,6 +104,7 @@ let pumpFunListener: PumpFunListener | null = null;
 let dashboardServer: DashboardServer | null = null;
 let bot: Bot | null = null;
 let isShuttingDown = false;
+let currentJournalSessionId: string | null = null;
 
 /**
  * Initialize RPC Manager with failover support
@@ -245,6 +246,24 @@ async function gracefulShutdown(signal: string): Promise<void> {
     logger.info('Saving P&L data...');
     await pnlTracker.forceSave();
     pnlTracker.logSessionSummary();
+
+    // Close run journal entry with final stats
+    if (currentJournalSessionId) {
+      const shutdownStore = getStateStore();
+      if (shutdownStore) {
+        const tradeStats = shutdownStore.getTradeStats();
+        const detectionStats = shutdownStore.getPoolDetectionStats();
+        shutdownStore.closeJournalEntry({
+          sessionId: currentJournalSessionId,
+          totalDetections: detectionStats.totalDetected,
+          totalTrades: tradeStats.totalBuys,
+          totalWins: tradeStats.totalSells, // sells = completed trades (wins tracked via P&L)
+          totalLosses: 0, // will be refined when analysis engine is active
+          realizedPnlSol: tradeStats.realizedPnlSol,
+        });
+        logger.info({ sessionId: currentJournalSessionId }, 'Run journal entry closed');
+      }
+    }
 
     // Stop dashboard server
     if (dashboardServer) {
@@ -399,6 +418,19 @@ const runListener = async () => {
       },
       'State store initialized',
     );
+    // Create run journal entry
+    currentJournalSessionId = stateStore.createJournalEntry({
+      hypothesis: config.runHypothesis,
+      configSnapshot: getRedactedConfigSnapshot(),
+      botMode: config.botMode,
+      quoteAmountSol: Number(config.quoteAmount),
+      takeProfitPct: config.takeProfit,
+      stopLossPct: config.stopLoss,
+      maxHoldDurationS: Math.round(config.maxHoldDurationMs / 1000),
+      sniperGateEnabled: config.sniperGateEnabled,
+      momentumGateEnabled: config.momentumGateEnabled,
+      trailingStopEnabled: config.trailingStopEnabled,
+    });
   } else {
     logger.warn('State store NOT available - running without persistence');
   }
