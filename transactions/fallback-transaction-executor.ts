@@ -1,5 +1,5 @@
 import { BlockhashWithExpiryBlockHeight, Keypair, VersionedTransaction } from '@solana/web3.js';
-import { TransactionExecutor } from './transaction-executor.interface';
+import { TransactionExecutor, TransactionExecutorResult } from './transaction-executor.interface';
 import { logger } from '../helpers';
 import bs58 from 'bs58';
 
@@ -21,7 +21,7 @@ export class FallbackTransactionExecutor implements TransactionExecutor {
     transaction: VersionedTransaction,
     payer: Keypair,
     latestBlockhash: BlockhashWithExpiryBlockHeight,
-  ): Promise<{ confirmed: boolean; signature?: string; error?: string }> {
+  ): Promise<TransactionExecutorResult> {
     // Get the transaction signature for potential confirmation later
     const txSignature = bs58.encode(transaction.signatures[0]);
 
