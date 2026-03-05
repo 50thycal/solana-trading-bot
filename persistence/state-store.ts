@@ -44,7 +44,7 @@ import {
 /**
  * Current schema version - increment when making schema changes
  */
-const CURRENT_SCHEMA_VERSION = 5;
+const CURRENT_SCHEMA_VERSION = 6;
 
 /**
  * SQLite State Store - manages all persistent data
@@ -152,6 +152,10 @@ export class StateStore {
 
       if (currentVersion < 5) {
         this.migrateToV5();
+      }
+
+      if (currentVersion < 6) {
+        this.migrateToV6();
       }
 
       logger.info({ version: CURRENT_SCHEMA_VERSION }, 'Database migrations complete');
@@ -423,6 +427,25 @@ export class StateStore {
     `);
 
     logger.info('Applied migration v5: run_journal and market_snapshots tables');
+  }
+
+  /**
+   * Migration to version 6 - Add research bot fields to market_snapshots
+   */
+  private migrateToV6(): void {
+    this.db.exec(`
+      ALTER TABLE market_snapshots ADD COLUMN tokens_with_2x INTEGER;
+      ALTER TABLE market_snapshots ADD COLUMN hit_2x_rate_pct REAL;
+      ALTER TABLE market_snapshots ADD COLUMN avg_peak_gain_pct REAL;
+      ALTER TABLE market_snapshots ADD COLUMN median_peak_gain_pct REAL;
+      ALTER TABLE market_snapshots ADD COLUMN avg_buy_velocity REAL;
+      ALTER TABLE market_snapshots ADD COLUMN avg_sell_ratio REAL;
+
+      -- Record migration
+      INSERT INTO schema_version (version, applied_at) VALUES (6, ${Date.now()});
+    `);
+
+    logger.info('Applied migration v6: research bot fields on market_snapshots');
   }
 
   /**
@@ -1638,8 +1661,10 @@ export class StateStore {
     this.db.prepare(`
       INSERT INTO market_snapshots (
         captured_at, period_from, period_to, tokens_created, tokens_bought,
-        tokens_filtered, avg_sol_in_curve, top_rejection_reason, source
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        tokens_filtered, avg_sol_in_curve, top_rejection_reason, source,
+        tokens_with_2x, hit_2x_rate_pct, avg_peak_gain_pct,
+        median_peak_gain_pct, avg_buy_velocity, avg_sell_ratio
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       snapshot.capturedAt,
       snapshot.periodFrom,
@@ -1650,6 +1675,12 @@ export class StateStore {
       snapshot.avgSolInCurve ?? null,
       snapshot.topRejectionReason ?? null,
       snapshot.source,
+      snapshot.tokensWith2x ?? null,
+      snapshot.hit2xRatePct ?? null,
+      snapshot.avgPeakGainPct ?? null,
+      snapshot.medianPeakGainPct ?? null,
+      snapshot.avgBuyVelocity ?? null,
+      snapshot.avgSellRatio ?? null,
     );
   }
 
@@ -1673,6 +1704,12 @@ export class StateStore {
       avgSolInCurve: row.avg_sol_in_curve ?? undefined,
       topRejectionReason: row.top_rejection_reason ?? undefined,
       source: row.source,
+      tokensWith2x: row.tokens_with_2x ?? undefined,
+      hit2xRatePct: row.hit_2x_rate_pct ?? undefined,
+      avgPeakGainPct: row.avg_peak_gain_pct ?? undefined,
+      medianPeakGainPct: row.median_peak_gain_pct ?? undefined,
+      avgBuyVelocity: row.avg_buy_velocity ?? undefined,
+      avgSellRatio: row.avg_sell_ratio ?? undefined,
     }));
   }
 

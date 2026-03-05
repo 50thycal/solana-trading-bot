@@ -439,7 +439,7 @@ export interface CloseRunJournalInput {
 // ============================================================
 
 /**
- * Market snapshot derived from own detection data
+ * Market snapshot — combines self-derived detection stats with research bot data
  */
 export interface MarketSnapshotRecord {
   id: number;
@@ -451,5 +451,12 @@ export interface MarketSnapshotRecord {
   tokensFiltered: number;
   avgSolInCurve?: number;
   topRejectionReason?: string;
-  source: string;
+  source: string;                  // 'self' or 'research_bot'
+  // Research bot fields (populated when source = 'research_bot')
+  tokensWith2x?: number;
+  hit2xRatePct?: number;
+  avgPeakGainPct?: number;
+  medianPeakGainPct?: number;
+  avgBuyVelocity?: number;
+  avgSellRatio?: number;
 }
