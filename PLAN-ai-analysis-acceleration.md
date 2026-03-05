@@ -1,255 +1,417 @@
 # Plan: AI-Assisted Trading Bot Analysis & Improvement Loop
 
-## Problem Summary
+## Context (from your answers)
 
-You have a Solana pump.fun trading bot with:
-- A SQLite database storing trades, positions, paper trades, pipeline decisions, and sniper gate observations
-- A web dashboard for monitoring
-- An A/B testing framework
-- Paper trade tracking with TP/SL simulation
-
-But you're not making money, and the feedback loop between "run bot → analyze results → improve config/code" is slow and manual. Specific pain points:
-
-1. **No structured experiment tracking** — You forget what you were testing on a given run
-2. **Database is underutilized** — Rich trade data sits in SQLite but isn't queried for insights
-3. **AI can't access the data directly** — You manually screenshot the dashboard and paste it into Claude
-4. **Market context is missing** — Bot only takes snapshots, doesn't capture the full pattern of pump.fun market behavior
-5. **No systematic way to correlate config changes with outcomes**
+- **Research bot**: Separate Railway service (`pumpfun-research-collector`), SQLite at `/data/research.db`, collects per-token snapshots (price, tx counts, buy/sell estimates) every 5-10s for 30min windows every 4h (12.5% coverage). You're open to modifying it.
+- **Deployment**: GitHub push → Railway auto-deploy. Config via Railway env vars. No SSH. All output must be HTTP endpoints/dashboard.
+- **Runtime**: Smoke test mode — 30min windows, max 1 trade per window, repeating cycles. Real money.
+- **Trading**: Real on-chain transactions from a single wallet. Analysis must use actual fills, fees, slippage.
 
 ---
 
-## The Plan: 5 Components
+## Architecture Decision: All Features as Dashboard HTTP Endpoints
 
-### 1. Run Journal — "What Was I Testing?"
-
-**Problem:** You forget what each run was meant to test.
-
-**Solution:** Add a `run_journal` table and a simple mechanism to tag each bot session with a hypothesis.
-
-```
-run_journal table:
-  - session_id (TEXT, primary key)
-  - started_at (INTEGER)
-  - ended_at (INTEGER)
-  - hypothesis (TEXT)        — "Testing if 30s max hold with 25% TP works better than 20s/40%"
-  - config_snapshot (TEXT)   — JSON blob of the full config at start time
-  - bot_mode (TEXT)          — 'production' | 'dry_run' | 'paper'
-  - outcome_notes (TEXT)     — Filled in after the run: "Lost 0.3 SOL, TP never hit"
-  - tags (TEXT)              — Comma-separated: "tp-tuning,aggressive,evening-session"
-```
-
-**How it works:**
-- On bot startup, automatically capture the full config as JSON and create a journal entry
-- Add an env var `RUN_HYPOTHESIS` — set it before each run to describe what you're testing
-- Add a dashboard page or API endpoint to review past runs with their hypotheses and outcomes
-- After a run, you (or AI) can fill in `outcome_notes` via the dashboard
-
-**Why this matters for AI analysis:** When you ask Claude to analyze a run, it gets the full context — what config was used, what you were trying to test, and what happened. No more guessing.
+Since you have no SSH access and config changes are via Railway env vars, every analysis feature will be:
+- A new API endpoint on the existing dashboard server (`dashboard/server.ts`)
+- A new dashboard page in `dashboard/public/` for visual access
+- Plain-text `/compact` variants optimized for pasting into Claude
 
 ---
 
-### 2. AI Analysis Export — "Let Claude Query the Database"
+## Phase 1: Run Journal (Low effort, High impact)
 
-**Problem:** Claude can't see your database. You have to manually relay information.
+### What it does
+Automatically captures what you were testing on each bot session, so you never lose context.
 
-**Solution:** Build a CLI script and/or dashboard API endpoint that exports structured analysis reports from the database in a format optimized for AI consumption.
+### Database changes (`persistence/state-store.ts`)
 
-**`scripts/export-analysis.ts`** — A CLI tool that queries SQLite and outputs a structured markdown/JSON report:
-
+New table `run_journal` (schema v5 migration):
+```sql
+CREATE TABLE run_journal (
+  session_id TEXT PRIMARY KEY,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  hypothesis TEXT,
+  config_snapshot TEXT NOT NULL,       -- Full config JSON (secrets redacted)
+  bot_mode TEXT NOT NULL,
+  quote_amount_sol REAL,
+  take_profit_pct REAL,
+  stop_loss_pct REAL,
+  max_hold_duration_s INTEGER,
+  sniper_gate_enabled INTEGER,
+  momentum_gate_enabled INTEGER,
+  trailing_stop_enabled INTEGER,
+  total_detections INTEGER DEFAULT 0,
+  total_trades INTEGER DEFAULT 0,
+  total_wins INTEGER DEFAULT 0,
+  total_losses INTEGER DEFAULT 0,
+  realized_pnl_sol REAL DEFAULT 0,
+  outcome_notes TEXT,
+  tags TEXT
+);
 ```
-Usage: npx ts-node scripts/export-analysis.ts [--session <id>] [--last <N>] [--format md|json]
-```
 
-**What it exports:**
+### New env var
+- `RUN_HYPOTHESIS` — set in Railway before each run to describe what you're testing
+
+### Implementation files
+1. **`persistence/state-store.ts`** — Add v5 migration, add `createJournalEntry()`, `updateJournalEntry()`, `closeJournalEntry()`, `getJournalEntries()` methods
+2. **`bot.ts`** — On startup, create journal entry with config snapshot + hypothesis. On shutdown, close it with aggregated stats.
+3. **`helpers/config-validator.ts`** — Add `RUN_HYPOTHESIS` to config, add `getRedactedConfigSnapshot()` that strips `PRIVATE_KEY` and `RPC_ENDPOINT` passwords
+4. **`dashboard/server.ts`** — Add endpoints:
+   - `GET /api/journal` — List all journal entries (paginated)
+   - `GET /api/journal/:sessionId` — Single entry with linked trades
+   - `POST /api/journal/:sessionId/notes` — Add outcome notes after a run
+   - `GET /api/journal/compact` — Plain text for Claude
+5. **`dashboard/public/journal.html`** + **`journal.js`** — Dashboard page showing run history with hypotheses, configs, outcomes
+
+### How you'll use it
+1. In Railway env vars, set `RUN_HYPOTHESIS="Testing TP=20% down from 40%"`
+2. Deploy (auto via Railway)
+3. Bot runs, auto-logs config + hypothesis
+4. After run, visit dashboard → Journal page, add outcome notes
+5. When pasting into Claude: hit `/api/journal/compact?last=3` to get last 3 runs as structured text
+
+---
+
+## Phase 2: AI Analysis Report (Medium effort, Very High impact)
+
+### What it does
+Comprehensive analysis endpoints that compute insights from your real trade data, optimized for AI consumption.
+
+### New file: `helpers/ai-analysis.ts`
+
+Core analysis engine with these computed sections:
 
 **a) Session Summary**
-- Config snapshot (from run_journal)
-- Hypothesis being tested
-- Duration, total tokens seen, total trades
+- Config used (from run_journal)
+- Hypothesis, duration, detection count
+- Market conditions summary (if research bot data available)
 
-**b) Trade Performance**
-- Win/loss breakdown with percentages
-- Average win size vs average loss size (expectancy calculation)
+**b) Trade Performance Analysis**
+- Win/loss count and percentages
+- Average win SOL vs average loss SOL (expectancy)
 - Best and worst trades with token details
-- P&L curve over time (text-based or data points)
-- Hold duration distribution
+- P&L by trade sequence (are later trades better?)
+- Hold duration distribution (bucketed: <10s, 10-30s, 30-60s, >60s)
+- Entry price vs exit price scatter
 
-**c) Pipeline Efficiency**
-- Funnel: tokens detected → cheap gates → deep filters → momentum/sniper gate → bought
+**c) Slippage & Execution Analysis** (from existing trade-audit data)
+- Average buy slippage (intended vs actual SOL spent)
+- Average sell slippage
+- Transaction cost breakdown (gas + priority fees)
+- Failed transaction rate and reasons
+
+**d) Pipeline Efficiency**
+- Funnel: detected → cheap gates → deep filters → gate → bought
 - Top 10 rejection reasons with counts
-- What percentage of tokens that passed all gates were actually profitable?
+- Of tokens that passed all gates and were bought — what % were profitable?
+- Filter calibration: are any filters rejecting too many or too few?
 
-**d) Pattern Analysis**
-- Time-of-day performance (which hours are profitable vs not)
-- Correlation between entry metrics and outcomes:
-  - SOL in curve at entry vs P&L
-  - Sniper bot count at entry vs P&L
+**e) Entry Condition Correlations**
+- From `pool_detections` + `positions` + `trades`: join on token_mint
+  - SOL in bonding curve at detection vs trade P&L
+  - Pool quote reserve at detection vs trade P&L
+  - Pipeline duration vs trade P&L
+- From `sniper_gate_observations` + `trades` (when sniper gate enabled):
+  - Bot count at entry vs P&L
   - Organic buyer count at entry vs P&L
-  - Pipeline duration vs P&L
-- Tokens that hit TP vs SL vs time-exit — what distinguished them at entry?
+  - Bot exit % at entry vs P&L
 
-**e) Cross-Run Comparison**
-- Compare the last N runs side by side
-- Which config changes correlated with improved results?
-- Regression detection: "Run 5 was worse than Run 4 — the only config change was X"
+**f) Exit Analysis**
+- Breakdown by exit reason: TP hit, SL hit, trailing stop, max hold timeout
+- For max-hold exits: what was the unrealized P&L at exit? (Were these potential winners?)
+- For SL exits: how deep did price go after exit? (Was SL too tight?)
+- Trailing stop effectiveness: did it capture more than a fixed TP would have?
 
-**Why this matters:** Instead of screenshotting the dashboard, you run `npx ts-node scripts/export-analysis.ts --last 3` and paste the output into Claude. Claude gets structured, complete data and can give you specific, data-backed recommendations.
+**g) Time-of-Day Analysis**
+- P&L bucketed by hour (UTC)
+- Win rate by hour
+- Trade count by hour
+- Identifies profitable vs unprofitable time windows
 
-**Dashboard integration:** Also expose this as `/api/ai-report?session=<id>` so you can fetch it from the dashboard UI and copy it.
+**h) Cross-Run Comparison** (when multiple journal entries exist)
+- Side-by-side: Run A config vs Run B config + outcomes
+- What changed between runs and did it help?
+- Trend: are results improving over time?
 
----
+### Implementation files
+1. **`helpers/ai-analysis.ts`** — Core analysis engine (~400 lines). Queries SQLite directly via `getStateStore()`. Returns structured `AnalysisReport` object.
+2. **`dashboard/server.ts`** — Add endpoints:
+   - `GET /api/ai-report` — Full JSON analysis (current session or `?session=<id>`)
+   - `GET /api/ai-report/compact` — Plain text markdown optimized for Claude (this is the money endpoint)
+   - `GET /api/ai-report/compare?sessions=id1,id2` — Cross-run comparison
+3. **`dashboard/public/ai-report.html`** + **`ai-report.js`** — Dashboard page rendering the analysis visually with charts
 
-### 3. Market Context Capture — "What Was the Market Doing?"
+### Output format for `/api/ai-report/compact`
 
-**Problem:** Your bot takes snapshots but doesn't capture the broader pump.fun market pattern. You can't tell if a bad run was due to bad config or bad market conditions.
+```markdown
+# Trading Bot Analysis Report
+## Session: abc123 | 2024-01-15 21:00-21:30 UTC
+## Hypothesis: "Testing TP=20% with trailing stop at 10%"
 
-**Solution:** Add a `market_context` table that continuously captures market-level metrics, independent of whether your bot trades.
+### Config (key params)
+QUOTE_AMOUNT=0.01 SOL | TP=20% | SL=15% | MAX_HOLD=30s
+TRAILING_STOP=enabled (activate=10%, distance=5%)
+SNIPER_GATE=enabled (threshold=3 slots, min_organic=3)
 
-```
-market_context table:
-  - timestamp (INTEGER)
-  - tokens_created_5m (INTEGER)     — New tokens in last 5 min
-  - tokens_graduated_5m (INTEGER)   — Tokens that hit graduation in last 5 min
-  - avg_sol_in_curve (REAL)         — Average SOL across active bonding curves
-  - total_volume_sol_5m (REAL)      — Total trading volume on pump.fun
-  - graduation_rate_pct (REAL)      — % of tokens that graduate (5m window)
-  - avg_token_lifespan_min (REAL)   — How long tokens stay active before dying
-```
+### Performance
+Trades: 1 | Wins: 0 | Losses: 1 | Win Rate: 0%
+P&L: -0.008 SOL | Avg Win: -- | Avg Loss: -0.008 SOL
+Expectancy: -0.008 SOL/trade
 
-**How it works:**
-- Your existing second bot (the market data collector) feeds this table, OR
-- Add a lightweight background task to the main bot that polls pump.fun stats every 5 minutes
-- The AI analysis export (Component 2) includes market context for each run period
-- This lets Claude say: "Your bot lost money on this run, but the market was extremely unfavorable — only 2% of tokens graduated vs the usual 8%. Your filters were actually performing well relative to the market."
+### Pipeline (this session)
+Detected: 47 | Cheap Gates: 31 pass (66%) | Deep Filter: 12 pass (39%) | Gate: 3 pass (25%) | Bought: 1 (2.1% of detected)
+Top rejections: pattern_match (8), min_sol_in_curve (6), freeze_authority (3)
 
-**Correlation queries the AI can answer:**
-- "Does your bot perform better during high-volume or low-volume periods?"
-- "What's the graduation rate when you're profitable vs when you're not?"
-- "Should you only run the bot during certain market conditions?"
+### Exit Analysis
+SL exits: 1 (100%) | TP exits: 0 | Trailing: 0 | Timeout: 0
+SL exit avg loss: -0.008 SOL
 
-This directly supports your "quality over quantity" strategy — you could build a **market conditions gate** that only enables trading when conditions are favorable.
+### Entry Conditions (bought tokens)
+Token XYZ: SOL in curve=12.3, organic buyers=4, bot count=2, pipeline=340ms
 
----
+### Cross-Run Trend (last 3)
+Run 1: -0.015 SOL (TP=40%, no trailing) → 0% win rate
+Run 2: -0.008 SOL (TP=20%, no trailing) → 0% win rate
+Run 3: -0.008 SOL (TP=20%, trailing) → 0% win rate [current]
 
-### 4. Recursive Improvement Loop — "The Actual Workflow"
-
-**Problem:** The loop of "run → analyze → change → run again" is ad hoc and lossy.
-
-**Solution:** Formalize the workflow so each cycle builds on the last.
-
-**The loop:**
-
-```
-┌─────────────────────────────────────────────────┐
-│  1. SET HYPOTHESIS                              │
-│     Set RUN_HYPOTHESIS env var                  │
-│     "Testing if minSolInCurve=5 filters junk"   │
-├─────────────────────────────────────────────────┤
-│  2. RUN BOT                                     │
-│     Bot auto-captures config + hypothesis       │
-│     Market context captured in background       │
-├─────────────────────────────────────────────────┤
-│  3. EXPORT & ANALYZE                            │
-│     Run: scripts/export-analysis.ts --last 1    │
-│     Paste output into Claude                    │
-│     Claude compares against previous runs       │
-├─────────────────────────────────────────────────┤
-│  4. AI GENERATES RECOMMENDATIONS                │
-│     "Based on 47 trades across 3 runs:          │
-│      - Your TP of 40% never hits. Reduce to 20% │
-│      - Tokens with >3 organic buyers at entry   │
-│        win 65% of the time vs 30% overall       │
-│      - You're profitable 9pm-1am UTC only"      │
-├─────────────────────────────────────────────────┤
-│  5. APPLY CHANGES                               │
-│     Update config based on recommendations      │
-│     Claude can directly edit .env or suggest     │
-│     code changes for new filter logic            │
-├─────────────────────────────────────────────────┤
-│  6. RECORD & REPEAT                             │
-│     New hypothesis based on recommendations     │
-│     Previous run becomes the baseline            │
-│     Loop back to step 1                          │
-└─────────────────────────────────────────────────┘
+### AI Recommendations
+[Computed suggestions based on patterns in the data]
 ```
 
-**Key principle:** Every run has a clear before/after. You always know what changed and whether it helped.
+### How you'll use it
+1. After a run (or during), visit dashboard or `curl https://your-bot.railway.app/api/ai-report/compact?last=3`
+2. Copy the plain text output
+3. Paste into Claude with "Analyze my last 3 trading runs and suggest improvements"
+4. Claude has full structured data to give specific, actionable recommendations
 
 ---
 
-### 5. Smart Filters from Data — "Quality Over Quantity"
+## Phase 3: Market Context Integration (Medium effort, High impact)
 
-**Problem:** You want fewer, better trades. Your current filters are configured by gut feel.
+### The problem
+Your research bot collects rich per-token data but it's on a separate Railway service with its own SQLite. The trading bot can't read its DB directly.
 
-**Solution:** Use the accumulated data to derive evidence-based entry criteria.
+### Solution: Two-part approach
 
-**What the data can tell you (once Components 1-3 are in place):**
+**Part A: Add a market summary API to the research bot** (changes in `pumpfun-research-collector`)
 
-**a) Which entry conditions predict winners?**
-Query all closed paper trades + real trades. For each, you have:
-- SOL in bonding curve at entry
-- Sniper bot count / organic buyer count (from sniper gate observations)
-- Time since token creation
-- Pipeline duration
-- Market conditions at time of entry
+New endpoint on the research bot's HTTP server (or add one if none exists):
+- `GET /api/market-summary?from=<timestamp>&to=<timestamp>`
 
-Run correlations: "Of trades where organic buyers > 5 at entry, 60% were profitable. Of trades where organic buyers < 3, only 15% were profitable." → **Raise the organic buyer threshold.**
+Returns:
+```json
+{
+  "period": { "from": 1705350000, "to": 1705351800 },
+  "tokens_created": 142,
+  "tokens_with_2x": 8,
+  "hit_2x_rate_pct": 5.6,
+  "avg_initial_price_sol": 0.0000000283,
+  "avg_peak_gain_pct": 45.2,
+  "median_peak_gain_pct": 12.1,
+  "avg_buy_velocity": 0.8,
+  "avg_sell_ratio": 0.35,
+  "total_snapshots": 4200,
+  "coverage_pct": 100
+}
+```
 
-**b) Optimal exit parameters**
-- Plot the price path of every trade. Where did winners peak? Where did losers bottom?
-- If 80% of your winners peak within 15 seconds but your max hold is 60 seconds, you're giving back gains
-- If your TP is 40% but the median winner only goes +18%, your TP never triggers and winners become losers on the reversal
+This is a simple aggregation query across the research bot's `tokens`, `snapshots`, and `outcomes` tables for a time window. Minimal code.
 
-**c) Time-based filtering**
-- If data shows you only make money between 8pm-2am UTC, add a time-of-day gate
-- This is the simplest "quality over quantity" filter — just don't trade during bad hours
+**Part B: Trading bot fetches market context** (changes in `solana-trading-bot`)
 
-**d) Market conditions gate**
-- Using Component 3 data: if graduation rate < 5%, pause trading
-- If token creation rate is unusually high (spam/bot flood), pause trading
-- This alone could prevent most losing sessions
+1. **New env var**: `RESEARCH_BOT_URL` — URL of the research bot's Railway service (e.g., `https://pumpfun-research.up.railway.app`)
+2. **`helpers/market-context.ts`** — Fetches market summary from research bot API on a schedule (every 5 min) and caches locally
+3. **`persistence/state-store.ts`** — New table `market_snapshots` (v5 migration):
+   ```sql
+   CREATE TABLE market_snapshots (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     captured_at INTEGER NOT NULL,
+     period_from INTEGER NOT NULL,
+     period_to INTEGER NOT NULL,
+     tokens_created INTEGER,
+     hit_2x_rate_pct REAL,
+     avg_peak_gain_pct REAL,
+     median_peak_gain_pct REAL,
+     avg_buy_velocity REAL,
+     avg_sell_ratio REAL,
+     source TEXT DEFAULT 'research_bot'
+   );
+   ```
+4. **`helpers/ai-analysis.ts`** — Correlate market snapshots with trade outcomes. Include in the AI report:
+   - "During this session, the market had X tokens created with Y% hitting 2x"
+   - "Your win rate was Z% vs market 2x rate of Y%"
+   - Correlation: "You perform better when market 2x rate > 5%"
+
+**Part C: Fallback — self-collected market context** (if research bot isn't available)
+
+Even without the research bot, the trading bot already sees every token via its WebSocket listener. We can derive basic market metrics from `pool_detections` and `seen_pools`:
+- Tokens detected per 5-min window
+- % that passed filters (proxy for market quality)
+- Average SOL in curve at detection
+
+This is computed from existing data — no new data collection needed.
+
+### Implementation priority
+- Part C (fallback) is free — just queries on existing data. Build this first.
+- Part A requires a small change to the research bot. Do when ready.
+- Part B connects them. Do after Part A.
 
 ---
 
-## Implementation Priority
+## Phase 4: Automated Recommendations Engine (Low effort, High impact)
 
-| Phase | Component | Effort | Impact |
-|-------|-----------|--------|--------|
-| **1** | Run Journal (Component 1) | Low | High — Immediately fixes the "what was I testing" problem |
-| **2** | AI Analysis Export (Component 2) | Medium | Very High — This is the core accelerator for AI-assisted improvement |
-| **3** | Market Context Capture (Component 3) | Medium | High — Needed for answering "was it the market or my config?" |
-| **4** | Formalize the Loop (Component 4) | Low | High — Just workflow discipline, minimal code |
-| **5** | Data-Driven Filters (Component 5) | Ongoing | Very High — This is where the money is, but needs data from Phases 1-3 first |
+### What it does
+Computes specific parameter change suggestions based on accumulated trade data. Not AI — just rule-based analysis that produces structured suggestions.
 
-**Phase 1-2 can be built in a single session.** They're the highest-leverage items — once the AI can see your data directly, every subsequent analysis session becomes 10x more productive.
+### New file: `helpers/recommendations.ts`
 
----
+Rules engine that examines trade history and produces recommendations:
 
-## What This Looks Like In Practice
+| Pattern Detected | Recommendation |
+|---|---|
+| TP never triggers, winners reverse to losses | "Reduce TAKE_PROFIT from X% to Y% (median winner peaks at Y%)" |
+| SL triggers on >70% of trades | "SL may be too tight. Current: X%. Trades that hit SL had avg max gain of Y% before reversing" |
+| Max-hold exits have positive unrealized P&L | "MAX_HOLD_DURATION may be too short. X% of timeout exits were still profitable" |
+| Max-hold exits have negative P&L | "MAX_HOLD_DURATION may be too long. Consider reducing to cut losers faster" |
+| Win rate varies by hour | "Consider adding time-of-day filter. Profitable hours: X-Y UTC" |
+| Pipeline rejects >90% at one stage | "Filter X may be too aggressive. Relaxing from A to B would let N more tokens through" |
+| Organic buyer count correlates with wins | "Tokens with ≥N organic buyers win at X% vs Y% overall. Consider raising SNIPER_GATE_MIN_ORGANIC_BUYERS" |
+| Trailing stop captures more than fixed TP | "Trailing stop added +X% vs fixed TP over N trades. Keep enabled." |
+| Cost-adjusted: fees eat >20% of gross P&L | "Transaction costs are significant. Consider raising QUOTE_AMOUNT or reducing trade frequency" |
 
-**Today (manual, lossy):**
-1. Change some config values
-2. Run bot for a while
-3. Look at dashboard, try to remember what you changed
-4. Screenshot dashboard, paste into Claude
-5. Get vague suggestions because Claude only sees a picture
+### Implementation
+1. **`helpers/recommendations.ts`** — ~200 lines. Takes `AnalysisReport` as input, applies rules, outputs `Recommendation[]`
+2. Included in `/api/ai-report/compact` output under "### Computed Recommendations"
+3. Also available standalone: `GET /api/recommendations`
 
-**After this plan (structured, cumulative):**
-1. `RUN_HYPOTHESIS="Testing minOrganicBuyers=4 up from 2"` → deploy
-2. Bot runs, auto-logs everything with the hypothesis and full config
-3. `npx ts-node scripts/export-analysis.ts --last 2 --format md` → paste into Claude
-4. Claude sees: "Run 7 (minOrganicBuyers=4): 12 trades, 58% win rate, +0.4 SOL. Run 6 (minOrganicBuyers=2): 31 trades, 29% win rate, -1.2 SOL. The filter is working — fewer trades but much higher quality. Data also shows tokens with >6 organic buyers have an 80% win rate. Consider raising to 6."
-5. You raise to 6, set new hypothesis, run again
-6. Cumulative learning compounds over time
+### Why this is separate from "asking Claude"
+These are data-driven, mechanical checks. They catch the obvious stuff instantly. Claude adds the nuanced analysis on top.
 
 ---
 
-## Questions Before Building
+## Phase 5: Dashboard Integration (Medium effort, Medium impact)
 
-1. **Your second market data bot** — What data does it collect? Is it also SQLite? Same repo? If we can tap into that data, Component 3 might already be half-built.
+### New dashboard pages
 
-2. **Where does the bot run?** You mentioned Railway. Do you SSH into it to change configs, or is it all env vars through Railway's UI? This affects how we design the hypothesis-setting workflow.
+1. **`/journal`** — Run journal with hypothesis, config diff between runs, outcome notes
+2. **`/ai-report`** — Full analysis view with:
+   - Performance cards (win rate, P&L, expectancy)
+   - Pipeline funnel visualization
+   - Entry condition correlation scatter plots
+   - Exit reason pie chart
+   - Time-of-day heatmap
+   - Recommendations panel
+   - "Copy for Claude" button that copies `/api/ai-report/compact` output
+3. **`/compare`** — Side-by-side run comparison
 
-3. **How long are your typical runs?** 30 minutes? 4 hours? All day? This affects how we bucket the analysis (per-session vs per-hour vs per-day).
+### Modifications to existing pages
+- **`index.html` / `home.js`** — Add link to journal and AI report in nav
+- **`nav.js`** — Add new nav items
 
-4. **Paper trading vs real trading** — Are you currently running paper trades (dry_run) or real trades? The analysis export needs to pull from the right tables.
+---
+
+## Implementation Order & File Changes
+
+### Sprint 1: Foundation (Run Journal + AI Report Core)
+
+**Files to create:**
+- `helpers/ai-analysis.ts` — Core analysis engine
+- `helpers/recommendations.ts` — Rule-based recommendations
+- `dashboard/public/journal.html` + `journal.js` — Journal page
+- `dashboard/public/ai-report.html` + `ai-report.js` — AI report page
+
+**Files to modify:**
+- `persistence/state-store.ts` — v5 migration (run_journal + market_snapshots tables), new query methods
+- `persistence/models.ts` — New TypeScript interfaces
+- `helpers/config-validator.ts` — Add `RUN_HYPOTHESIS`, `RESEARCH_BOT_URL` env vars
+- `bot.ts` — Journal entry creation on startup/shutdown
+- `dashboard/server.ts` — New API endpoints
+- `dashboard/public/nav.js` — New nav links
+- `dashboard/public/styles.css` — Styles for new pages
+- `.env.example` — Document new env vars
+
+### Sprint 2: Market Context
+
+**Files to create:**
+- `helpers/market-context.ts` — Research bot API client + fallback from own data
+
+**Files to modify:**
+- `helpers/ai-analysis.ts` — Add market context correlation
+- `persistence/state-store.ts` — Market snapshots queries
+- `dashboard/server.ts` — Market context endpoints
+
+### Sprint 3: Research Bot Changes (separate repo)
+
+**Files to create/modify in `pumpfun-research-collector`:**
+- Add HTTP server if none exists, or add endpoint to existing
+- `GET /api/market-summary` endpoint with time-range query
+
+---
+
+## Env Vars Summary (new)
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `RUN_HYPOTHESIS` | `""` | Describe what you're testing this run |
+| `RESEARCH_BOT_URL` | `""` | URL of research bot for market context (optional) |
+
+---
+
+## Data Flow After Implementation
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ BEFORE EACH RUN                                                 │
+│  1. Set RUN_HYPOTHESIS in Railway env vars                      │
+│  2. Push → Railway auto-deploys                                 │
+├─────────────────────────────────────────────────────────────────┤
+│ DURING RUN (automatic)                                          │
+│  - Bot creates run_journal entry with config snapshot           │
+│  - Trades execute and record to positions/trades tables         │
+│  - Pipeline stats accumulate                                    │
+│  - Market context fetched from research bot (if configured)     │
+│  - Market context derived from own detections (always)          │
+├─────────────────────────────────────────────────────────────────┤
+│ AFTER RUN (your workflow)                                       │
+│  1. Visit dashboard → /ai-report                                │
+│  2. Review visual analysis OR click "Copy for Claude"           │
+│  3. Paste into Claude → get specific, data-backed suggestions   │
+│  4. Or: curl /api/recommendations for quick mechanical checks   │
+│  5. Update config based on insights                             │
+│  6. Set new RUN_HYPOTHESIS → deploy → repeat                    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## What This Unlocks
+
+**Immediate (Sprint 1):**
+- Every run is tagged with what you were testing
+- Full trade analysis available as structured text for Claude
+- Mechanical recommendations surface obvious parameter issues
+- No more screenshotting the dashboard
+
+**Short-term (Sprint 2):**
+- Market context answers "was it the market or my config?"
+- Correlation analysis identifies which conditions predict winners
+- Time-of-day filtering potential identified
+
+**Medium-term (with data accumulation):**
+- Cross-run comparison shows which config changes actually helped
+- Evidence-based filter thresholds replace gut feel
+- Potential market conditions gate (only trade when conditions are favorable)
+
+---
+
+## Open Design Decisions
+
+1. **Journal auto-close**: Should the journal entry auto-close when the smoke test window ends, or when the bot process exits? → Recommend: on process exit, to capture the full session.
+
+2. **Research bot API auth**: Should the market summary endpoint require auth? → Recommend: yes, a simple API key in env var.
+
+3. **Recommendation confidence**: Should recommendations require a minimum sample size (e.g., ≥5 trades) before suggesting parameter changes? → Recommend: yes, show "insufficient data" below threshold.
+
+4. **Historical data**: Should the AI report analyze only the current session or include all historical trades? → Recommend: default to current session with `?include_history=true` option for cross-session analysis.
