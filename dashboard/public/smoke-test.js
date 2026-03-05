@@ -555,12 +555,20 @@ function renderFeeBreakdown(report) {
       <span class="smoke-meta-value negative">${fmtSol(fb.estimatedPumpSellFee)}</span>
     </div>
     ${sectionDivider}
-    <div style="font-size:0.75rem;color:var(--text-secondary);padding:0.25rem 0.5rem;text-transform:uppercase;letter-spacing:0.05em;">Reference</div>
+    <div style="font-size:0.75rem;color:var(--text-secondary);padding:0.25rem 0.5rem;text-transform:uppercase;letter-spacing:0.05em;">Transaction Executor</div>
+    ${fb.bundleExecutorActive ? `
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">${fb.executorType === 'jito' ? 'Jito' : 'Warp'} Tip (per tx)</span>
+      <span class="smoke-meta-value negative">${fmtSol(fb.jitoTipPerTx)} <span style="font-size:0.7rem;color:#00c853;">ACTIVE</span></span>
+    </div>
+    <div style="font-size:0.7rem;color:#00c853;padding:0 0.75rem 0.25rem;">Transactions sent via ${fb.executorType} bundle (MEV protected)</div>
+    ` : `
     <div class="smoke-meta-item">
       <span class="smoke-meta-label">Jito Tip (configured per tx)</span>
       <span class="smoke-meta-value" style="opacity:0.5;">${fmtSol(fb.jitoTipPerTx)} <span style="font-size:0.7rem;color:#ff9800;">NOT SENT</span></span>
     </div>
-    <div style="font-size:0.7rem;color:#ff9800;padding:0 0.75rem 0.25rem;">pump.fun txs use sendRawTransaction — Jito/Warp executor is bypassed</div>
+    <div style="font-size:0.7rem;color:#ff9800;padding:0 0.75rem 0.25rem;">TRANSACTION_EXECUTOR=${fb.executorType || 'default'} — set to "jito" or "warp" to enable bundles</div>
+    `}
     ${sellReceivedHtml}
     ${sectionDivider}
     <div class="smoke-meta-item" style="padding-top: 0.25rem;">
@@ -924,7 +932,11 @@ function buildReportText(report) {
     lines.push(`Wallet Overhead Subtotal:     ${fb.walletOverhead.toFixed(6)} SOL`);
     lines.push(`Pump Buy Fee (~1%, est):      ${fb.estimatedPumpBuyFee.toFixed(6)} SOL`);
     lines.push(`Pump Sell Fee (~1.25%, est):   ${fb.estimatedPumpSellFee.toFixed(6)} SOL`);
-    lines.push(`Jito Tip (configured/tx):     ${fb.jitoTipPerTx.toFixed(6)} SOL ⚠ NOT SENT (executor bypassed)`);
+    if (fb.bundleExecutorActive) {
+      lines.push(`${fb.executorType} Tip (per tx):          ${fb.jitoTipPerTx.toFixed(6)} SOL ✓ ACTIVE`);
+    } else {
+      lines.push(`Jito Tip (configured/tx):     ${fb.jitoTipPerTx.toFixed(6)} SOL ⚠ NOT SENT (set TRANSACTION_EXECUTOR=jito)`);
+    }
     lines.push(`Total Overhead (all-in):      ${fb.totalOverhead.toFixed(6)} SOL`);
     if (report.sellSolReceived !== undefined) lines.push(`SOL Received from Sell:       ${report.sellSolReceived.toFixed(6)} SOL`);
   }

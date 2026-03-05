@@ -4,6 +4,8 @@ import {
   PublicKey,
   Transaction,
   TransactionInstruction,
+  TransactionMessage,
+  VersionedTransaction,
   SystemProgram,
   LAMPORTS_PER_SOL,
   ComputeBudgetProgram,
@@ -27,6 +29,7 @@ import {
   getPreTxSolBalance,
   VerificationMethod,
 } from './tx-verifier';
+import { TransactionExecutor } from '../transactions/transaction-executor.interface';
 
 /**
  * pump.fun Program ID
@@ -154,6 +157,9 @@ export interface PumpFunBuyParams {
   computeUnitLimit?: number;
   computeUnitPrice?: number;
   isToken2022?: boolean;
+  /** Optional transaction executor (e.g. Jito bundle). When provided, the
+   *  transaction is routed through the executor instead of sendRawTransaction. */
+  executor?: TransactionExecutor;
 }
 
 /**
@@ -169,6 +175,9 @@ export interface PumpFunSellParams {
   computeUnitLimit?: number;
   computeUnitPrice?: number;
   isToken2022?: boolean;
+  /** Optional transaction executor (e.g. Jito bundle). When provided, the
+   *  transaction is routed through the executor instead of sendRawTransaction. */
+  executor?: TransactionExecutor;
 }
 
 /**
@@ -684,6 +693,7 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     computeUnitLimit = 100000,
     computeUnitPrice = 100000,
     isToken2022 = false,
+    executor,
   } = params;
 
   // Determine token program ID based on token type
@@ -935,7 +945,8 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     );
 
     // Get recent blockhash and sign
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    const latestBlockhash = await connection.getLatestBlockhash('confirmed');
+    const { blockhash, lastValidBlockHeight } = latestBlockhash;
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = wallet.publicKey;
     transaction.sign(wallet);
@@ -950,29 +961,52 @@ export async function buyOnPumpFun(params: PumpFunBuyParams): Promise<PumpFunTxR
     // Reuse the balance from outflow guard (fetched moments ago) to avoid extra RPC call
     const preSolBalance = preSolBalanceForGuard;
 
-    // Send and confirm
-    const signature = await connection.sendRawTransaction(transaction.serialize(), {
-      skipPreflight: false,
-      maxRetries: 3,
-    });
+    // Send and confirm — via executor (Jito bundle) or direct RPC
+    let signature: string;
+    if (executor) {
+      // Convert legacy Transaction → VersionedTransaction for the executor
+      const messageV0 = new TransactionMessage({
+        payerKey: wallet.publicKey,
+        recentBlockhash: blockhash,
+        instructions: transaction.instructions,
+      }).compileToV0Message();
+      const versionedTx = new VersionedTransaction(messageV0);
+      versionedTx.sign([wallet]);
 
-    const buyConfirmResult = await connection.confirmTransaction(
-      { signature, blockhash, lastValidBlockHeight },
-      'confirmed'
-    );
+      logger.info({ mint: mint.toString() }, '[pump.fun] Sending buy via bundle executor');
+      const execResult = await executor.executeAndConfirm(versionedTx, wallet, latestBlockhash);
+      if (!execResult.confirmed || !execResult.signature) {
+        return {
+          success: false,
+          error: `Bundle executor failed: ${execResult.error || 'unknown'}`,
+          actualVerified: false,
+        };
+      }
+      signature = execResult.signature;
+    } else {
+      signature = await connection.sendRawTransaction(transaction.serialize(), {
+        skipPreflight: false,
+        maxRetries: 3,
+      });
 
-    // Check if transaction failed on-chain (e.g. slippage exceeded, insufficient funds)
-    if (buyConfirmResult.value.err) {
-      logger.error(
-        { mint: mint.toString(), signature, err: JSON.stringify(buyConfirmResult.value.err) },
-        'pump.fun buy transaction failed on-chain'
+      const buyConfirmResult = await connection.confirmTransaction(
+        { signature, blockhash, lastValidBlockHeight },
+        'confirmed'
       );
-      return {
-        success: false,
-        signature,
-        error: `Transaction failed on-chain: ${JSON.stringify(buyConfirmResult.value.err)}`,
-        actualVerified: false,
-      };
+
+      // Check if transaction failed on-chain (e.g. slippage exceeded, insufficient funds)
+      if (buyConfirmResult.value.err) {
+        logger.error(
+          { mint: mint.toString(), signature, err: JSON.stringify(buyConfirmResult.value.err) },
+          'pump.fun buy transaction failed on-chain'
+        );
+        return {
+          success: false,
+          signature,
+          error: `Transaction failed on-chain: ${JSON.stringify(buyConfirmResult.value.err)}`,
+          actualVerified: false,
+        };
+      }
     }
 
     // Verify actual tokens received
@@ -1070,6 +1104,7 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
     computeUnitLimit = 100000,
     computeUnitPrice = 100000,
     isToken2022 = false,
+    executor,
   } = params;
 
   // Determine token program ID based on token type
@@ -1168,7 +1203,8 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
     );
 
     // Get recent blockhash and sign
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    const latestBlockhash = await connection.getLatestBlockhash('confirmed');
+    const { blockhash, lastValidBlockHeight } = latestBlockhash;
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = wallet.publicKey;
     transaction.sign(wallet);
@@ -1176,29 +1212,52 @@ export async function sellOnPumpFun(params: PumpFunSellParams): Promise<PumpFunT
     // Capture pre-tx SOL balance for verification
     const preSolBalance = await getPreTxSolBalance(connection, wallet.publicKey);
 
-    // Send and confirm
-    const signature = await connection.sendRawTransaction(transaction.serialize(), {
-      skipPreflight: false,
-      maxRetries: 3,
-    });
+    // Send and confirm — via executor (Jito bundle) or direct RPC
+    let signature: string;
+    if (executor) {
+      // Convert legacy Transaction → VersionedTransaction for the executor
+      const messageV0 = new TransactionMessage({
+        payerKey: wallet.publicKey,
+        recentBlockhash: blockhash,
+        instructions: transaction.instructions,
+      }).compileToV0Message();
+      const versionedTx = new VersionedTransaction(messageV0);
+      versionedTx.sign([wallet]);
 
-    const confirmResult = await connection.confirmTransaction(
-      { signature, blockhash, lastValidBlockHeight },
-      'confirmed'
-    );
+      logger.info({ mint: mint.toString() }, '[pump.fun] Sending sell via bundle executor');
+      const execResult = await executor.executeAndConfirm(versionedTx, wallet, latestBlockhash);
+      if (!execResult.confirmed || !execResult.signature) {
+        return {
+          success: false,
+          error: `Bundle executor failed: ${execResult.error || 'unknown'}`,
+          actualVerified: false,
+        };
+      }
+      signature = execResult.signature;
+    } else {
+      signature = await connection.sendRawTransaction(transaction.serialize(), {
+        skipPreflight: false,
+        maxRetries: 3,
+      });
 
-    // Check if transaction failed on-chain (e.g. insufficient tokens, slippage exceeded)
-    if (confirmResult.value.err) {
-      logger.error(
-        { mint: mint.toString(), signature, err: JSON.stringify(confirmResult.value.err) },
-        'pump.fun sell transaction failed on-chain'
+      const confirmResult = await connection.confirmTransaction(
+        { signature, blockhash, lastValidBlockHeight },
+        'confirmed'
       );
-      return {
-        success: false,
-        signature,
-        error: `Transaction failed on-chain: ${JSON.stringify(confirmResult.value.err)}`,
-        actualVerified: false,
-      };
+
+      // Check if transaction failed on-chain (e.g. insufficient tokens, slippage exceeded)
+      if (confirmResult.value.err) {
+        logger.error(
+          { mint: mint.toString(), signature, err: JSON.stringify(confirmResult.value.err) },
+          'pump.fun sell transaction failed on-chain'
+        );
+        return {
+          success: false,
+          signature,
+          error: `Transaction failed on-chain: ${JSON.stringify(confirmResult.value.err)}`,
+          actualVerified: false,
+        };
+      }
     }
 
     // Verify actual SOL received
