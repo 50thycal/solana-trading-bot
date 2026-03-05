@@ -25,6 +25,7 @@ import { ABReportGenerator } from '../ab-test/ab-report';
 import { ABAnalyzer } from '../ab-test/ab-analyzer';
 import { generateAnalysisReport, generateCompactReport } from '../helpers/ai-analysis';
 import { generateRecommendations, formatRecommendations } from '../helpers/recommendations';
+import { getLatestMarketContext, getAggregatedMarketContext } from '../helpers/market-context';
 import { version } from '../package.json';
 import { ENV_CATEGORIES, getCurrentEnvValues, getAllowedPushVarNames } from '../helpers/env-metadata';
 import { isRailwayConfigured, pushVariablesToRailway, redeployRailwayService } from '../helpers/railway-api';
@@ -420,6 +421,16 @@ export class DashboardServer {
         case '/api/recommendations/compact': {
           res.writeHead(200, { 'Content-Type': 'text/plain' });
           res.end(this.getRecommendationsCompact(url));
+          return;
+        }
+
+        case '/api/market-context':
+          data = this.getApiMarketContext(url);
+          break;
+
+        case '/api/market-context/compact': {
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end(this.getMarketContextCompact(url));
           return;
         }
 
@@ -2125,6 +2136,67 @@ export class DashboardServer {
     const report = generateAnalysisReport(sessionId);
     const recs = generateRecommendations(report);
     return formatRecommendations(recs) || 'No recommendations (insufficient data or no issues detected).';
+  }
+
+  private getApiMarketContext(url: URL) {
+    const fromParam = url.searchParams.get('from');
+    const toParam = url.searchParams.get('to');
+    const hoursBack = parseInt(url.searchParams.get('hours') || '1', 10);
+
+    const to = toParam ? parseInt(toParam, 10) : Date.now();
+    const from = fromParam ? parseInt(fromParam, 10) : to - hoursBack * 60 * 60 * 1000;
+
+    const aggregated = getAggregatedMarketContext(from, to);
+    const latest = getLatestMarketContext();
+
+    return {
+      latest,
+      aggregated,
+      queryRange: { from, to },
+    };
+  }
+
+  private getMarketContextCompact(url: URL): string {
+    const hoursBack = parseInt(url.searchParams.get('hours') || '1', 10);
+    const to = Date.now();
+    const from = to - hoursBack * 60 * 60 * 1000;
+
+    const aggregated = getAggregatedMarketContext(from, to);
+    const latest = getLatestMarketContext();
+
+    const lines: string[] = [];
+    lines.push('# Market Context');
+    lines.push(`Period: last ${hoursBack}h (${new Date(from).toISOString()} → ${new Date(to).toISOString()})`);
+    lines.push('');
+
+    if (latest) {
+      lines.push('## Latest Snapshot');
+      lines.push(`Source: ${latest.source} | Captured: ${new Date(latest.capturedAt).toISOString()}`);
+      lines.push(`Tokens detected: ${latest.tokensDetected} | Bought: ${latest.tokensBought} | Buy rate: ${latest.buyRatePct.toFixed(1)}%`);
+      if (latest.topRejection) lines.push(`Top rejection: ${latest.topRejection}`);
+      if (latest.source === 'research_bot') {
+        lines.push(`Market tokens: ${latest.tokensCreatedMarket ?? '?'} | Hit 2x: ${latest.tokensWith2x ?? '?'} (${latest.hit2xRatePct?.toFixed(1) ?? '?'}%)`);
+        if (latest.avgPeakGainPct != null) {
+          lines.push(`Avg peak gain: ${latest.avgPeakGainPct.toFixed(1)}% | Median: ${latest.medianPeakGainPct?.toFixed(1) ?? '?'}%`);
+        }
+      }
+      lines.push('');
+    }
+
+    if (aggregated) {
+      lines.push('## Aggregated');
+      lines.push(`Tokens detected: ${aggregated.tokensDetected} | Bought: ${aggregated.tokensBought} | Buy rate: ${aggregated.buyRatePct.toFixed(1)}%`);
+      if (aggregated.source === 'research_bot' && aggregated.hit2xRatePct != null) {
+        lines.push(`Market 2x rate: ${aggregated.hit2xRatePct.toFixed(1)}% | Avg peak gain: ${aggregated.avgPeakGainPct?.toFixed(1) ?? '?'}%`);
+      }
+      lines.push('');
+    }
+
+    if (!latest && !aggregated) {
+      lines.push('No market context data available yet. Data will appear after the first 5-minute snapshot interval.');
+    }
+
+    return lines.join('\n');
   }
 
   private handleJournalNotesUpdate(

@@ -64,6 +64,7 @@ import { initRpcManager } from './helpers/rpc-manager';
 import { startDashboardServer, DashboardServer } from './dashboard';
 import { version } from './package.json';
 import { getConfig, getRedactedConfigSnapshot } from './helpers/config-validator';
+import { startMarketContextFetcher, stopMarketContextFetcher } from './helpers/market-context';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
 import {
@@ -246,6 +247,9 @@ async function gracefulShutdown(signal: string): Promise<void> {
     logger.info('Saving P&L data...');
     await pnlTracker.forceSave();
     pnlTracker.logSessionSummary();
+
+    // Stop market context fetcher
+    stopMarketContextFetcher();
 
     // Close run journal entry with final stats
     if (currentJournalSessionId) {
@@ -431,6 +435,9 @@ const runListener = async () => {
       momentumGateEnabled: config.momentumGateEnabled,
       trailingStopEnabled: config.trailingStopEnabled,
     });
+
+    // Start market context fetcher (captures self-derived + research bot snapshots)
+    startMarketContextFetcher();
   } else {
     logger.warn('State store NOT available - running without persistence');
   }

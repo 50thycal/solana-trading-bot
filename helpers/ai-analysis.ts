@@ -11,6 +11,7 @@ import { getStateStore } from '../persistence';
 import { RunJournalRecord, PositionRecord, TradeRecord, PoolDetectionRecord } from '../persistence/models';
 import { getTradeAuditManager } from './trade-audit';
 import { getPipelineStats } from '../pipeline';
+import { getAggregatedMarketContext, MarketContext } from './market-context';
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -113,6 +114,17 @@ interface MarketContextSummary {
   tokensFiltered: number;
   buyRatePct: number;
   topRejection: string;
+  // Research bot enrichment (when available)
+  source: 'self' | 'research_bot';
+  tokensCreatedMarket?: number;
+  tokensWith2x?: number;
+  hit2xRatePct?: number;
+  avgPeakGainPct?: number;
+  medianPeakGainPct?: number;
+  avgBuyVelocity?: number;
+  avgSellRatio?: number;
+  // Derived comparison
+  yourWinRateVsMarket?: string;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -152,7 +164,7 @@ export function generateAnalysisReport(sessionId?: string): AnalysisReport {
   const entryCorrelations = buildEntryCorrelations(store, sessionPositions);
   const timeOfDay = buildTimeOfDay(sessionPositions);
   const crossRunComparison = buildCrossRunComparison(store);
-  const marketContext = buildMarketContext(store, from, to);
+  const marketContext = buildMarketContext(store, from, to, performance.winRate);
 
   return {
     generatedAt: Date.now(),
@@ -231,10 +243,31 @@ export function generateCompactReport(sessionId?: string, lastN?: number): strin
 
     if (report.marketContext) {
       lines.push('### Market Context (this session)');
+      lines.push(`Source: ${report.marketContext.source}`);
       lines.push(`Tokens detected: ${report.marketContext.tokensDetected} | Bought: ${report.marketContext.tokensBought} | Filtered: ${report.marketContext.tokensFiltered}`);
       lines.push(`Buy rate: ${report.marketContext.buyRatePct.toFixed(1)}%`);
       if (report.marketContext.topRejection) {
         lines.push(`Top rejection: ${report.marketContext.topRejection}`);
+      }
+      // Research bot enrichment
+      if (report.marketContext.source === 'research_bot') {
+        lines.push('');
+        lines.push('**Market-wide (from research bot):**');
+        if (report.marketContext.tokensCreatedMarket != null) {
+          lines.push(`Tokens created: ${report.marketContext.tokensCreatedMarket}`);
+        }
+        if (report.marketContext.tokensWith2x != null && report.marketContext.hit2xRatePct != null) {
+          lines.push(`Hit 2x: ${report.marketContext.tokensWith2x} tokens (${report.marketContext.hit2xRatePct.toFixed(1)}%)`);
+        }
+        if (report.marketContext.avgPeakGainPct != null) {
+          lines.push(`Avg peak gain: ${report.marketContext.avgPeakGainPct.toFixed(1)}% | Median: ${report.marketContext.medianPeakGainPct?.toFixed(1) ?? '?'}%`);
+        }
+        if (report.marketContext.avgBuyVelocity != null) {
+          lines.push(`Avg buy velocity: ${report.marketContext.avgBuyVelocity.toFixed(2)} | Avg sell ratio: ${report.marketContext.avgSellRatio?.toFixed(2) ?? '?'}`);
+        }
+        if (report.marketContext.yourWinRateVsMarket) {
+          lines.push(`**Comparison:** ${report.marketContext.yourWinRateVsMarket}`);
+        }
       }
       lines.push('');
     }
@@ -598,6 +631,7 @@ function buildMarketContext(
   store: NonNullable<ReturnType<typeof getStateStore>>,
   from: number,
   to: number,
+  winRate?: number,
 ): MarketContextSummary | null {
   if (from === 0) return null;
 
@@ -607,13 +641,37 @@ function buildMarketContext(
   const topRejection = Object.entries(stats.topRejections)
     .sort((a, b) => b[1] - a[1])[0];
 
-  return {
+  const summary: MarketContextSummary = {
     tokensDetected: stats.total,
     tokensBought: stats.bought,
     tokensFiltered: stats.filtered,
     buyRatePct: stats.total > 0 ? (stats.bought / stats.total) * 100 : 0,
     topRejection: topRejection ? `${topRejection[0]} (${topRejection[1]})` : '',
+    source: 'self',
   };
+
+  // Enrich with market snapshot data (from DB — includes research bot data)
+  const aggregated = getAggregatedMarketContext(from, to);
+  if (aggregated) {
+    if (aggregated.source === 'research_bot') {
+      summary.source = 'research_bot';
+      summary.tokensCreatedMarket = aggregated.tokensCreatedMarket;
+      summary.tokensWith2x = aggregated.tokensWith2x;
+      summary.hit2xRatePct = aggregated.hit2xRatePct;
+      summary.avgPeakGainPct = aggregated.avgPeakGainPct;
+      summary.medianPeakGainPct = aggregated.medianPeakGainPct;
+      summary.avgBuyVelocity = aggregated.avgBuyVelocity;
+      summary.avgSellRatio = aggregated.avgSellRatio;
+
+      // Compare your win rate vs market 2x rate
+      if (winRate !== undefined && summary.hit2xRatePct !== undefined) {
+        summary.yourWinRateVsMarket =
+          `${(winRate * 100).toFixed(1)}% win rate vs ${summary.hit2xRatePct.toFixed(1)}% market 2x rate`;
+      }
+    }
+  }
+
+  return summary;
 }
 
 function emptyReport(): AnalysisReport {
