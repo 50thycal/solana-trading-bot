@@ -558,8 +558,9 @@ function renderFeeBreakdown(report) {
     <div style="font-size:0.75rem;color:var(--text-secondary);padding:0.25rem 0.5rem;text-transform:uppercase;letter-spacing:0.05em;">Reference</div>
     <div class="smoke-meta-item">
       <span class="smoke-meta-label">Jito Tip (configured per tx)</span>
-      <span class="smoke-meta-value">${fmtSol(fb.jitoTipPerTx)}</span>
+      <span class="smoke-meta-value" style="opacity:0.5;">${fmtSol(fb.jitoTipPerTx)} <span style="font-size:0.7rem;color:#ff9800;">NOT SENT</span></span>
     </div>
+    <div style="font-size:0.7rem;color:#ff9800;padding:0 0.75rem 0.25rem;">pump.fun txs use sendRawTransaction — Jito/Warp executor is bypassed</div>
     ${sellReceivedHtml}
     ${sectionDivider}
     <div class="smoke-meta-item" style="padding-top: 0.25rem;">
@@ -923,7 +924,7 @@ function buildReportText(report) {
     lines.push(`Wallet Overhead Subtotal:     ${fb.walletOverhead.toFixed(6)} SOL`);
     lines.push(`Pump Buy Fee (~1%, est):      ${fb.estimatedPumpBuyFee.toFixed(6)} SOL`);
     lines.push(`Pump Sell Fee (~1.25%, est):   ${fb.estimatedPumpSellFee.toFixed(6)} SOL`);
-    lines.push(`Jito Tip (configured/tx):     ${fb.jitoTipPerTx.toFixed(6)} SOL`);
+    lines.push(`Jito Tip (configured/tx):     ${fb.jitoTipPerTx.toFixed(6)} SOL ⚠ NOT SENT (executor bypassed)`);
     lines.push(`Total Overhead (all-in):      ${fb.totalOverhead.toFixed(6)} SOL`);
     if (report.sellSolReceived !== undefined) lines.push(`SOL Received from Sell:       ${report.sellSolReceived.toFixed(6)} SOL`);
   }

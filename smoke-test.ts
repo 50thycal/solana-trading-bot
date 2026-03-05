@@ -154,8 +154,10 @@ export interface FeeBreakdown {
   /** Estimated pump.fun sell fee (~1.25% of sell proceeds, deducted from SOL received) */
   estimatedPumpSellFee: number;
 
-  // ── Jito tip (from config — shown for context) ──
-  /** Configured Jito/Warp tip per transaction (from CUSTOM_FEE env var) */
+  // ── Jito tip (from config — shown for reference) ──
+  /** Configured Jito/Warp tip per transaction (from CUSTOM_FEE env var).
+   *  NOTE: pump.fun buy/sell currently use sendRawTransaction directly,
+   *  bypassing the Jito/Warp executor, so this tip is NOT actually sent. */
   jitoTipPerTx: number;
 
   // ── All-in totals ──
@@ -1368,7 +1370,10 @@ function buildReport(
     const estimatedPumpBuyFee = tradeAmount * 0.01;       // ~1% on buys
     const estimatedPumpSellFee = sellSolReceived * 0.0125; // ~1.25% on sells
 
-    // ── Jito tip (from config, for context) ──
+    // ── Jito tip (from config, for reference only) ──
+    // NOTE: buyOnPumpFun/sellOnPumpFun use connection.sendRawTransaction()
+    // directly, bypassing the Jito/Warp executor. This tip is configured but
+    // NOT actually sent in the current pump.fun transaction path.
     const jitoTipPerTx = parseFloat(CUSTOM_FEE) || 0;
 
     // ── All-in total: wallet overhead + protocol fees ──
@@ -1599,7 +1604,7 @@ function buildReport(
     logger.info(`    Wallet overhead: ${fb.walletOverhead.toFixed(6)} SOL (measured)`);
     logger.info(`    Pump buy fee:    ~${fb.estimatedPumpBuyFee.toFixed(6)} SOL (~1%%, estimated)`);
     logger.info(`    Pump sell fee:   ~${fb.estimatedPumpSellFee.toFixed(6)} SOL (~1.25%%, estimated)`);
-    logger.info(`    Jito tip/tx:     ${fb.jitoTipPerTx.toFixed(6)} SOL (configured)`);
+    logger.info(`    Jito tip/tx:     ${fb.jitoTipPerTx.toFixed(6)} SOL (configured, NOT sent — executor bypassed)`);
     logger.info(`    Total overhead:  ${fb.totalOverhead.toFixed(6)} SOL (wallet + protocol fees)`);
   }
   if (exitTrigger) {
