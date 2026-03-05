@@ -517,7 +517,7 @@ function renderFeeBreakdown(report) {
   }
 
   panel.style.display = 'block';
-  subtitle.textContent = `${fb.totalOverhead.toFixed(6)} SOL total overhead`;
+  subtitle.textContent = `${fb.totalOverhead.toFixed(6)} SOL all-in overhead`;
 
   const fmtSol = (v) => v !== undefined && v !== null ? `${v.toFixed(6)} SOL` : '—';
 
@@ -528,30 +528,42 @@ function renderFeeBreakdown(report) {
       </div>`
     : '';
 
+  const sectionDivider = '<div style="border-top: 1px solid rgba(255,255,255,0.08); margin: 0.4rem 0;"></div>';
+
   meta.innerHTML = `
+    <div style="font-size:0.75rem;color:var(--text-secondary);padding:0.25rem 0.5rem;text-transform:uppercase;letter-spacing:0.05em;">Wallet Overhead (measured)</div>
     <div class="smoke-meta-item">
-      <span class="smoke-meta-label">Buy Overhead (gas+tips+rent)</span>
+      <span class="smoke-meta-label">Buy Side (gas + priority fee + Jito tip + ATA rent)</span>
       <span class="smoke-meta-value negative">${fmtSol(fb.buyOverhead)}</span>
     </div>
     <div class="smoke-meta-item">
-      <span class="smoke-meta-label">Sell Overhead (gas+tips)</span>
+      <span class="smoke-meta-label">Sell Side (gas + priority fee + Jito tip)</span>
       <span class="smoke-meta-value negative">${fmtSol(fb.sellOverhead)}</span>
     </div>
     <div class="smoke-meta-item">
-      <span class="smoke-meta-label">Jito Tip (per tx)</span>
+      <span class="smoke-meta-label">Wallet Overhead Subtotal</span>
+      <span class="smoke-meta-value negative">${fmtSol(fb.walletOverhead)}</span>
+    </div>
+    ${sectionDivider}
+    <div style="font-size:0.75rem;color:var(--text-secondary);padding:0.25rem 0.5rem;text-transform:uppercase;letter-spacing:0.05em;">Protocol Fees (estimated, embedded in price)</div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Pump.fun Buy Fee (~1%)</span>
+      <span class="smoke-meta-value negative">${fmtSol(fb.estimatedPumpBuyFee)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Pump.fun Sell Fee (~1.25%)</span>
+      <span class="smoke-meta-value negative">${fmtSol(fb.estimatedPumpSellFee)}</span>
+    </div>
+    ${sectionDivider}
+    <div style="font-size:0.75rem;color:var(--text-secondary);padding:0.25rem 0.5rem;text-transform:uppercase;letter-spacing:0.05em;">Reference</div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Jito Tip (configured per tx)</span>
       <span class="smoke-meta-value">${fmtSol(fb.jitoTipPerTx)}</span>
     </div>
-    <div class="smoke-meta-item">
-      <span class="smoke-meta-label">Est. Pump Buy Fee (~1%)</span>
-      <span class="smoke-meta-value">${fmtSol(fb.estimatedPumpBuyFee)}</span>
-    </div>
-    <div class="smoke-meta-item">
-      <span class="smoke-meta-label">Est. Pump Sell Fee (~1.25%)</span>
-      <span class="smoke-meta-value">${fmtSol(fb.estimatedPumpSellFee)}</span>
-    </div>
     ${sellReceivedHtml}
-    <div class="smoke-meta-item">
-      <span class="smoke-meta-label">Total Overhead</span>
+    ${sectionDivider}
+    <div class="smoke-meta-item" style="padding-top: 0.25rem;">
+      <span class="smoke-meta-label" style="font-weight:700;">Total Overhead (all-in)</span>
       <span class="smoke-meta-value negative" style="font-weight:700;">${fmtSol(fb.totalOverhead)}</span>
     </div>
   `;
@@ -905,13 +917,14 @@ function buildReportText(report) {
   if (report.feeBreakdown) {
     const fb = report.feeBreakdown;
     lines.push('');
-    lines.push('--- Fee Breakdown ---');
-    lines.push(`Buy Overhead (gas+tips+rent): ${fb.buyOverhead.toFixed(6)} SOL`);
-    lines.push(`Sell Overhead (gas+tips):     ${fb.sellOverhead.toFixed(6)} SOL`);
-    lines.push(`Jito Tip (per tx):            ${fb.jitoTipPerTx.toFixed(6)} SOL`);
-    lines.push(`Est. Pump Buy Fee (~1%):      ${fb.estimatedPumpBuyFee.toFixed(6)} SOL`);
-    lines.push(`Est. Pump Sell Fee (~1.25%):   ${fb.estimatedPumpSellFee.toFixed(6)} SOL`);
-    lines.push(`Total Overhead:               ${fb.totalOverhead.toFixed(6)} SOL`);
+    lines.push('--- Fee Breakdown (All-In) ---');
+    lines.push(`Buy Overhead (measured):      ${fb.buyOverhead.toFixed(6)} SOL`);
+    lines.push(`Sell Overhead (measured):     ${fb.sellOverhead.toFixed(6)} SOL`);
+    lines.push(`Wallet Overhead Subtotal:     ${fb.walletOverhead.toFixed(6)} SOL`);
+    lines.push(`Pump Buy Fee (~1%, est):      ${fb.estimatedPumpBuyFee.toFixed(6)} SOL`);
+    lines.push(`Pump Sell Fee (~1.25%, est):   ${fb.estimatedPumpSellFee.toFixed(6)} SOL`);
+    lines.push(`Jito Tip (configured/tx):     ${fb.jitoTipPerTx.toFixed(6)} SOL`);
+    lines.push(`Total Overhead (all-in):      ${fb.totalOverhead.toFixed(6)} SOL`);
     if (report.sellSolReceived !== undefined) lines.push(`SOL Received from Sell:       ${report.sellSolReceived.toFixed(6)} SOL`);
   }
 
