@@ -154,8 +154,20 @@
         <div class="card-label">Steps Failed</div>
         <div class="card-value" id="steps-failed">--</div>
       </div>
+      <div class="card card-accent">
+        <div class="card-label">Efficiency Score</div>
+        <div class="card-value big" id="efficiency-score">--</div>
+      </div>
       <div class="card">
-        <div class="card-label">Duration</div>
+        <div class="card-label">Hold Duration</div>
+        <div class="card-value" id="hold-duration">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">High Water Mark</div>
+        <div class="card-value" id="high-water-mark">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Test Duration</div>
         <div class="card-value" id="duration">--</div>
       </div>
       <div class="card">
@@ -183,6 +195,26 @@
         <span class="panel-subtitle" id="fee-breakdown-subtitle"></span>
       </div>
       <div class="smoke-meta" id="fee-breakdown-meta"></div>
+    </section>
+
+    <!-- Slippage Analysis Panel -->
+    <section class="panel" id="slippage-panel" style="display:none;">
+      <div class="panel-header">
+        <h2>Slippage Analysis</h2>
+        <span class="panel-subtitle" id="slippage-subtitle"></span>
+      </div>
+      <div class="smoke-meta" id="slippage-meta"></div>
+    </section>
+
+    <!-- Price During Hold (sparkline chart) -->
+    <section class="panel" id="price-chart-panel" style="display:none;">
+      <div class="panel-header">
+        <h2>Price During Hold</h2>
+        <span class="panel-subtitle" id="price-chart-subtitle"></span>
+      </div>
+      <div id="price-chart-container" style="padding: 0.5rem;">
+        <canvas id="price-sparkline" width="800" height="200" style="width:100%;height:200px;"></canvas>
+      </div>
     </section>
 
     <!-- Progress info (visible during running test) -->

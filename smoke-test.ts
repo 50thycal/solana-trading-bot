@@ -199,6 +199,27 @@ export interface SmokeTestReport {
   pnlPercentWithOverhead?: number;
   /** P&L as percentage of trade amount only (ignores gas/tips overhead) */
   pnlPercentWithoutOverhead?: number;
+  /** Slippage analysis */
+  slippage?: {
+    buySlippagePercent?: number;   // Token slippage on buy (negative = got fewer tokens)
+    sellSlippagePercent?: number;  // SOL slippage on sell (negative = got less SOL)
+    buyExpectedTokens?: number;
+    buyActualTokens?: number;
+    sellExpectedSol?: number;
+    sellActualSol?: number;
+    /** Estimated SOL cost of buy slippage */
+    buySlippageCostSol?: number;
+    /** Estimated SOL cost of sell slippage */
+    sellSlippageCostSol?: number;
+  };
+  /** Price snapshots during position hold (for sparkline chart) */
+  priceHistory?: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
+  /** Highest PnL % reached during the hold */
+  highWaterMarkPercent?: number;
+  /** Hold duration in ms (buyTimestamp to sellTimestamp) */
+  holdDurationMs?: number;
+  /** Trade efficiency score 0-100 (composite of overhead ratio, slippage, and return) */
+  tradeEfficiencyScore?: number;
   /** Snapshot of environment variables used for this run (for cross-run analytics) */
   envSnapshot?: Record<string, string | number | boolean>;
   /** Which run number this is when using SMOKE_TEST_RUNS > 1 (1-indexed) */
@@ -516,6 +537,12 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     sellSolReceived: number;
     sellTimestamp: number;
     exitTrigger: string;
+    buySlippagePercent: number | undefined;
+    sellSlippagePercent: number | undefined;
+    buyExpectedTokens: number | undefined;
+    sellExpectedSol: number | undefined;
+    priceHistory: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
+    highWaterMarkPercent: number | undefined;
   } = {
     connection: null,
     wallet: null,
@@ -531,6 +558,12 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     sellSolReceived: 0,
     sellTimestamp: 0,
     exitTrigger: '',
+    buySlippagePercent: undefined,
+    sellSlippagePercent: undefined,
+    buyExpectedTokens: undefined,
+    sellExpectedSol: undefined,
+    priceHistory: [],
+    highWaterMarkPercent: undefined,
   };
 
   // Wrap the entire test body in try/finally to guarantee liveProgress is
@@ -813,6 +846,8 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
         monitor.removePosition(event.position.tokenMint);
 
         state.exitTrigger = event.type;
+        state.priceHistory = event.position.priceHistory || [];
+        state.highWaterMarkPercent = event.position.highWaterMarkPercent;
         const pnlSign = event.pnlPercent >= 0 ? '+' : '';
         const tradePnl = `${pnlSign}${event.pnlPercent.toFixed(2)}%`;
         const totalCostPnlStr = event.totalCostPnlPercent !== undefined
@@ -855,6 +890,8 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
         state.sellSignature = sellResult.signature || '';
         state.sellSolReceived = sellResult.solReceived || 0;
         state.sellTimestamp = Date.now();
+        state.sellSlippagePercent = sellResult.slippagePercent;
+        state.sellExpectedSol = sellResult.expectedSol;
         return `Sold on attempt ${attempt}/${maxAttempts} for ${state.sellSolReceived.toFixed(6)} SOL, sig: ${state.sellSignature.substring(0, 12)}...`;
       }
 
@@ -947,7 +984,16 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     buyFailures, tokensEvaluated, tokensPipelinePassed, state.actualSolSpent, tradeAmount,
     tradedToken, state.buyTimestamp || undefined, state.sellTimestamp || undefined,
     state.buySignature || undefined, state.sellSignature || undefined,
-    state.sellSolReceived || undefined,
+    {
+      sellSolReceived: state.sellSolReceived || undefined,
+      buySlippagePercent: state.buySlippagePercent,
+      sellSlippagePercent: state.sellSlippagePercent,
+      buyExpectedTokens: state.buyExpectedTokens,
+      buyActualTokens: state.tokensReceived || undefined,
+      sellExpectedSol: state.sellExpectedSol,
+      priceHistory: state.priceHistory.length > 0 ? state.priceHistory : undefined,
+      highWaterMarkPercent: state.highWaterMarkPercent,
+    },
   );
 
   } finally {
@@ -982,6 +1028,12 @@ async function runListenPipelineAndBuy(
     sellSolReceived: number;
     sellTimestamp: number;
     exitTrigger: string;
+    buySlippagePercent: number | undefined;
+    sellSlippagePercent: number | undefined;
+    buyExpectedTokens: number | undefined;
+    sellExpectedSol: number | undefined;
+    priceHistory: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
+    highWaterMarkPercent: number | undefined;
   },
   tradeAmount: number,
   timeoutMs: number,
@@ -1117,6 +1169,8 @@ async function runListenPipelineAndBuy(
             state.buyTimestamp = Date.now();
             state.tokensReceived = buyResult.tokensReceived || 0;
             state.actualSolSpent = buyResult.actualSolSpent;
+            state.buySlippagePercent = buyResult.slippagePercent;
+            state.buyExpectedTokens = buyResult.expectedTokens;
             buySucceeded = true;
 
             clearTimeout(overallTimeout);
@@ -1230,6 +1284,17 @@ async function runListenPipelineAndBuy(
 // REPORT BUILDER
 // ════════════════════════════════════════════════════════════════════════════
 
+interface BuildReportExtras {
+  sellSolReceived?: number;
+  buySlippagePercent?: number;
+  sellSlippagePercent?: number;
+  buyExpectedTokens?: number;
+  buyActualTokens?: number;
+  sellExpectedSol?: number;
+  priceHistory?: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
+  highWaterMarkPercent?: number;
+}
+
 function buildReport(
   startedAt: number,
   steps: SmokeTestStep[],
@@ -1246,8 +1311,9 @@ function buildReport(
   sellTimestamp?: number,
   buySignature?: string,
   sellSignature?: string,
-  sellSolReceived?: number,
+  extras?: BuildReportExtras,
 ): SmokeTestReport {
+  const sellSolReceived = extras?.sellSolReceived;
   const completedAt = Date.now();
   const passedCount = steps.filter((s) => s.status === 'passed').length;
   const failedCount = steps.filter((s) => s.status === 'failed').length;
@@ -1300,6 +1366,70 @@ function buildReport(
       estimatedPumpBuyFee,
       estimatedPumpSellFee,
     };
+  }
+
+  // Slippage analysis
+  let slippage: SmokeTestReport['slippage'];
+  if (extras) {
+    const buySlipPct = extras.buySlippagePercent;
+    const sellSlipPct = extras.sellSlippagePercent;
+    const buyExpected = extras.buyExpectedTokens;
+    const buyActual = extras.buyActualTokens;
+    const sellExpected = extras.sellExpectedSol;
+    const sellActual = sellSolReceived;
+
+    // Estimate SOL cost of slippage
+    let buySlippageCostSol: number | undefined;
+    if (buySlipPct !== undefined && tradeAmount !== undefined) {
+      // Negative slippage = got fewer tokens = lost value
+      buySlippageCostSol = Math.abs(buySlipPct / 100) * tradeAmount;
+      if (buySlipPct >= 0) buySlippageCostSol = 0; // Positive slippage = no cost
+    }
+    let sellSlippageCostSol: number | undefined;
+    if (sellSlipPct !== undefined && sellActual !== undefined) {
+      // Negative slippage = got less SOL
+      sellSlippageCostSol = sellSlipPct < 0 ? Math.abs(sellSlipPct / 100) * sellActual : 0;
+    }
+
+    if (buySlipPct !== undefined || sellSlipPct !== undefined) {
+      slippage = {
+        buySlippagePercent: buySlipPct,
+        sellSlippagePercent: sellSlipPct,
+        buyExpectedTokens: buyExpected,
+        buyActualTokens: buyActual,
+        sellExpectedSol: sellExpected,
+        sellActualSol: sellActual,
+        buySlippageCostSol,
+        sellSlippageCostSol,
+      };
+    }
+  }
+
+  // Price history and hold duration
+  const priceHistory = extras?.priceHistory;
+  const highWaterMarkPercent = extras?.highWaterMarkPercent;
+  const holdDurationMs = (buyTimestamp && sellTimestamp) ? sellTimestamp - buyTimestamp : undefined;
+
+  // Trade efficiency score (0-100)
+  // Composed of three sub-scores weighted:
+  //   - Overhead ratio (40%): how small the overhead is relative to trade amount
+  //   - Slippage score (30%): how close actual was to expected
+  //   - Return score (30%): whether the trade was profitable
+  let tradeEfficiencyScore: number | undefined;
+  if (tradeAmount !== undefined && tradeAmount > 0 && sellSolReceived !== undefined) {
+    // Overhead ratio score: 100 = no overhead, 0 = overhead >= trade amount
+    const overheadRatio = feeBreakdown ? feeBreakdown.totalOverhead / tradeAmount : 0;
+    const overheadScore = Math.max(0, Math.min(100, (1 - overheadRatio * 5) * 100));
+
+    // Slippage score: 100 = no slippage, 0 = 10%+ slippage
+    const avgSlippage = Math.abs(slippage?.buySlippagePercent ?? 0) + Math.abs(slippage?.sellSlippagePercent ?? 0);
+    const slippageScore = Math.max(0, Math.min(100, (1 - avgSlippage / 20) * 100));
+
+    // Return score: 100 = +10% or better, 50 = breakeven, 0 = -10% or worse
+    const returnPct = pnlPercentWithOverhead ?? 0;
+    const returnScore = Math.max(0, Math.min(100, 50 + returnPct * 5));
+
+    tradeEfficiencyScore = Math.round(overheadScore * 0.4 + slippageScore * 0.3 + returnScore * 0.3);
   }
 
   // Capture environment variables snapshot for cross-run analytics
@@ -1398,6 +1528,11 @@ function buildReport(
     feeBreakdown,
     pnlPercentWithOverhead,
     pnlPercentWithoutOverhead,
+    slippage,
+    priceHistory,
+    highWaterMarkPercent,
+    holdDurationMs,
+    tradeEfficiencyScore,
     envSnapshot,
     runNumber: currentRunNumber,
     totalRuns: currentTotalRuns,
