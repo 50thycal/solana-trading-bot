@@ -140,18 +140,27 @@ interface BuyFailureRecord {
 }
 
 export interface FeeBreakdown {
-  /** Total non-trade costs (gas + tips + rent) — measured from wallet delta */
-  totalOverhead: number;
-  /** Buy-side overhead: actualSolSpent - tradeAmount (measured) */
+  // ── Wallet-level overhead (measured from balance deltas) ──
+  /** Buy-side overhead: actualSolSpent - tradeAmount (gas + priority fee + Jito tip + ATA rent) */
   buyOverhead: number;
-  /** Sell-side overhead: totalOverhead - buyOverhead (estimated) */
+  /** Sell-side overhead: wallet-level residual on the sell side (gas + priority fee + Jito tip) */
   sellOverhead: number;
-  /** Estimated Jito/Warp tip per transaction (from CUSTOM_FEE config) */
-  jitoTipPerTx: number;
-  /** Estimated pump.fun buy fee (~1% of trade amount, embedded in price) */
+  /** Sum of buy + sell overhead (measured from wallet delta, does NOT include protocol fees) */
+  walletOverhead: number;
+
+  // ── Protocol fees (estimated — embedded in bonding curve price) ──
+  /** Estimated pump.fun buy fee (~1% of trade amount, deducted from tokens received) */
   estimatedPumpBuyFee: number;
-  /** Estimated pump.fun sell fee (~1.25% of sell proceeds, embedded in price) */
+  /** Estimated pump.fun sell fee (~1.25% of sell proceeds, deducted from SOL received) */
   estimatedPumpSellFee: number;
+
+  // ── Jito tip (from config — shown for context) ──
+  /** Configured Jito/Warp tip per transaction (from CUSTOM_FEE env var) */
+  jitoTipPerTx: number;
+
+  // ── All-in totals ──
+  /** Total friction = walletOverhead + estimatedPumpBuyFee + estimatedPumpSellFee */
+  totalOverhead: number;
 }
 
 export interface SmokeTestReport {
@@ -1345,26 +1354,34 @@ function buildReport(
     }
 
     // Fee breakdown
+    // ── Wallet-level overhead (measured from balance deltas) ──
     const measuredBuyOverhead = buyOverhead ?? 0;
-    // Total overhead = difference between trade return and actual P&L
-    // totalOverhead = tradeReturn - P&L = tradeReturn + netCostSol
-    const totalOverhead = tradeReturnSol + netCostSol;
-    const sellOverhead = Math.max(0, totalOverhead - measuredBuyOverhead);
+    // walletOverhead = total SOL lost beyond the trade itself
+    //   = (walletBefore - walletAfter) - (tradeAmount - sellSolReceived)
+    //   = netCostSol + tradeReturnSol
+    const walletOverhead = tradeReturnSol + netCostSol;
+    const sellOverhead = Math.max(0, walletOverhead - measuredBuyOverhead);
 
-    // Parse CUSTOM_FEE for jito tip estimate
-    const jitoTipPerTx = parseFloat(CUSTOM_FEE) || 0;
-
-    // Pump.fun protocol fees (embedded in price, shown as estimates)
+    // ── Protocol fees (estimated — embedded in bonding curve price) ──
+    // These are NOT visible at the wallet level because pump.fun deducts them
+    // before computing token output (buy) or SOL output (sell).
     const estimatedPumpBuyFee = tradeAmount * 0.01;       // ~1% on buys
     const estimatedPumpSellFee = sellSolReceived * 0.0125; // ~1.25% on sells
 
+    // ── Jito tip (from config, for context) ──
+    const jitoTipPerTx = parseFloat(CUSTOM_FEE) || 0;
+
+    // ── All-in total: wallet overhead + protocol fees ──
+    const totalOverhead = walletOverhead + estimatedPumpBuyFee + estimatedPumpSellFee;
+
     feeBreakdown = {
-      totalOverhead,
       buyOverhead: measuredBuyOverhead,
       sellOverhead,
-      jitoTipPerTx,
+      walletOverhead,
       estimatedPumpBuyFee,
       estimatedPumpSellFee,
+      jitoTipPerTx,
+      totalOverhead,
     };
   }
 
@@ -1576,13 +1593,14 @@ function buildReport(
   }
   if (report.feeBreakdown) {
     const fb = report.feeBreakdown;
-    logger.info(`  Fee breakdown:`);
-    logger.info(`    Total overhead:  ${fb.totalOverhead.toFixed(6)} SOL`);
-    logger.info(`    Buy overhead:    ${fb.buyOverhead.toFixed(6)} SOL (gas+tips+rent)`);
-    logger.info(`    Sell overhead:   ${fb.sellOverhead.toFixed(6)} SOL (gas+tips)`);
-    logger.info(`    Jito tip/tx:     ${fb.jitoTipPerTx.toFixed(6)} SOL`);
-    logger.info(`    Pump buy fee:    ~${fb.estimatedPumpBuyFee.toFixed(6)} SOL (~1%%)`);
-    logger.info(`    Pump sell fee:   ~${fb.estimatedPumpSellFee.toFixed(6)} SOL (~1.25%%)`);
+    logger.info(`  Fee breakdown (all-in):`);
+    logger.info(`    Buy overhead:    ${fb.buyOverhead.toFixed(6)} SOL (gas+priority+tip+rent)`);
+    logger.info(`    Sell overhead:   ${fb.sellOverhead.toFixed(6)} SOL (gas+priority+tip)`);
+    logger.info(`    Wallet overhead: ${fb.walletOverhead.toFixed(6)} SOL (measured)`);
+    logger.info(`    Pump buy fee:    ~${fb.estimatedPumpBuyFee.toFixed(6)} SOL (~1%%, estimated)`);
+    logger.info(`    Pump sell fee:   ~${fb.estimatedPumpSellFee.toFixed(6)} SOL (~1.25%%, estimated)`);
+    logger.info(`    Jito tip/tx:     ${fb.jitoTipPerTx.toFixed(6)} SOL (configured)`);
+    logger.info(`    Total overhead:  ${fb.totalOverhead.toFixed(6)} SOL (wallet + protocol fees)`);
   }
   if (exitTrigger) {
     logger.info(`  Exit trigger:    ${exitTrigger}`);
