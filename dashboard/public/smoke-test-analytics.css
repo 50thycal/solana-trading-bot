@@ -630,4 +630,83 @@
   .analytics-table td {
     padding: 0.4rem 0.5rem;
   }
+
+  /* Hide low-priority columns on small screens */
+  .analytics-table th:nth-child(5),
+  .analytics-table td:nth-child(5),
+  .analytics-table th:nth-child(6),
+  .analytics-table td:nth-child(6),
+  .analytics-table th:nth-child(7),
+  .analytics-table td:nth-child(7) {
+    display: none;
+  }
+
+  /* Compact run selector */
+  .run-selector-list {
+    max-height: 200px;
+  }
+
+  .run-selector-item {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.78rem;
+  }
+
+  /* Stack run-selector fields compactly */
+  .run-exit {
+    display: none;
+  }
+
+  .run-duration {
+    display: none;
+  }
+
+  /* Compact date filter for mobile */
+  .date-filter-bar {
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .date-input {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.35rem;
+  }
+
+  .date-filter-presets {
+    gap: 0.25rem;
+  }
+
+  .date-filter-presets .btn {
+    padding: 0.3rem 0.5rem;
+    font-size: 0.68rem;
+  }
+
+  /* Stack panel header on mobile */
+  .panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  /* Copy bar compact */
+  .copy-results-bar {
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: flex-start;
+  }
+
+  .copy-hint {
+    font-size: 0.7rem;
+  }
+
+  /* Aggregate stats compact 2-col */
+  #agg-stats.overview-cards,
+  #agg-stats-2.overview-cards {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+  }
+
+  #agg-stats .card,
+  #agg-stats-2 .card {
+    padding: 0.6rem 0.75rem;
+  }
 }

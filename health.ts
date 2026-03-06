@@ -1,3 +1,9 @@
+/**
+ * @deprecated DEAD CODE - This file is not imported or used anywhere.
+ * Health check functionality is handled by bootstrap.ts (createServer)
+ * and the dashboard server. This file can be safely deleted.
+ */
+
 import http from 'http';
 import { logger } from './helpers';
 
