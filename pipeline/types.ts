@@ -344,6 +344,9 @@ export const RejectionReasons = {
   SNIPER_GATE_TIMEOUT: 'Sniper gate timeout - bots did not exit in time',
   SNIPER_GATE_LOW_ORGANIC: 'Insufficient organic buyers after bot exit',
   SNIPER_GATE_RPC_FAILED: 'Failed to fetch transactions for sniper gate',
+
+  // Time-of-Day
+  TIME_OF_DAY_BLOCKED: 'Outside allowed trading hours',
 } as const;
 
 export type RejectionReason = typeof RejectionReasons[keyof typeof RejectionReasons];

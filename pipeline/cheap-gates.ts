@@ -23,6 +23,7 @@ import {
 import { getBlacklist, getExposureManager } from '../risk';
 import { getStateStore } from '../persistence';
 import { logger } from '../helpers';
+import { getConfig } from '../helpers/config-validator';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // JUNK PATTERN DETECTION
@@ -266,7 +267,23 @@ export class CheapGatesStage implements PipelineStage<PipelineContext, CheapGate
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // FREE GATE 4.5: Suspicious Instruction Check
+    // FREE GATE 4.5: Time-of-Day Check
+    // ═══════════════════════════════════════════════════════════════════════════
+    const config = getConfig();
+    if (config.tradingHoursEnabled && config.tradingHoursAllowedUtc.length > 0) {
+      const currentHourUtc = new Date().getUTCHours();
+      if (!config.tradingHoursAllowedUtc.includes(currentHourUtc)) {
+        return this.reject(
+          `${RejectionReasons.TIME_OF_DAY_BLOCKED}: hour ${currentHourUtc} UTC not in allowed hours`,
+          startTime,
+          { mint: mintStr, currentHourUtc, allowedHours: config.tradingHoursAllowedUtc.join(',') },
+          buf
+        );
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FREE GATE 4.6: Suspicious Instruction Check
     // ═══════════════════════════════════════════════════════════════════════════
     if (detection.rawLogs && detection.rawLogs.length > 0) {
       for (const logLine of detection.rawLogs) {

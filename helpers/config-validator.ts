@@ -120,6 +120,10 @@ export interface ValidatedConfig {
   // Production Time Limit
   productionTimeLimitMs: number;
 
+  // Time-of-Day Filter
+  tradingHoursEnabled: boolean;
+  tradingHoursAllowedUtc: number[];
+
   // AI Analysis (Phase 6)
   runHypothesis: string;
   researchBotUrl: string;
@@ -516,6 +520,20 @@ export function validateConfig(): ValidatedConfig {
   }
   const productionTimeLimitMs = productionTimeLimitMinutes * 60000;
 
+  // === TIME-OF-DAY FILTER ===
+  const tradingHoursEnabled = requireBoolean('TRADING_HOURS_ENABLED', false);
+  const tradingHoursAllowedUtcRaw = getEnv('TRADING_HOURS_ALLOWED_UTC', '');
+  let tradingHoursAllowedUtc: number[] = [];
+  if (tradingHoursAllowedUtcRaw) {
+    tradingHoursAllowedUtc = tradingHoursAllowedUtcRaw
+      .split(',')
+      .map(h => Number(h.trim()))
+      .filter(h => !isNaN(h) && h >= 0 && h <= 23);
+    if (tradingHoursEnabled && tradingHoursAllowedUtc.length === 0) {
+      errors.push({ variable: 'TRADING_HOURS_ALLOWED_UTC', message: 'TRADING_HOURS_ENABLED is true but no valid hours provided (0-23, comma-separated)' });
+    }
+  }
+
   // === AI ANALYSIS (Phase 6) ===
   const runHypothesis = getEnv('RUN_HYPOTHESIS', '');
   const researchBotUrl = getEnv('RESEARCH_BOT_URL', '');
@@ -668,6 +686,8 @@ export function validateConfig(): ValidatedConfig {
     abConfigB,
     runBot,
     productionTimeLimitMs,
+    tradingHoursEnabled,
+    tradingHoursAllowedUtc,
     runHypothesis,
     researchBotUrl,
   };
