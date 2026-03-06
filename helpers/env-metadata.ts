@@ -705,6 +705,22 @@ export const ENV_CATEGORIES: EnvCategory[] = [
         description: 'Auto-shutdown after N minutes (0 = infinite)',
         hint: '0 = runs forever',
       },
+      {
+        name: 'RUN_HYPOTHESIS',
+        label: 'Run Hypothesis',
+        type: 'string',
+        defaultValue: '',
+        description: 'Describe what you are testing this run — recorded in the run journal for later review',
+        placeholder: 'e.g. Testing 15% TP with sniper gate enabled in a flat market',
+      },
+      {
+        name: 'RESEARCH_BOT_URL',
+        label: 'Research Bot URL',
+        type: 'string',
+        defaultValue: '',
+        description: 'URL of external research bot for market-wide context snapshots (leave blank to disable)',
+        placeholder: 'https://your-research-bot.example.com',
+      },
     ],
   },
   {
