@@ -44,7 +44,7 @@ import {
 /**
  * Current schema version - increment when making schema changes
  */
-const CURRENT_SCHEMA_VERSION = 6;
+const CURRENT_SCHEMA_VERSION = 7;
 
 /**
  * SQLite State Store - manages all persistent data
@@ -156,6 +156,10 @@ export class StateStore {
 
       if (currentVersion < 6) {
         this.migrateToV6();
+      }
+
+      if (currentVersion < 7) {
+        this.migrateToV7();
       }
 
       logger.info({ version: CURRENT_SCHEMA_VERSION }, 'Database migrations complete');
@@ -401,7 +405,9 @@ export class StateStore {
         total_losses INTEGER DEFAULT 0,
         realized_pnl_sol REAL DEFAULT 0,
         outcome_notes TEXT,
-        tags TEXT
+        tags TEXT,
+        run_number INTEGER,
+        total_runs INTEGER
       );
 
       CREATE INDEX IF NOT EXISTS idx_run_journal_started_at ON run_journal(started_at DESC);
@@ -446,6 +452,21 @@ export class StateStore {
     `);
 
     logger.info('Applied migration v6: research bot fields on market_snapshots');
+  }
+
+  /**
+   * Migration to version 7 - Add run_number/total_runs to run_journal for multi-run smoke tests
+   */
+  private migrateToV7(): void {
+    this.db.exec(`
+      ALTER TABLE run_journal ADD COLUMN run_number INTEGER;
+      ALTER TABLE run_journal ADD COLUMN total_runs INTEGER;
+
+      -- Record migration
+      INSERT INTO schema_version (version, applied_at) VALUES (7, ${Date.now()});
+    `);
+
+    logger.info('Applied migration v7: run_number and total_runs on run_journal');
   }
 
   /**
@@ -1522,8 +1543,9 @@ export class StateStore {
       INSERT INTO run_journal (
         session_id, started_at, hypothesis, config_snapshot, bot_mode,
         quote_amount_sol, take_profit_pct, stop_loss_pct, max_hold_duration_s,
-        sniper_gate_enabled, momentum_gate_enabled, trailing_stop_enabled
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        sniper_gate_enabled, momentum_gate_enabled, trailing_stop_enabled,
+        run_number, total_runs
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId,
       now,
@@ -1537,6 +1559,8 @@ export class StateStore {
       input.sniperGateEnabled ? 1 : 0,
       input.momentumGateEnabled ? 1 : 0,
       input.trailingStopEnabled ? 1 : 0,
+      input.runNumber ?? null,
+      input.totalRuns ?? null,
     );
 
     logger.info({ sessionId, hypothesis: input.hypothesis || '(none)' }, 'Run journal entry created');
@@ -1645,6 +1669,8 @@ export class StateStore {
       realizedPnlSol: row.realized_pnl_sol || 0,
       outcomeNotes: row.outcome_notes ?? undefined,
       tags: row.tags ?? undefined,
+      runNumber: row.run_number ?? undefined,
+      totalRuns: row.total_runs ?? undefined,
     };
   }
 

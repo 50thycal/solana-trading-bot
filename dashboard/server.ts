@@ -2097,12 +2097,36 @@ export class DashboardServer {
       const end = e.endedAt ? new Date(e.endedAt).toISOString().substring(0, 19) : 'running';
       const pnlSign = e.realizedPnlSol >= 0 ? '+' : '';
       lines.push(`\n## ${e.sessionId}`);
+      lines.push(`Mode: ${e.botMode}`);
+      if (e.runNumber && e.totalRuns) {
+        lines.push(`Run: ${e.runNumber} of ${e.totalRuns}`);
+      }
       lines.push(`Period: ${start} → ${end}`);
       if (e.hypothesis) lines.push(`Hypothesis: "${e.hypothesis}"`);
-      lines.push(`Config: TP=${e.takeProfitPct}% SL=${e.stopLossPct}% HOLD=${e.maxHoldDurationS}s`);
-      lines.push(`Trades: ${e.totalTrades} | P&L: ${pnlSign}${e.realizedPnlSol.toFixed(4)} SOL`);
+      lines.push(`Config: TP=${e.takeProfitPct}% SL=${e.stopLossPct}% HOLD=${e.maxHoldDurationS}s AMOUNT=${e.quoteAmountSol} SOL`);
+      const gates: string[] = [];
+      if (e.sniperGateEnabled) gates.push('sniper_gate');
+      if (e.momentumGateEnabled) gates.push('momentum_gate');
+      if (e.trailingStopEnabled) gates.push('trailing_stop');
+      if (gates.length) lines.push(`Gates: ${gates.join(', ')}`);
+      lines.push(`Trades: ${e.totalTrades} | Wins: ${e.totalWins} | Losses: ${e.totalLosses} | Detections: ${e.totalDetections}`);
+      lines.push(`P&L: ${pnlSign}${e.realizedPnlSol.toFixed(4)} SOL`);
       if (e.outcomeNotes) lines.push(`Notes: ${e.outcomeNotes}`);
       if (e.tags) lines.push(`Tags: ${e.tags}`);
+
+      // Include full config snapshot for AI analysis
+      if (e.configSnapshot) {
+        try {
+          const obj = JSON.parse(e.configSnapshot);
+          const cleaned: Record<string, any> = {};
+          for (const [k, v] of Object.entries(obj)) {
+            if (v === '***REDACTED***') continue;
+            if (Array.isArray(v) && (v as any[]).every((i: any) => i === '***REDACTED***')) continue;
+            cleaned[k] = v;
+          }
+          lines.push(`\nFull Config:\n\`\`\`json\n${JSON.stringify(cleaned, null, 2)}\n\`\`\``);
+        } catch { /* skip malformed config */ }
+      }
     }
     return lines.join('\n');
   }
