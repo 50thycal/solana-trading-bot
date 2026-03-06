@@ -98,7 +98,7 @@ import {
 } from './helpers/pumpfun';
 import { initTradeAuditManager } from './helpers/trade-audit';
 import { initRpcManager } from './helpers/rpc-manager';
-import { getConfig } from './helpers/config-validator';
+import { getConfig, getRedactedConfigSnapshot } from './helpers/config-validator';
 import { TransactionExecutor } from './transactions/transaction-executor.interface';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
@@ -532,6 +532,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
   const buyFailures: BuyFailureRecord[] = [];
   let tokensEvaluated = 0;
   let tokensPipelinePassed = 0;
+  let journalSessionId: string | null = null;
 
   // Initialize live progress so the dashboard shows real-time status
   liveProgress = {
@@ -668,6 +669,24 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     initStateStore();
     const pnlTracker = getPnlTracker();
     await pnlTracker.init();
+
+    // Create run journal entry so smoke tests appear on the journal page
+    const storeForJournal = getStateStore();
+    if (storeForJournal) {
+      journalSessionId = storeForJournal.createJournalEntry({
+        hypothesis: config.runHypothesis,
+        configSnapshot: getRedactedConfigSnapshot(),
+        botMode: 'smoke',
+        quoteAmountSol: tradeAmount,
+        takeProfitPct: config.takeProfit,
+        stopLossPct: config.stopLoss,
+        maxHoldDurationS: Math.round(maxHoldMs / 1000),
+        sniperGateEnabled: config.sniperGateEnabled,
+        momentumGateEnabled: config.momentumGateEnabled,
+        trailingStopEnabled: config.trailingStopEnabled,
+      });
+      logger.info({ sessionId: journalSessionId, runNumber }, 'Smoke test journal entry created');
+    }
 
     // Initialize filters
     initPumpFunFilters({
@@ -1055,6 +1074,31 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
   );
 
   } finally {
+    // Close run journal entry with per-run stats from this smoke test cycle
+    if (journalSessionId) {
+      try {
+        const storeForClose = getStateStore();
+        if (storeForClose) {
+          const didBuy = state.buySignature !== '';
+          const didSell = state.sellSignature !== '';
+          const pnlSol = didSell && state.actualSolSpent != null
+            ? state.sellSolReceived - state.actualSolSpent
+            : 0;
+          storeForClose.closeJournalEntry({
+            sessionId: journalSessionId,
+            totalDetections: tokensEvaluated,
+            totalTrades: didBuy ? 1 : 0,
+            totalWins: pnlSol > 0 ? 1 : 0,
+            totalLosses: didSell && pnlSol <= 0 ? 1 : 0,
+            realizedPnlSol: pnlSol,
+          });
+          logger.info({ sessionId: journalSessionId, runNumber }, 'Smoke test journal entry closed');
+        }
+      } catch (journalErr) {
+        logger.warn({ error: journalErr }, 'Failed to close smoke test journal entry');
+      }
+    }
+
     // Always clear live progress so the dashboard never shows a stale "Running..." state
     liveProgress = null;
   }
