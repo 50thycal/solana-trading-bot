@@ -6,25 +6,43 @@
   <title>Run Journal - Pump.fun Trading Bot</title>
   <link rel="stylesheet" href="/styles.css">
   <style>
-    .journal-entry { background: var(--bg-secondary, #1a1a2e); border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+    .journal-entry { background: var(--bg-secondary, #1a1a2e); border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; margin-bottom: 12px; position: relative; }
     .journal-entry.active { border-color: #4ecdc4; }
-    .journal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .journal-entry.selected { border-color: #a78bfa; background: rgba(167, 139, 250, 0.05); }
+    .journal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 6px; }
     .journal-id { font-family: monospace; font-size: 0.85em; color: var(--text-muted, #888); }
     .journal-hypothesis { font-size: 1.1em; font-weight: 600; color: var(--text-primary, #eee); margin: 8px 0; }
     .journal-config { display: flex; gap: 12px; flex-wrap: wrap; font-size: 0.9em; color: var(--text-secondary, #aaa); }
     .journal-config span { background: var(--bg-tertiary, #252540); padding: 2px 8px; border-radius: 4px; }
     .journal-stats { display: flex; gap: 16px; margin-top: 8px; font-size: 0.9em; }
     .journal-stats .stat { display: flex; flex-direction: column; }
-    .journal-stats .stat-label { color: var(--text-muted, #888); font-size: 0.8em; }
+    .journal-stats .stat-label { color: var(--text-muted, #888); font-size: 0.8em; text-transform: uppercase; }
     .journal-stats .stat-value { font-weight: 600; }
     .journal-stats .positive { color: #4ecdc4; }
     .journal-stats .negative { color: #ff6b6b; }
     .journal-notes { margin-top: 12px; }
-    .journal-notes textarea { width: 100%; background: var(--bg-tertiary, #252540); border: 1px solid var(--border, #333); color: var(--text-primary, #eee); border-radius: 4px; padding: 8px; font-size: 0.9em; resize: vertical; min-height: 60px; }
+    .journal-notes textarea { width: 100%; background: var(--bg-tertiary, #252540); border: 1px solid var(--border, #333); color: var(--text-primary, #eee); border-radius: 4px; padding: 8px; font-size: 0.9em; resize: vertical; min-height: 60px; box-sizing: border-box; }
     .journal-notes button { margin-top: 4px; padding: 4px 12px; background: #4ecdc4; color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em; }
-    .copy-btn { padding: 6px 16px; background: var(--bg-tertiary, #252540); color: var(--text-primary, #eee); border: 1px solid var(--border, #333); border-radius: 4px; cursor: pointer; font-size: 0.9em; }
-    .copy-btn:hover { background: var(--border, #333); }
+    .btn { padding: 6px 16px; background: var(--bg-tertiary, #252540); color: var(--text-primary, #eee); border: 1px solid var(--border, #333); border-radius: 4px; cursor: pointer; font-size: 0.9em; }
+    .btn:hover { background: var(--border, #333); }
+    .btn-primary { background: #4ecdc4; color: #000; border-color: #4ecdc4; }
+    .btn-primary:hover { background: #3dbdb5; }
     .copy-toast { position: fixed; bottom: 20px; right: 20px; background: #4ecdc4; color: #000; padding: 8px 16px; border-radius: 4px; display: none; z-index: 1000; }
+    .badge { display: inline-block; font-size: 0.75em; padding: 2px 8px; border-radius: 3px; font-weight: 600; text-transform: uppercase; }
+    .badge-smoke { background: #7c3aed; color: #fff; }
+    .badge-production { background: #059669; color: #fff; }
+    .badge-dry_run { background: #d97706; color: #fff; }
+    .badge-default { background: var(--bg-tertiary, #252540); color: var(--text-secondary, #aaa); }
+    .run-label { font-size: 0.8em; color: #a78bfa; font-weight: 600; }
+    .config-toggle { cursor: pointer; font-size: 0.85em; color: #4ecdc4; margin-top: 8px; display: inline-block; user-select: none; }
+    .config-toggle:hover { text-decoration: underline; }
+    .config-snapshot { display: none; margin-top: 8px; background: var(--bg-tertiary, #252540); border: 1px solid var(--border, #333); border-radius: 4px; padding: 12px; font-family: monospace; font-size: 0.8em; white-space: pre-wrap; word-break: break-all; color: var(--text-secondary, #aaa); max-height: 300px; overflow-y: auto; }
+    .config-snapshot.open { display: block; }
+    .select-checkbox { position: absolute; top: 16px; right: 16px; width: 20px; height: 20px; accent-color: #a78bfa; cursor: pointer; }
+    .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .select-bar { display: none; align-items: center; gap: 12px; padding: 10px 16px; background: rgba(167, 139, 250, 0.1); border: 1px solid #a78bfa; border-radius: 8px; margin-bottom: 12px; }
+    .select-bar.visible { display: flex; }
+    .select-bar .count { color: #a78bfa; font-weight: 600; }
   </style>
 </head>
 <body>
@@ -36,10 +54,18 @@
         <h1>Run Journal</h1>
         <p style="color: var(--text-muted, #888); margin-top: 4px;">Track hypotheses, configs, and outcomes across runs</p>
       </div>
-      <div class="overview-header-right">
-        <button class="copy-btn" id="copy-compact-btn">Copy for Claude</button>
+      <div class="header-actions">
+        <button class="btn" id="select-all-btn" title="Select / deselect all entries">Select All</button>
+        <button class="btn btn-primary" id="copy-selected-btn" style="display:none;">Copy Selected for AI</button>
+        <button class="btn" id="copy-compact-btn">Copy Last 5 for AI</button>
       </div>
     </section>
+
+    <div id="select-bar" class="select-bar">
+      <span class="count" id="select-count">0 selected</span>
+      <button class="btn btn-primary" id="copy-selected-bar-btn">Copy Selected</button>
+      <button class="btn" id="clear-selection-btn">Clear</button>
+    </div>
 
     <div id="toast" class="copy-toast"></div>
     <div id="journal-list"></div>
@@ -51,9 +77,124 @@
 
   <script src="/nav.js"></script>
   <script>
+    let journalEntries = [];
+    const selectedIds = new Set();
+
+    function badgeClass(mode) {
+      if (mode === 'smoke') return 'badge-smoke';
+      if (mode === 'production') return 'badge-production';
+      if (mode === 'dry_run') return 'badge-dry_run';
+      return 'badge-default';
+    }
+
+    function formatConfig(configSnapshot) {
+      try {
+        const obj = JSON.parse(configSnapshot);
+        // Remove redacted values for cleaner display
+        const cleaned = {};
+        for (const [k, v] of Object.entries(obj)) {
+          if (v === '***REDACTED***') continue;
+          if (Array.isArray(v) && v.every(i => i === '***REDACTED***')) continue;
+          cleaned[k] = v;
+        }
+        return JSON.stringify(cleaned, null, 2);
+      } catch {
+        return configSnapshot;
+      }
+    }
+
+    function updateSelectionUI() {
+      const count = selectedIds.size;
+      const bar = document.getElementById('select-bar');
+      const copySelBtn = document.getElementById('copy-selected-btn');
+      const countEl = document.getElementById('select-count');
+
+      if (count > 0) {
+        bar.classList.add('visible');
+        copySelBtn.style.display = '';
+        countEl.textContent = count + ' selected';
+      } else {
+        bar.classList.remove('visible');
+        copySelBtn.style.display = 'none';
+      }
+
+      // Update checkbox + entry highlight states
+      journalEntries.forEach((e, i) => {
+        const cb = document.getElementById('cb-' + i);
+        const el = document.getElementById('entry-' + i);
+        if (cb) cb.checked = selectedIds.has(e.sessionId);
+        if (el) el.classList.toggle('selected', selectedIds.has(e.sessionId));
+      });
+    }
+
+    function toggleSelect(sessionId, index) {
+      if (selectedIds.has(sessionId)) {
+        selectedIds.delete(sessionId);
+      } else {
+        selectedIds.add(sessionId);
+      }
+      updateSelectionUI();
+    }
+
+    function buildEntryText(e) {
+      const start = new Date(e.startedAt).toISOString().replace('T', ' ').substring(0, 19);
+      const end = e.endedAt ? new Date(e.endedAt).toISOString().replace('T', ' ').substring(0, 19) : 'running';
+      const pnlSign = e.realizedPnlSol >= 0 ? '+' : '';
+      const lines = [];
+
+      lines.push(`## ${e.sessionId}`);
+      lines.push(`Mode: ${e.botMode}`);
+      if (e.runNumber && e.totalRuns) {
+        lines.push(`Run: ${e.runNumber} of ${e.totalRuns}`);
+      }
+      lines.push(`Period: ${start} → ${end}`);
+      if (e.hypothesis) lines.push(`Hypothesis: "${e.hypothesis}"`);
+      lines.push(`Config: TP=${e.takeProfitPct}% SL=${e.stopLossPct}% HOLD=${e.maxHoldDurationS}s AMOUNT=${e.quoteAmountSol} SOL`);
+      const gates = [];
+      if (e.sniperGateEnabled) gates.push('sniper_gate');
+      if (e.momentumGateEnabled) gates.push('momentum_gate');
+      if (e.trailingStopEnabled) gates.push('trailing_stop');
+      if (gates.length) lines.push(`Gates: ${gates.join(', ')}`);
+      lines.push(`Trades: ${e.totalTrades} | Wins: ${e.totalWins} | Losses: ${e.totalLosses} | Detections: ${e.totalDetections}`);
+      lines.push(`P&L: ${pnlSign}${e.realizedPnlSol.toFixed(4)} SOL`);
+      if (e.outcomeNotes) lines.push(`Notes: ${e.outcomeNotes}`);
+      if (e.tags) lines.push(`Tags: ${e.tags}`);
+
+      // Include full config snapshot
+      if (e.configSnapshot) {
+        try {
+          const obj = JSON.parse(e.configSnapshot);
+          const cleaned = {};
+          for (const [k, v] of Object.entries(obj)) {
+            if (v === '***REDACTED***') continue;
+            if (Array.isArray(v) && v.every(i => i === '***REDACTED***')) continue;
+            cleaned[k] = v;
+          }
+          lines.push(`\nFull Config:\n\`\`\`json\n${JSON.stringify(cleaned, null, 2)}\n\`\`\``);
+        } catch { /* skip */ }
+      }
+
+      return lines.join('\n');
+    }
+
+    async function copySelected() {
+      if (selectedIds.size === 0) {
+        showToast('No entries selected');
+        return;
+      }
+      const selected = journalEntries.filter(e => selectedIds.has(e.sessionId));
+      const text = '# Run Journal (Selected Entries)\n\n' + selected.map(buildEntryText).join('\n\n---\n\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast(`Copied ${selected.length} entries to clipboard`);
+      } catch {
+        showToast('Failed to copy');
+      }
+    }
+
     async function loadJournal() {
       try {
-        const res = await fetch('/api/journal?limit=20');
+        const res = await fetch('/api/journal?limit=50');
         const data = await res.json();
         const list = document.getElementById('journal-list');
         const empty = document.getElementById('empty-state');
@@ -63,18 +204,27 @@
           return;
         }
 
+        journalEntries = data.entries;
+
         list.innerHTML = data.entries.map((e, i) => {
           const start = new Date(e.startedAt).toISOString().replace('T', ' ').substring(0, 19);
           const end = e.endedAt ? new Date(e.endedAt).toISOString().replace('T', ' ').substring(0, 19) : 'running';
           const pnlClass = e.realizedPnlSol >= 0 ? 'positive' : 'negative';
           const pnlSign = e.realizedPnlSol >= 0 ? '+' : '';
           const isActive = !e.endedAt;
+          const modeClass = badgeClass(e.botMode);
+          const runLabel = e.runNumber && e.totalRuns ? `<span class="run-label">Run ${e.runNumber} of ${e.totalRuns}</span>` : '';
 
           return `
-            <div class="journal-entry${isActive ? ' active' : ''}">
+            <div class="journal-entry${isActive ? ' active' : ''}" id="entry-${i}">
+              <input type="checkbox" class="select-checkbox" id="cb-${i}" onclick="toggleSelect('${e.sessionId}', ${i})" />
               <div class="journal-header">
-                <span class="journal-id">${e.sessionId}</span>
-                <span style="font-size: 0.85em; color: var(--text-muted, #888);">${start} → ${end}</span>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span class="journal-id">${e.sessionId}</span>
+                  <span class="badge ${modeClass}">${e.botMode}</span>
+                  ${runLabel}
+                </div>
+                <span style="font-size: 0.85em; color: var(--text-muted, #888);">${start} &rarr; ${end}</span>
               </div>
               ${e.hypothesis ? `<div class="journal-hypothesis">"${e.hypothesis}"</div>` : '<div class="journal-hypothesis" style="color: var(--text-muted, #888);">(no hypothesis set)</div>'}
               <div class="journal-config">
@@ -89,9 +239,12 @@
               <div class="journal-stats">
                 <div class="stat"><span class="stat-label">Trades</span><span class="stat-value">${e.totalTrades}</span></div>
                 <div class="stat"><span class="stat-label">Wins</span><span class="stat-value">${e.totalWins}</span></div>
+                <div class="stat"><span class="stat-label">Losses</span><span class="stat-value">${e.totalLosses}</span></div>
                 <div class="stat"><span class="stat-label">P&L</span><span class="stat-value ${pnlClass}">${pnlSign}${e.realizedPnlSol.toFixed(4)} SOL</span></div>
                 <div class="stat"><span class="stat-label">Detections</span><span class="stat-value">${e.totalDetections}</span></div>
               </div>
+              <span class="config-toggle" onclick="toggleConfig(${i})">Show full config</span>
+              <div class="config-snapshot" id="config-${i}">${formatConfig(e.configSnapshot)}</div>
               <div class="journal-notes">
                 <textarea id="notes-${i}" placeholder="Add outcome notes...">${e.outcomeNotes || ''}</textarea>
                 <button onclick="saveNotes('${e.sessionId}', ${i})">Save Notes</button>
@@ -102,6 +255,12 @@
       } catch (err) {
         console.error('Failed to load journal:', err);
       }
+    }
+
+    function toggleConfig(index) {
+      const el = document.getElementById('config-' + index);
+      const isOpen = el.classList.toggle('open');
+      el.previousElementSibling.textContent = isOpen ? 'Hide full config' : 'Show full config';
     }
 
     async function saveNotes(sessionId, index) {
@@ -123,10 +282,27 @@
         const res = await fetch('/api/journal/compact?last=5');
         const text = await res.text();
         await navigator.clipboard.writeText(text);
-        showToast('Copied to clipboard');
+        showToast('Copied last 5 entries to clipboard');
       } catch (err) {
         showToast('Failed to copy');
       }
+    });
+
+    document.getElementById('copy-selected-btn').addEventListener('click', copySelected);
+    document.getElementById('copy-selected-bar-btn').addEventListener('click', copySelected);
+
+    document.getElementById('select-all-btn').addEventListener('click', () => {
+      if (selectedIds.size === journalEntries.length) {
+        selectedIds.clear();
+      } else {
+        journalEntries.forEach(e => selectedIds.add(e.sessionId));
+      }
+      updateSelectionUI();
+    });
+
+    document.getElementById('clear-selection-btn').addEventListener('click', () => {
+      selectedIds.clear();
+      updateSelectionUI();
     });
 
     function showToast(msg) {

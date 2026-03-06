@@ -684,6 +684,8 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
         sniperGateEnabled: config.sniperGateEnabled,
         momentumGateEnabled: config.momentumGateEnabled,
         trailingStopEnabled: config.trailingStopEnabled,
+        runNumber,
+        totalRuns,
       });
       logger.info({ sessionId: journalSessionId, runNumber }, 'Smoke test journal entry created');
     }

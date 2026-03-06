@@ -404,6 +404,8 @@ export interface RunJournalRecord {
   realizedPnlSol: number;
   outcomeNotes?: string;
   tags?: string;
+  runNumber?: number;             // For multi-run smoke tests: which run (1-indexed)
+  totalRuns?: number;             // For multi-run smoke tests: total runs in series
 }
 
 /**
@@ -420,6 +422,8 @@ export interface CreateRunJournalInput {
   sniperGateEnabled: boolean;
   momentumGateEnabled: boolean;
   trailingStopEnabled: boolean;
+  runNumber?: number;             // For multi-run smoke tests: which run (1-indexed)
+  totalRuns?: number;             // For multi-run smoke tests: total runs in series
 }
 
 /**
