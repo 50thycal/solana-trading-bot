@@ -1,6 +1,12 @@
 /**
  * Momentum Gate Stage
  *
+ * NOTE: This module is NOT actively used in production. The sniper gate
+ * (sniper-gate.ts) has replaced it as the default Stage 4 gate. This code
+ * is retained for reference and as a fallback option -- it can be re-enabled
+ * by setting SNIPER_GATE_ENABLED=false and MOMENTUM_GATE_ENABLED=true.
+ * Do not assume this gate is running in the live pipeline.
+ *
  * Stage 4 of the pipeline - validates buy momentum before purchase.
  * Uses retry-based polling to check if minimum buy transactions have occurred.
  *
@@ -47,6 +53,7 @@ const SELL_DISCRIMINATOR = Buffer.from([51, 230, 133, 164, 1, 127, 131, 173]);
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/** @deprecated Not actively used -- sniper gate is the current Stage 4 gate. Kept for fallback. */
 export interface MomentumGateConfig {
   /** Enable/disable the momentum gate */
   enabled: boolean;
@@ -175,6 +182,9 @@ async function fetchTransactionCounts(
 
 /**
  * MomentumGateStage - Validates buy momentum with retry-based polling
+ *
+ * @deprecated Not actively used in production. The sniper gate has replaced
+ * this as the default Stage 4 gate. Retained as a fallback option.
  *
  * Flow:
  * 1. Wait INITIAL_DELAY_MS

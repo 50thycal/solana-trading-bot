@@ -145,6 +145,9 @@ export interface DeepFiltersData {
 /**
  * Data produced by momentum gate stage
  *
+ * NOTE: The momentum gate is not actively used in production. The sniper gate
+ * is the current Stage 4 gate. This type is retained for the fallback path.
+ *
  * The momentum gate validates buy activity before allowing purchase.
  * It uses retry-based polling to check if a token has sufficient buys.
  */

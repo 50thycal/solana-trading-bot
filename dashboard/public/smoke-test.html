@@ -40,14 +40,15 @@
     }
     .buy-failure-item {
       display: flex;
-      gap: 1rem;
+      flex-wrap: wrap;
+      gap: 0.5rem 1rem;
       align-items: center;
       padding: 0.5rem 1rem;
       font-size: 0.8rem;
       border-bottom: 1px solid var(--border-color);
     }
     .buy-failure-item:last-child { border-bottom: none; }
-    .buy-failure-mint { font-family: monospace; color: var(--text-secondary); }
+    .buy-failure-mint { font-family: monospace; color: var(--text-secondary); word-break: break-all; }
     .buy-failure-reason { color: var(--accent-red); }
     .smoke-meta {
       display: grid;
@@ -94,6 +95,61 @@
       color: var(--text-secondary);
       font-weight: 600;
     }
+
+    /* ── Collapsible detail cards for mobile ── */
+    .smoke-details-toggle {
+      display: none; /* hidden on desktop */
+      width: 100%;
+      padding: 0.6rem 1rem;
+      margin-bottom: 0.75rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      transition: background 0.15s;
+    }
+    .smoke-details-toggle:hover {
+      background: var(--border-color);
+    }
+    .smoke-details-toggle::after {
+      content: ' ▼';
+      font-size: 0.7rem;
+    }
+    .smoke-details-toggle.expanded::after {
+      content: ' ▲';
+    }
+
+    @media (max-width: 768px) {
+      .smoke-details-toggle {
+        display: block;
+      }
+      #detail-cards.collapsed {
+        display: none;
+      }
+      /* Compact 2-col grid on mobile for the key metrics */
+      #key-cards.overview-cards {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.5rem;
+      }
+      #key-cards .card {
+        padding: 0.6rem 0.75rem;
+      }
+      #key-cards .card-value.big {
+        font-size: 1.1rem;
+      }
+      #detail-cards.overview-cards {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.5rem;
+      }
+      #detail-cards .card {
+        padding: 0.6rem 0.75rem;
+      }
+      /* page-header responsive handled in styles.css */
+    }
   </style>
 </head>
 <body>
@@ -120,8 +176,8 @@
       <button class="btn btn-primary btn-small" onclick="backToCurrent()">Back to Current</button>
     </div>
 
-    <!-- Result Summary Cards -->
-    <section class="overview-cards" id="summary-cards">
+    <!-- Key Result Cards (always visible) -->
+    <section class="overview-cards" id="key-cards">
       <div class="card">
         <div class="card-label">Overall Result</div>
         <div class="card-value" id="overall-result">--</div>
@@ -134,6 +190,27 @@
         <div class="card-label">Trade Return</div>
         <div class="card-value" id="trade-return">--</div>
       </div>
+      <div class="card card-accent">
+        <div class="card-label">Efficiency Score</div>
+        <div class="card-value big" id="efficiency-score">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Exit Trigger</div>
+        <div class="card-value" id="exit-trigger">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Hold Duration</div>
+        <div class="card-value" id="hold-duration">--</div>
+      </div>
+    </section>
+
+    <!-- Toggle button for detail cards (visible on mobile only) -->
+    <button class="smoke-details-toggle" id="details-toggle" onclick="toggleDetailCards()">
+      Show More Details
+    </button>
+
+    <!-- Detail Cards (collapsible on mobile) -->
+    <section class="overview-cards collapsed" id="detail-cards">
       <div class="card">
         <div class="card-label">Total Overhead</div>
         <div class="card-value" id="total-overhead">--</div>
@@ -154,14 +231,6 @@
         <div class="card-label">Steps Failed</div>
         <div class="card-value" id="steps-failed">--</div>
       </div>
-      <div class="card card-accent">
-        <div class="card-label">Efficiency Score</div>
-        <div class="card-value big" id="efficiency-score">--</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Hold Duration</div>
-        <div class="card-value" id="hold-duration">--</div>
-      </div>
       <div class="card">
         <div class="card-label">High Water Mark</div>
         <div class="card-value" id="high-water-mark">--</div>
@@ -169,10 +238,6 @@
       <div class="card">
         <div class="card-label">Test Duration</div>
         <div class="card-value" id="duration">--</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Exit Trigger</div>
-        <div class="card-value" id="exit-trigger">--</div>
       </div>
       <div class="card">
         <div class="card-label">Wallet Before</div>
@@ -261,6 +326,15 @@
   </div>
 
   <script src="/nav.js"></script>
+  <script>
+    function toggleDetailCards() {
+      const cards = document.getElementById('detail-cards');
+      const btn = document.getElementById('details-toggle');
+      const isCollapsed = cards.classList.toggle('collapsed');
+      btn.textContent = isCollapsed ? 'Show More Details' : 'Hide Details';
+      btn.classList.toggle('expanded', !isCollapsed);
+    }
+  </script>
   <script src="/smoke-test.js"></script>
 </body>
 </html>
