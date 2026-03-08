@@ -1543,9 +1543,9 @@ export class StateStore {
       INSERT INTO run_journal (
         session_id, started_at, hypothesis, config_snapshot, bot_mode,
         quote_amount_sol, take_profit_pct, stop_loss_pct, max_hold_duration_s,
-        sniper_gate_enabled, momentum_gate_enabled, trailing_stop_enabled,
+        sniper_gate_enabled, trailing_stop_enabled,
         run_number, total_runs
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId,
       now,
@@ -1557,7 +1557,6 @@ export class StateStore {
       input.stopLossPct,
       input.maxHoldDurationS,
       input.sniperGateEnabled ? 1 : 0,
-      input.momentumGateEnabled ? 1 : 0,
       input.trailingStopEnabled ? 1 : 0,
       input.runNumber ?? null,
       input.totalRuns ?? null,
@@ -1660,7 +1659,6 @@ export class StateStore {
       stopLossPct: row.stop_loss_pct,
       maxHoldDurationS: row.max_hold_duration_s,
       sniperGateEnabled: row.sniper_gate_enabled === 1,
-      momentumGateEnabled: row.momentum_gate_enabled === 1,
       trailingStopEnabled: row.trailing_stop_enabled === 1,
       totalDetections: row.total_detections || 0,
       totalTrades: row.total_trades || 0,

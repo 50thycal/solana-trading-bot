@@ -99,15 +99,6 @@ export const PUMPFUN_MIN_SCORE_REQUIRED = config.pumpfunMinScoreRequired;
 export const PUMPFUN_DETECTION_COOLDOWN_MS = config.pumpfunDetectionCooldownMs;
 
 // ============================================================================
-// MOMENTUM GATE
-// ============================================================================
-export const MOMENTUM_GATE_ENABLED = config.momentumGateEnabled;
-export const MOMENTUM_INITIAL_DELAY_MS = config.momentumInitialDelayMs;
-export const MOMENTUM_MIN_TOTAL_BUYS = config.momentumMinTotalBuys;
-export const MOMENTUM_RECHECK_INTERVAL_MS = config.momentumRecheckIntervalMs;
-export const MOMENTUM_MAX_CHECKS = config.momentumMaxChecks;
-
-// ============================================================================
 // SNIPER GATE
 // ============================================================================
 export const SNIPER_GATE_ENABLED = config.sniperGateEnabled;

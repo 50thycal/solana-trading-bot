@@ -31,13 +31,13 @@ const elements = {
   funnelDetected: document.getElementById('funnel-detected'),
   funnelCheapGates: document.getElementById('funnel-cheap-gates'),
   funnelDeepFilters: document.getElementById('funnel-deep-filters'),
-  funnelMomentumGate: document.getElementById('funnel-momentum-gate'),
+  funnelSniperGate: document.getElementById('funnel-momentum-gate'),
   funnelBought: document.getElementById('funnel-bought'),
 
   // Gate stats
   cheapGatesStats: document.getElementById('cheap-gates-stats'),
   deepFiltersStats: document.getElementById('deep-filters-stats'),
-  momentumGateStats: document.getElementById('momentum-gate-stats'),
+  sniperGateStats: document.getElementById('momentum-gate-stats'),
   gate4FunnelLabel: document.getElementById('funnel-gate4-label'),
   gate4PanelTitle: document.getElementById('gate4-panel-title'),
   gate4PanelSubtitle: document.getElementById('gate4-panel-subtitle'),
@@ -172,10 +172,8 @@ function updateFunnel(data) {
   const deepFilters = data.gateStats?.deepFilters || [];
   const sniperGateActive = data.sniperGateActive || false;
 
-  // Gate 4: sniper or momentum
-  const gate4Stats = sniperGateActive
-    ? (data.gateStats?.sniperGate || [])
-    : (data.gateStats?.momentumGate || []);
+  // Gate 4: sniper gate
+  const gate4Stats = data.gateStats?.sniperGate || [];
 
   const lastCheapGate = cheapGates[cheapGates.length - 1];
   const passedCheapGates = lastCheapGate ? lastCheapGate.passed : 0;
@@ -186,16 +184,16 @@ function updateFunnel(data) {
   const lastGate4 = gate4Stats[gate4Stats.length - 1];
   const passedGate4 = lastGate4 ? lastGate4.passed : 0;
 
-  // Update funnel labels if sniper gate is active
+  // Update funnel labels
   if (elements.gate4FunnelLabel) {
-    elements.gate4FunnelLabel.textContent = sniperGateActive ? 'Sniper Gate' : 'Momentum Gate';
+    elements.gate4FunnelLabel.textContent = 'Sniper Gate';
   }
 
   // Update funnel values
   elements.funnelDetected.querySelector('.funnel-value').textContent = detected;
   elements.funnelCheapGates.querySelector('.funnel-value').textContent = passedCheapGates;
   elements.funnelDeepFilters.querySelector('.funnel-value').textContent = passedDeepFilters;
-  elements.funnelMomentumGate.querySelector('.funnel-value').textContent = passedGate4;
+  elements.funnelSniperGate.querySelector('.funnel-value').textContent = passedGate4;
   elements.funnelBought.querySelector('.funnel-value').textContent = bought;
 }
 
@@ -216,23 +214,13 @@ function updateGateStats(gateStats, sniperGateActive) {
     elements.deepFiltersStats.innerHTML = '<div class="empty-state">No data yet</div>';
   }
 
-  // Gate 4: show sniper or momentum depending on which is active
-  if (sniperGateActive) {
-    if (elements.gate4PanelTitle) elements.gate4PanelTitle.textContent = 'Sniper Gate';
-    if (elements.gate4PanelSubtitle) elements.gate4PanelSubtitle.textContent = 'Bot exit + organic buyer detection';
-    if (gateStats.sniperGate && gateStats.sniperGate.length > 0) {
-      elements.momentumGateStats.innerHTML = gateStats.sniperGate.map(renderGateStat).join('');
-    } else {
-      elements.momentumGateStats.innerHTML = '<div class="empty-state">No data yet</div>';
-    }
+  // Gate 4: sniper gate
+  if (elements.gate4PanelTitle) elements.gate4PanelTitle.textContent = 'Sniper Gate';
+  if (elements.gate4PanelSubtitle) elements.gate4PanelSubtitle.textContent = 'Bot exit + organic buyer detection';
+  if (gateStats.sniperGate && gateStats.sniperGate.length > 0) {
+    elements.sniperGateStats.innerHTML = gateStats.sniperGate.map(renderGateStat).join('');
   } else {
-    if (elements.gate4PanelTitle) elements.gate4PanelTitle.textContent = 'Momentum Gate';
-    if (elements.gate4PanelSubtitle) elements.gate4PanelSubtitle.textContent = 'Buy activity validation';
-    if (gateStats.momentumGate && gateStats.momentumGate.length > 0) {
-      elements.momentumGateStats.innerHTML = gateStats.momentumGate.map(renderGateStat).join('');
-    } else {
-      elements.momentumGateStats.innerHTML = '<div class="empty-state">No data yet</div>';
-    }
+    elements.sniperGateStats.innerHTML = '<div class="empty-state">No data yet</div>';
   }
 }
 

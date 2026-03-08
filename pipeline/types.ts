@@ -139,36 +139,6 @@ export interface DeepFiltersData {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MOMENTUM GATE DATA
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Data produced by momentum gate stage
- *
- * NOTE: The momentum gate is not actively used in production. The sniper gate
- * is the current Stage 4 gate. This type is retained for the fallback path.
- *
- * The momentum gate validates buy activity before allowing purchase.
- * It uses retry-based polling to check if a token has sufficient buys.
- */
-export interface MomentumGateData {
-  /** Number of buy transactions detected */
-  buyCount: number;
-
-  /** Number of sell transactions detected (tracked for future use) */
-  sellCount: number;
-
-  /** Number of checks performed before pass/fail */
-  checksPerformed: number;
-
-  /** Total time spent in momentum gate (ms) */
-  totalWaitMs: number;
-
-  /** When the momentum check started */
-  checkStartedAt: number;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // SNIPER GATE CHECK RESULT
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -268,9 +238,6 @@ export interface PipelineContext {
   /** Data from deep filters (if passed) */
   deepFilters?: DeepFiltersData;
 
-  /** Data from momentum gate (if passed) */
-  momentumGate?: MomentumGateData;
-
   /** Data from sniper gate (if passed) */
   sniperGate?: SniperGateData;
 
@@ -338,10 +305,6 @@ export const RejectionReasons = {
 
   // Suspicious instruction
   SUSPICIOUS_INSTRUCTION: 'Suspicious instruction detected in transaction logs',
-
-  // Momentum Gate
-  MOMENTUM_THRESHOLD_NOT_MET: 'Momentum threshold not met',
-  MOMENTUM_RPC_FETCH_FAILED: 'Failed to fetch transactions for momentum check',
 
   // Sniper Gate
   SNIPER_GATE_TIMEOUT: 'Sniper gate timeout - bots did not exit in time',

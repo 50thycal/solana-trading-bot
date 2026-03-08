@@ -10,8 +10,6 @@ export * from './types';
 // Stages
 export * from './cheap-gates';
 export * from './deep-filters';
-export * from './momentum-gate';
-
 // Pipeline orchestrator
 export * from './pipeline';
 

@@ -29,22 +29,12 @@ export interface ABVariantConfig {
   priceCheckIntervalMs: number;
 
   // ── Entry Filters ──────────────────────────────────────────────────────────
-  /** Minimum buy transactions required to pass momentum gate */
-  momentumMinTotalBuys: number;
   /** Minimum SOL in bonding curve to consider buying */
   pumpfunMinSolInCurve: number;
   /** Maximum SOL in bonding curve (avoids near-graduation) */
   pumpfunMaxSolInCurve: number;
   /** Max token age in seconds (reject tokens older than this) */
   maxTokenAgeSeconds: number;
-
-  // ── Momentum Gate Timing ───────────────────────────────────────────────────
-  /** Wait before first momentum check in ms */
-  momentumInitialDelayMs: number;
-  /** Time between momentum rechecks in ms */
-  momentumRecheckIntervalMs: number;
-  /** Max recheck attempts before rejecting */
-  momentumMaxChecks: number;
 
   // ── Execution (slippage modeling for paper trades) ─────────────────────────
   /** Buy slippage tolerance percentage */

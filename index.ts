@@ -432,7 +432,6 @@ const runListener = async () => {
       stopLossPct: config.stopLoss,
       maxHoldDurationS: Math.round(config.maxHoldDurationMs / 1000),
       sniperGateEnabled: config.sniperGateEnabled,
-      momentumGateEnabled: config.momentumGateEnabled,
       trailingStopEnabled: config.trailingStopEnabled,
     });
 
@@ -482,13 +481,6 @@ const runListener = async () => {
     deepFilters: {
       skipBondingCurveCheck: false,
       skipFilters: false,
-    },
-    momentumGate: {
-      enabled: config.momentumGateEnabled,
-      initialDelayMs: config.momentumInitialDelayMs,
-      minTotalBuys: config.momentumMinTotalBuys,
-      recheckIntervalMs: config.momentumRecheckIntervalMs,
-      maxChecks: config.momentumMaxChecks,
     },
     sniperGate: {
       enabled: config.sniperGateEnabled,

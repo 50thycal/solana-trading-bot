@@ -18,12 +18,10 @@ import {
   StageResult,
   CheapGatesData,
   DeepFiltersData,
-  MomentumGateData,
   SniperGateData,
 } from './types';
 import { CheapGatesStage, CheapGatesConfig } from './cheap-gates';
 import { DeepFiltersStage, DeepFiltersConfig } from './deep-filters';
-import { MomentumGateStage, MomentumGateConfig } from './momentum-gate';
 import { SniperGateStage, SniperGateConfig } from './sniper-gate';
 import { logger } from '../helpers';
 import { TokenLogBuffer } from '../helpers/token-log-buffer';
@@ -63,10 +61,7 @@ export interface PipelineConfig {
   /** Deep filters configuration */
   deepFilters: Partial<DeepFiltersConfig>;
 
-  /** Momentum gate configuration */
-  momentumGate: Partial<MomentumGateConfig>;
-
-  /** Sniper gate configuration (alternative to momentum gate at Stage 4) */
+  /** Sniper gate configuration (Stage 4) */
   sniperGate: Partial<SniperGateConfig>;
 
   /** Enable verbose logging */
@@ -76,7 +71,6 @@ export interface PipelineConfig {
 const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   cheapGates: {},
   deepFilters: {},
-  momentumGate: {},
   sniperGate: {},
   verbose: false,
 };
@@ -92,7 +86,7 @@ const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
  * 1. Detection (external - produces DetectionEvent)
  * 2. Cheap Gates (dedupe, blacklist, exposure, mint info)
  * 3. Deep Filters (bonding curve state, SOL filters, scoring)
- * 4. Momentum Gate (buy count validation with retry-based polling)
+ * 4. Sniper Gate (bot exit monitoring + organic demand validation)
  * 5. Execute (external - buys the token)
  */
 export class PumpFunPipeline {
@@ -102,7 +96,6 @@ export class PumpFunPipeline {
 
   private cheapGatesStage: CheapGatesStage;
   private deepFiltersStage: DeepFiltersStage;
-  private momentumGateStage: MomentumGateStage;
   private sniperGateStage: SniperGateStage;
 
   constructor(
@@ -117,15 +110,13 @@ export class PumpFunPipeline {
     // Initialize stages
     this.cheapGatesStage = new CheapGatesStage(connection, this.config.cheapGates);
     this.deepFiltersStage = new DeepFiltersStage(connection, this.config.deepFilters);
-    this.momentumGateStage = new MomentumGateStage(connection, this.config.momentumGate);
     this.sniperGateStage = new SniperGateStage(connection, this.config.sniperGate);
 
     logger.info(
       {
-        stages: ['cheap-gates', 'deep-filters', 'momentum-gate-or-sniper-gate'],
+        stages: ['cheap-gates', 'deep-filters', 'sniper-gate'],
         cheapGatesConfig: this.config.cheapGates,
         deepFiltersConfig: this.config.deepFilters,
-        momentumGateConfig: this.config.momentumGate,
         sniperGateConfig: this.config.sniperGate,
       },
       '[pipeline] Initialized'
@@ -198,40 +189,21 @@ export class PumpFunPipeline {
       context.deepFilters = deepFiltersResult.data as DeepFiltersData;
 
       // ═══════════════════════════════════════════════════════════════════════════
-      // STAGE 4: Sniper Gate OR Momentum Gate
-      // Sniper gate takes priority when enabled; falls back to momentum gate.
+      // STAGE 4: Sniper Gate
       // ═══════════════════════════════════════════════════════════════════════════
-      if (this.config.sniperGate.enabled) {
-        const sniperResult = await this.sniperGateStage.execute(context);
-        stageResults.push(sniperResult);
+      const sniperResult = await this.sniperGateStage.execute(context);
+      stageResults.push(sniperResult);
 
-        if (!sniperResult.pass) {
-          context.rejection = {
-            stage: sniperResult.stage,
-            reason: sniperResult.reason,
-            timestamp: Date.now(),
-          };
-          return this.buildResult(false, context, stageResults, pipelineStart, sniperResult);
-        }
-
-        context.sniperGate = sniperResult.data as SniperGateData;
-      } else {
-        const momentumGateResult = await this.momentumGateStage.execute(context);
-        stageResults.push(momentumGateResult);
-
-        if (!momentumGateResult.pass) {
-          context.rejection = {
-            stage: momentumGateResult.stage,
-            reason: momentumGateResult.reason,
-            timestamp: Date.now(),
-          };
-
-          return this.buildResult(false, context, stageResults, pipelineStart, momentumGateResult);
-        }
-
-        // Add momentum gate data to context
-        context.momentumGate = momentumGateResult.data as MomentumGateData;
+      if (!sniperResult.pass) {
+        context.rejection = {
+          stage: sniperResult.stage,
+          reason: sniperResult.reason,
+          timestamp: Date.now(),
+        };
+        return this.buildResult(false, context, stageResults, pipelineStart, sniperResult);
       }
+
+      context.sniperGate = sniperResult.data as SniperGateData;
 
       // ═══════════════════════════════════════════════════════════════════════════
       // ALL STAGES PASSED

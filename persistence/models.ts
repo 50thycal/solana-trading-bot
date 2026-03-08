@@ -395,7 +395,6 @@ export interface RunJournalRecord {
   stopLossPct: number;
   maxHoldDurationS: number;
   sniperGateEnabled: boolean;
-  momentumGateEnabled: boolean;
   trailingStopEnabled: boolean;
   totalDetections: number;
   totalTrades: number;
@@ -420,7 +419,6 @@ export interface CreateRunJournalInput {
   stopLossPct: number;
   maxHoldDurationS: number;
   sniperGateEnabled: boolean;
-  momentumGateEnabled: boolean;
   trailingStopEnabled: boolean;
   runNumber?: number;             // For multi-run smoke tests: which run (1-indexed)
   totalRuns?: number;             // For multi-run smoke tests: total runs in series

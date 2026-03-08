@@ -434,58 +434,16 @@ export const ENV_CATEGORIES: EnvCategory[] = [
     ],
   },
   {
-    id: 'momentum',
-    label: 'Momentum Gate',
-    description: 'Validates buy momentum before purchasing (Pipeline Stage 4)',
-    vars: [
-      {
-        name: 'MOMENTUM_GATE_ENABLED',
-        label: 'Momentum Gate Enabled',
-        type: 'boolean',
-        defaultValue: 'true',
-        description: 'Enable momentum validation before buying',
-      },
-      {
-        name: 'MOMENTUM_INITIAL_DELAY_SECONDS',
-        label: 'Initial Delay (s)',
-        type: 'number',
-        defaultValue: '0.1',
-        description: 'Wait before first momentum check',
-      },
-      {
-        name: 'MOMENTUM_MIN_TOTAL_BUYS',
-        label: 'Min Total Buys',
-        type: 'number',
-        defaultValue: '10',
-        description: 'Minimum buy transactions required',
-      },
-      {
-        name: 'MOMENTUM_RECHECK_INTERVAL_SECONDS',
-        label: 'Recheck Interval (s)',
-        type: 'number',
-        defaultValue: '0.1',
-        description: 'Wait between recheck attempts',
-      },
-      {
-        name: 'MOMENTUM_MAX_CHECKS',
-        label: 'Max Checks',
-        type: 'number',
-        defaultValue: '5',
-        description: 'Max recheck attempts before rejecting',
-      },
-    ],
-  },
-  {
     id: 'sniper_gate',
     label: 'Sniper Gate',
-    description: 'Identifies sniper bots and waits for them to exit before buying (Pipeline Stage 4 - alternative to Momentum Gate)',
+    description: 'Identifies sniper bots and waits for them to exit before buying (Pipeline Stage 4)',
     vars: [
       {
         name: 'SNIPER_GATE_ENABLED',
         label: 'Sniper Gate Enabled',
         type: 'boolean',
-        defaultValue: 'false',
-        description: 'Enable sniper gate (replaces momentum gate when enabled)',
+        defaultValue: 'true',
+        description: 'Enable sniper gate for bot exit monitoring',
       },
       {
         name: 'SNIPER_GATE_INITIAL_DELAY_SECONDS',
