@@ -48,6 +48,9 @@ export interface PipelineStatsSnapshot {
   /** Whether the sniper gate is active */
   sniperGateActive: boolean;
 
+  /** Tokens that bypassed research score gate due to no model available */
+  researchScoreNoModelSkips: number;
+
   /** Top rejection reasons with counts */
   topRejectionReasons: Array<{ reason: string; count: number }>;
 
@@ -132,6 +135,9 @@ export class PipelineStats {
   /** Whether sniper gate is active */
   private sniperGateActive: boolean = false;
 
+  /** Tokens that bypassed research score gate due to no model */
+  private researchScoreNoModelSkips: number = 0;
+
   /** Rejection reason counters */
   private rejectionReasons: Map<string, number>;
 
@@ -184,6 +190,12 @@ export class PipelineStats {
     }
 
     const rs = result.context.researchScore;
+
+    // Detect graceful degradation: token reached Stage 5 (has sniperGate data or was not
+    // rejected before research-score-gate) but has no researchScore data — model was unavailable
+    if (result.success && !rs && sg) {
+      this.researchScoreNoModelSkips++;
+    }
 
     const recentToken: RecentToken = {
       mint: detection.mint.toString(),
@@ -516,11 +528,19 @@ export class PipelineStats {
         researchScoreGate: researchScoreGateArray,
       },
       sniperGateActive: this.sniperGateActive,
+      researchScoreNoModelSkips: this.researchScoreNoModelSkips,
       topRejectionReasons,
       avgPipelineDurationMs,
       totalPipelineDurationMs: this.totalPipelineDurationMs,
       recentTokens: this.recentTokens,
     };
+  }
+
+  /**
+   * Record that a token bypassed the research score gate due to no model
+   */
+  recordResearchScoreNoModelSkip(): void {
+    this.researchScoreNoModelSkips++;
   }
 
   /**
@@ -537,6 +557,7 @@ export class PipelineStats {
     this.rejectionReasons.clear();
 
     this.sniperGateActive = false;
+    this.researchScoreNoModelSkips = 0;
 
     // Reset all gate counters
     for (const gate of CHEAP_GATES) {
