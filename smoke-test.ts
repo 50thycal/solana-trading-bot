@@ -713,6 +713,14 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
         minOrganicBuyers: config.sniperGateMinOrganicBuyers,
         logOnly: config.sniperGateLogOnly,
       },
+      researchScoreGate: {
+        enabled: config.researchScoreGateEnabled,
+        researchBotUrl: config.researchBotUrl,
+        scoreThreshold: config.researchScoreThreshold,
+        checkpoint: config.researchScoreCheckpoint,
+        logOnly: config.researchScoreLogOnly,
+        modelRefreshIntervalMs: config.researchScoreModelRefreshInterval,
+      },
       verbose: true,
     });
 

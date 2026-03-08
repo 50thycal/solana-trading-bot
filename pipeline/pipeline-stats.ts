@@ -6,7 +6,7 @@
  */
 
 import { PipelineResult } from './pipeline';
-import { SniperGateData } from './types';
+import { SniperGateData, ResearchScoreGateData } from './types';
 import { logger } from '../helpers';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -42,6 +42,7 @@ export interface PipelineStatsSnapshot {
     cheapGates: GateStats[];
     deepFilters: GateStats[];
     sniperGate: GateStats[];
+    researchScoreGate: GateStats[];
   };
 
   /** Whether the sniper gate is active */
@@ -75,6 +76,9 @@ export interface RecentToken {
   organicBuyerCount?: number;
   sniperGateChecks?: number;
   sniperGateWaitMs?: number;
+  /** Research score gate fields */
+  researchScore?: number;
+  researchSignal?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -103,6 +107,11 @@ const SNIPER_GATE = [
   { name: 'sniper', displayName: 'Sniper Gate' },
 ];
 
+/** Research score gate (Stage 5) */
+const RESEARCH_SCORE_GATE = [
+  { name: 'research-score', displayName: 'Research Score Gate' },
+];
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // PIPELINE STATS CLASS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -119,6 +128,7 @@ export class PipelineStats {
   private cheapGateStats: Map<string, { passed: number; failed: number }>;
   private deepFilterStats: Map<string, { passed: number; failed: number }>;
   private sniperGateStats: Map<string, { passed: number; failed: number }>;
+  private researchScoreGateStats: Map<string, { passed: number; failed: number }>;
   /** Whether sniper gate is active */
   private sniperGateActive: boolean = false;
 
@@ -137,6 +147,7 @@ export class PipelineStats {
     this.cheapGateStats = new Map();
     this.deepFilterStats = new Map();
     this.sniperGateStats = new Map();
+    this.researchScoreGateStats = new Map();
     this.rejectionReasons = new Map();
 
     // Initialize all gates with zero counts
@@ -148,6 +159,9 @@ export class PipelineStats {
     }
     for (const gate of SNIPER_GATE) {
       this.sniperGateStats.set(gate.name, { passed: 0, failed: 0 });
+    }
+    for (const gate of RESEARCH_SCORE_GATE) {
+      this.researchScoreGateStats.set(gate.name, { passed: 0, failed: 0 });
     }
 
     logger.info('[pipeline-stats] Initialized');
@@ -169,6 +183,8 @@ export class PipelineStats {
       this.sniperGateActive = true;
     }
 
+    const rs = result.context.researchScore;
+
     const recentToken: RecentToken = {
       mint: detection.mint.toString(),
       name: detection.name,
@@ -183,6 +199,8 @@ export class PipelineStats {
       organicBuyerCount: sg?.organicBuyerCount,
       sniperGateChecks: sg?.checksPerformed,
       sniperGateWaitMs: sg?.totalWaitMs,
+      researchScore: rs?.score,
+      researchSignal: rs?.signal,
     };
 
     // Add to recent tokens (keep last MAX_RECENT_TOKENS)
@@ -221,6 +239,10 @@ export class PipelineStats {
     // Stage 4: sniper gate
     const sniperStats = this.sniperGateStats.get('sniper')!;
     sniperStats.passed++;
+
+    // Stage 5: research score gate
+    const researchStats = this.researchScoreGateStats.get('research-score')!;
+    researchStats.passed++;
   }
 
   /**
@@ -257,6 +279,23 @@ export class PipelineStats {
       // Sniper gate failed
       const stats = this.sniperGateStats.get('sniper')!;
       stats.failed++;
+    } else if (rejectedAt === 'research-score-gate') {
+      // All cheap gates passed
+      for (const gate of CHEAP_GATES) {
+        const stats = this.cheapGateStats.get(gate.name)!;
+        stats.passed++;
+      }
+      // All deep filters passed
+      for (const filter of DEEP_FILTERS) {
+        const stats = this.deepFilterStats.get(filter.name)!;
+        stats.passed++;
+      }
+      // Sniper gate passed
+      const sniperStats = this.sniperGateStats.get('sniper')!;
+      sniperStats.passed++;
+      // Research score gate failed
+      const rsStats = this.researchScoreGateStats.get('research-score')!;
+      rsStats.failed++;
     }
   }
 
@@ -453,6 +492,17 @@ export class PipelineStats {
     const buyRate =
       this.tokensDetected > 0 ? (this.tokensBought / this.tokensDetected) * 100 : 0;
 
+    const researchScoreGateArray: GateStats[] = RESEARCH_SCORE_GATE.map((gate) => {
+      const stats = this.researchScoreGateStats.get(gate.name)!;
+      return {
+        name: gate.name,
+        displayName: gate.displayName,
+        passed: stats.passed,
+        failed: stats.failed,
+        totalChecked: stats.passed + stats.failed,
+      };
+    });
+
     return {
       startedAt: this.startedAt,
       tokensDetected: this.tokensDetected,
@@ -463,6 +513,7 @@ export class PipelineStats {
         cheapGates: cheapGatesArray,
         deepFilters: deepFiltersArray,
         sniperGate: sniperGateArray,
+        researchScoreGate: researchScoreGateArray,
       },
       sniperGateActive: this.sniperGateActive,
       topRejectionReasons,
@@ -496,6 +547,9 @@ export class PipelineStats {
     }
     for (const gate of SNIPER_GATE) {
       this.sniperGateStats.set(gate.name, { passed: 0, failed: 0 });
+    }
+    for (const gate of RESEARCH_SCORE_GATE) {
+      this.researchScoreGateStats.set(gate.name, { passed: 0, failed: 0 });
     }
 
     logger.info('[pipeline-stats] Stats reset');

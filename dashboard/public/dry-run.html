@@ -72,7 +72,12 @@
         </div>
         <div class="funnel-arrow">&rarr;</div>
         <div class="funnel-stage" id="funnel-momentum-gate">
-          <div class="funnel-label" id="funnel-gate4-label">Momentum Gate</div>
+          <div class="funnel-label" id="funnel-gate4-label">Sniper Gate</div>
+          <div class="funnel-value">0</div>
+        </div>
+        <div class="funnel-arrow">&rarr;</div>
+        <div class="funnel-stage" id="funnel-research-score-gate">
+          <div class="funnel-label">Research Score</div>
           <div class="funnel-value">0</div>
         </div>
         <div class="funnel-arrow">&rarr;</div>
@@ -130,10 +135,20 @@
 
         <section class="panel gate-stats-panel" id="gate4-panel-section">
           <div class="panel-header">
-            <h2 id="gate4-panel-title">Momentum Gate</h2>
-            <span class="panel-subtitle" id="gate4-panel-subtitle">Buy activity validation</span>
+            <h2 id="gate4-panel-title">Sniper Gate</h2>
+            <span class="panel-subtitle" id="gate4-panel-subtitle">Bot exit + organic buyer detection</span>
           </div>
           <div class="gate-stats-list" id="momentum-gate-stats">
+            <div class="loading">Loading stats...</div>
+          </div>
+        </section>
+
+        <section class="panel gate-stats-panel">
+          <div class="panel-header">
+            <h2>Research Score Gate</h2>
+            <span class="panel-subtitle">ML model scoring (Stage 5)</span>
+          </div>
+          <div class="gate-stats-list" id="research-score-gate-stats">
             <div class="loading">Loading stats...</div>
           </div>
         </section>

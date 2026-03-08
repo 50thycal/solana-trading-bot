@@ -492,6 +492,14 @@ const runListener = async () => {
       minOrganicBuyers: config.sniperGateMinOrganicBuyers,
       logOnly: config.sniperGateLogOnly,
     },
+    researchScoreGate: {
+      enabled: config.researchScoreGateEnabled,
+      researchBotUrl: config.researchBotUrl,
+      scoreThreshold: config.researchScoreThreshold,
+      checkpoint: config.researchScoreCheckpoint,
+      logOnly: config.researchScoreLogOnly,
+      modelRefreshIntervalMs: config.researchScoreModelRefreshInterval,
+    },
     verbose: LOG_LEVEL === 'debug' || LOG_LEVEL === 'trace',
   });
   logger.info('[pipeline] pump.fun processing pipeline initialized');

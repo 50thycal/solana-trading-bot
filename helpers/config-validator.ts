@@ -97,6 +97,13 @@ export interface ValidatedConfig {
   hardTakeProfitPercent: number;
   costAdjustedExits: boolean;
 
+  // Research Score Gate (Pipeline Stage 5)
+  researchScoreGateEnabled: boolean;
+  researchScoreThreshold: number;
+  researchScoreCheckpoint: number;
+  researchScoreLogOnly: boolean;
+  researchScoreModelRefreshInterval: number;
+
   // Smoke Test (applies when botMode='smoke')
   smokeTestTimeoutMs: number;
   smokeTestRuns: number;
@@ -434,6 +441,29 @@ export function validateConfig(): ValidatedConfig {
 
   const sniperGateLogOnly = requireBoolean('SNIPER_GATE_LOG_ONLY', false);
 
+  // === RESEARCH SCORE GATE (Pipeline Stage 5) ===
+  // Applies the research bot's scoring model after the sniper gate.
+  // Requires RESEARCH_BOT_URL to be set for model fetching.
+
+  const researchScoreGateEnabled = requireBoolean('RESEARCH_SCORE_GATE_ENABLED', true);
+
+  const researchScoreThreshold = requireNumber('RESEARCH_SCORE_THRESHOLD', 50);
+  if (researchScoreThreshold < 0 || researchScoreThreshold > 100) {
+    errors.push({ variable: 'RESEARCH_SCORE_THRESHOLD', message: 'must be 0-100' });
+  }
+
+  const researchScoreCheckpoint = requireNumber('RESEARCH_SCORE_CHECKPOINT', 30);
+  if (researchScoreCheckpoint < 1) {
+    errors.push({ variable: 'RESEARCH_SCORE_CHECKPOINT', message: 'must be >= 1' });
+  }
+
+  const researchScoreLogOnly = requireBoolean('RESEARCH_SCORE_LOG_ONLY', false);
+
+  const researchScoreModelRefreshInterval = requireNumber('RESEARCH_SCORE_MODEL_REFRESH_INTERVAL', 300000);
+  if (researchScoreModelRefreshInterval < 0) {
+    errors.push({ variable: 'RESEARCH_SCORE_MODEL_REFRESH_INTERVAL', message: 'cannot be negative' });
+  }
+
   // === TRAILING STOP LOSS ===
   const trailingStopEnabled = requireBoolean('TRAILING_STOP_ENABLED', false);
 
@@ -608,6 +638,11 @@ export function validateConfig(): ValidatedConfig {
     sniperGateMinBotExitPercent,
     sniperGateMinOrganicBuyers,
     sniperGateLogOnly,
+    researchScoreGateEnabled,
+    researchScoreThreshold,
+    researchScoreCheckpoint,
+    researchScoreLogOnly,
+    researchScoreModelRefreshInterval,
     trailingStopEnabled,
     trailingStopActivationPercent,
     trailingStopDistancePercent,

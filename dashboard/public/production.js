@@ -179,6 +179,11 @@ async function updatePipelineStats() {
   setFunnelValue('funnel-cheap-gates', lastCG ? lastCG.passed : 0);
   setFunnelValue('funnel-deep-filters', lastDF ? lastDF.passed : 0);
   setFunnelValue('funnel-momentum-gate', lastSG ? lastSG.passed : 0);
+
+  const researchScoreGate = data.gateStats?.researchScoreGate || [];
+  const lastRS = researchScoreGate[researchScoreGate.length - 1];
+  setFunnelValue('funnel-research-score-gate', lastRS ? lastRS.passed : 0);
+
   setFunnelValue('funnel-bought', bought);
 
   // Gate stats

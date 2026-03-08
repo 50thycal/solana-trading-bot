@@ -38,6 +38,8 @@ const elements = {
   cheapGatesStats: document.getElementById('cheap-gates-stats'),
   deepFiltersStats: document.getElementById('deep-filters-stats'),
   sniperGateStats: document.getElementById('momentum-gate-stats'),
+  researchScoreGateStats: document.getElementById('research-score-gate-stats'),
+  funnelResearchScoreGate: document.getElementById('funnel-research-score-gate'),
   gate4FunnelLabel: document.getElementById('funnel-gate4-label'),
   gate4PanelTitle: document.getElementById('gate4-panel-title'),
   gate4PanelSubtitle: document.getElementById('gate4-panel-subtitle'),
@@ -174,6 +176,8 @@ function updateFunnel(data) {
 
   // Gate 4: sniper gate
   const gate4Stats = data.gateStats?.sniperGate || [];
+  // Gate 5: research score gate
+  const researchScoreGateStats = data.gateStats?.researchScoreGate || [];
 
   const lastCheapGate = cheapGates[cheapGates.length - 1];
   const passedCheapGates = lastCheapGate ? lastCheapGate.passed : 0;
@@ -183,6 +187,9 @@ function updateFunnel(data) {
 
   const lastGate4 = gate4Stats[gate4Stats.length - 1];
   const passedGate4 = lastGate4 ? lastGate4.passed : 0;
+
+  const lastResearchScore = researchScoreGateStats[researchScoreGateStats.length - 1];
+  const passedResearchScore = lastResearchScore ? lastResearchScore.passed : 0;
 
   // Update funnel labels
   if (elements.gate4FunnelLabel) {
@@ -194,6 +201,9 @@ function updateFunnel(data) {
   elements.funnelCheapGates.querySelector('.funnel-value').textContent = passedCheapGates;
   elements.funnelDeepFilters.querySelector('.funnel-value').textContent = passedDeepFilters;
   elements.funnelSniperGate.querySelector('.funnel-value').textContent = passedGate4;
+  if (elements.funnelResearchScoreGate) {
+    elements.funnelResearchScoreGate.querySelector('.funnel-value').textContent = passedResearchScore;
+  }
   elements.funnelBought.querySelector('.funnel-value').textContent = bought;
 }
 
@@ -221,6 +231,15 @@ function updateGateStats(gateStats, sniperGateActive) {
     elements.sniperGateStats.innerHTML = gateStats.sniperGate.map(renderGateStat).join('');
   } else {
     elements.sniperGateStats.innerHTML = '<div class="empty-state">No data yet</div>';
+  }
+
+  // Gate 5: research score gate
+  if (elements.researchScoreGateStats) {
+    if (gateStats.researchScoreGate && gateStats.researchScoreGate.length > 0) {
+      elements.researchScoreGateStats.innerHTML = gateStats.researchScoreGate.map(renderGateStat).join('');
+    } else {
+      elements.researchScoreGateStats.innerHTML = '<div class="empty-state">No data yet</div>';
+    }
   }
 }
 
@@ -733,6 +752,22 @@ async function showTokenDetail(mint) {
     </div>
 
     ${sniperSummaryHtml}
+
+    ${token.researchScore !== undefined ? `
+    <div class="modal-section">
+      <h4>Research Score Gate</h4>
+      <div class="sniper-stats-grid">
+        <div class="sniper-stat">
+          <div class="sniper-stat-label">Score</div>
+          <div class="sniper-stat-value">${token.researchScore.toFixed(3)}</div>
+        </div>
+        <div class="sniper-stat">
+          <div class="sniper-stat-label">Signal</div>
+          <div class="sniper-stat-value">${token.researchSignal || '--'}</div>
+        </div>
+      </div>
+    </div>
+    ` : ''}
 
     <div class="modal-section">
       <h4>External Links</h4>
