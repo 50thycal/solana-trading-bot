@@ -93,7 +93,7 @@
       <div class="funnel-arrow">&rarr;</div>
       <div class="funnel-step"><div class="num" id="f-deep">-</div><div class="lbl">Deep Filters</div></div>
       <div class="funnel-arrow">&rarr;</div>
-      <div class="funnel-step"><div class="num" id="f-momentum">-</div><div class="lbl">Momentum</div></div>
+      <div class="funnel-step"><div class="num" id="f-sniper">-</div><div class="lbl">Sniper Gate</div></div>
       <div class="funnel-arrow">&rarr;</div>
       <div class="funnel-step"><div class="num" id="f-bought">-</div><div class="lbl">Bought</div></div>
     </div>
@@ -218,8 +218,8 @@
           const deepPassed = stats.gateStats.deepFilters.length > 0 ? stats.gateStats.deepFilters[stats.gateStats.deepFilters.length - 1].passed : 0;
           document.getElementById('f-deep').textContent = deepPassed;
 
-          const momPassed = stats.gateStats.momentumGate.length > 0 ? stats.gateStats.momentumGate[0].passed : 0;
-          document.getElementById('f-momentum').textContent = momPassed;
+          const sniperPassed = stats.gateStats.sniperGate && stats.gateStats.sniperGate.length > 0 ? stats.gateStats.sniperGate[0].passed : 0;
+          document.getElementById('f-sniper').textContent = sniperPassed;
         }
       }
 

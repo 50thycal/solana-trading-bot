@@ -10,7 +10,7 @@ export * from './types';
 // Stages
 export * from './cheap-gates';
 export * from './deep-filters';
-export * from './momentum-gate';
+export * from './research-score-gate';
 
 // Pipeline orchestrator
 export * from './pipeline';

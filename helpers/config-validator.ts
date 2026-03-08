@@ -80,14 +80,7 @@ export interface ValidatedConfig {
   pumpfunMinScoreRequired: number;
   pumpfunDetectionCooldownMs: number;
 
-  // Momentum Gate
-  momentumGateEnabled: boolean;
-  momentumInitialDelayMs: number;
-  momentumMinTotalBuys: number;
-  momentumRecheckIntervalMs: number;
-  momentumMaxChecks: number;
-
-  // Sniper Gate (Pipeline Stage 4 - Alternative to Momentum Gate)
+  // Sniper Gate (Pipeline Stage 4)
   sniperGateEnabled: boolean;
   sniperGateInitialDelayMs: number;
   sniperGateRecheckIntervalMs: number;
@@ -103,6 +96,13 @@ export interface ValidatedConfig {
   trailingStopDistancePercent: number;
   hardTakeProfitPercent: number;
   costAdjustedExits: boolean;
+
+  // Research Score Gate (Pipeline Stage 5)
+  researchScoreGateEnabled: boolean;
+  researchScoreThreshold: number;
+  researchScoreCheckpoint: number;
+  researchScoreLogOnly: boolean;
+  researchScoreModelRefreshInterval: number;
 
   // Smoke Test (applies when botMode='smoke')
   smokeTestTimeoutMs: number;
@@ -401,38 +401,11 @@ export function validateConfig(): ValidatedConfig {
   }
   const pumpfunDetectionCooldownMs = Math.round(pumpfunDetectionCooldownSeconds * 1000);
 
-  // === MOMENTUM GATE (Pipeline Stage 4) ===
-  // Validates buy momentum before allowing purchase
-
-  const momentumGateEnabled = requireBoolean('MOMENTUM_GATE_ENABLED', true);
-
-  const momentumInitialDelaySeconds = requireNumber('MOMENTUM_INITIAL_DELAY_SECONDS', 0.1);
-  if (momentumInitialDelaySeconds < 0) {
-    errors.push({ variable: 'MOMENTUM_INITIAL_DELAY_SECONDS', message: 'MOMENTUM_INITIAL_DELAY_SECONDS cannot be negative' });
-  }
-  const momentumInitialDelayMs = Math.round(momentumInitialDelaySeconds * 1000);
-
-  const momentumMinTotalBuys = requireNumber('MOMENTUM_MIN_TOTAL_BUYS', 10);
-  if (momentumMinTotalBuys < 1) {
-    errors.push({ variable: 'MOMENTUM_MIN_TOTAL_BUYS', message: 'MOMENTUM_MIN_TOTAL_BUYS must be at least 1' });
-  }
-
-  const momentumRecheckIntervalSeconds = requireNumber('MOMENTUM_RECHECK_INTERVAL_SECONDS', 0.1);
-  if (momentumRecheckIntervalSeconds < 0) {
-    errors.push({ variable: 'MOMENTUM_RECHECK_INTERVAL_SECONDS', message: 'MOMENTUM_RECHECK_INTERVAL_SECONDS cannot be negative' });
-  }
-  const momentumRecheckIntervalMs = Math.round(momentumRecheckIntervalSeconds * 1000);
-
-  const momentumMaxChecks = requireNumber('MOMENTUM_MAX_CHECKS', 5);
-  if (momentumMaxChecks < 1) {
-    errors.push({ variable: 'MOMENTUM_MAX_CHECKS', message: 'MOMENTUM_MAX_CHECKS must be at least 1' });
-  }
-
-  // === SNIPER GATE (Pipeline Stage 4 - Alternative to Momentum Gate) ===
+  // === SNIPER GATE (Pipeline Stage 4) ===
   // Identifies sniper bot wallets by slot delta, monitors for their exits,
-  // then evaluates organic demand. When enabled, replaces the momentum gate.
+  // then evaluates organic demand.
 
-  const sniperGateEnabled = requireBoolean('SNIPER_GATE_ENABLED', false);
+  const sniperGateEnabled = requireBoolean('SNIPER_GATE_ENABLED', true);
 
   const sniperGateInitialDelaySeconds = requireNumber('SNIPER_GATE_INITIAL_DELAY_SECONDS', 0.5);
   if (sniperGateInitialDelaySeconds < 0) {
@@ -467,6 +440,29 @@ export function validateConfig(): ValidatedConfig {
   }
 
   const sniperGateLogOnly = requireBoolean('SNIPER_GATE_LOG_ONLY', false);
+
+  // === RESEARCH SCORE GATE (Pipeline Stage 5) ===
+  // Applies the research bot's scoring model after the sniper gate.
+  // Requires RESEARCH_BOT_URL to be set for model fetching.
+
+  const researchScoreGateEnabled = requireBoolean('RESEARCH_SCORE_GATE_ENABLED', true);
+
+  const researchScoreThreshold = requireNumber('RESEARCH_SCORE_THRESHOLD', 50);
+  if (researchScoreThreshold < 0 || researchScoreThreshold > 100) {
+    errors.push({ variable: 'RESEARCH_SCORE_THRESHOLD', message: 'must be 0-100' });
+  }
+
+  const researchScoreCheckpoint = requireNumber('RESEARCH_SCORE_CHECKPOINT', 30);
+  if (researchScoreCheckpoint < 1) {
+    errors.push({ variable: 'RESEARCH_SCORE_CHECKPOINT', message: 'must be >= 1' });
+  }
+
+  const researchScoreLogOnly = requireBoolean('RESEARCH_SCORE_LOG_ONLY', false);
+
+  const researchScoreModelRefreshInterval = requireNumber('RESEARCH_SCORE_MODEL_REFRESH_INTERVAL', 300000);
+  if (researchScoreModelRefreshInterval < 0) {
+    errors.push({ variable: 'RESEARCH_SCORE_MODEL_REFRESH_INTERVAL', message: 'cannot be negative' });
+  }
 
   // === TRAILING STOP LOSS ===
   const trailingStopEnabled = requireBoolean('TRAILING_STOP_ENABLED', false);
@@ -540,14 +536,6 @@ export function validateConfig(): ValidatedConfig {
 
   if (rpcWebsocketEndpoint && !rpcWebsocketEndpoint.startsWith('ws://') && !rpcWebsocketEndpoint.startsWith('wss://')) {
     errors.push({ variable: 'RPC_WEBSOCKET_ENDPOINT', message: 'RPC_WEBSOCKET_ENDPOINT must be a valid WebSocket URL (ws:// or wss://)' });
-  }
-
-  // Conflict warnings
-  if (sniperGateEnabled && momentumGateEnabled) {
-    logger.warn(
-      'Both SNIPER_GATE and MOMENTUM_GATE are enabled. '
-      + 'Sniper gate takes priority at Stage 4.',
-    );
   }
 
   if (trailingStopEnabled && takeProfit > 0) {
@@ -642,11 +630,6 @@ export function validateConfig(): ValidatedConfig {
     pumpfunEnableMaxSolFilter,
     pumpfunMinScoreRequired,
     pumpfunDetectionCooldownMs,
-    momentumGateEnabled,
-    momentumInitialDelayMs,
-    momentumMinTotalBuys,
-    momentumRecheckIntervalMs,
-    momentumMaxChecks,
     sniperGateEnabled,
     sniperGateInitialDelayMs,
     sniperGateRecheckIntervalMs,
@@ -655,6 +638,11 @@ export function validateConfig(): ValidatedConfig {
     sniperGateMinBotExitPercent,
     sniperGateMinOrganicBuyers,
     sniperGateLogOnly,
+    researchScoreGateEnabled,
+    researchScoreThreshold,
+    researchScoreCheckpoint,
+    researchScoreLogOnly,
+    researchScoreModelRefreshInterval,
     trailingStopEnabled,
     trailingStopActivationPercent,
     trailingStopDistancePercent,

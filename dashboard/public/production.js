@@ -169,16 +169,21 @@ async function updatePipelineStats() {
   const bought = data.tokensBought || 0;
   const cheapGates = data.gateStats?.cheapGates || [];
   const deepFilters = data.gateStats?.deepFilters || [];
-  const momentumGate = data.gateStats?.momentumGate || [];
+  const sniperGate = data.gateStats?.sniperGate || [];
 
   const lastCG = cheapGates[cheapGates.length - 1];
   const lastDF = deepFilters[deepFilters.length - 1];
-  const lastMG = momentumGate[momentumGate.length - 1];
+  const lastSG = sniperGate[sniperGate.length - 1];
 
   setFunnelValue('funnel-detected', detected);
   setFunnelValue('funnel-cheap-gates', lastCG ? lastCG.passed : 0);
   setFunnelValue('funnel-deep-filters', lastDF ? lastDF.passed : 0);
-  setFunnelValue('funnel-momentum-gate', lastMG ? lastMG.passed : 0);
+  setFunnelValue('funnel-momentum-gate', lastSG ? lastSG.passed : 0);
+
+  const researchScoreGate = data.gateStats?.researchScoreGate || [];
+  const lastRS = researchScoreGate[researchScoreGate.length - 1];
+  setFunnelValue('funnel-research-score-gate', lastRS ? lastRS.passed : 0);
+
   setFunnelValue('funnel-bought', bought);
 
   // Gate stats

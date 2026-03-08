@@ -432,7 +432,6 @@ const runListener = async () => {
       stopLossPct: config.stopLoss,
       maxHoldDurationS: Math.round(config.maxHoldDurationMs / 1000),
       sniperGateEnabled: config.sniperGateEnabled,
-      momentumGateEnabled: config.momentumGateEnabled,
       trailingStopEnabled: config.trailingStopEnabled,
     });
 
@@ -483,13 +482,6 @@ const runListener = async () => {
       skipBondingCurveCheck: false,
       skipFilters: false,
     },
-    momentumGate: {
-      enabled: config.momentumGateEnabled,
-      initialDelayMs: config.momentumInitialDelayMs,
-      minTotalBuys: config.momentumMinTotalBuys,
-      recheckIntervalMs: config.momentumRecheckIntervalMs,
-      maxChecks: config.momentumMaxChecks,
-    },
     sniperGate: {
       enabled: config.sniperGateEnabled,
       initialDelayMs: config.sniperGateInitialDelayMs,
@@ -499,6 +491,14 @@ const runListener = async () => {
       minBotExitPercent: config.sniperGateMinBotExitPercent,
       minOrganicBuyers: config.sniperGateMinOrganicBuyers,
       logOnly: config.sniperGateLogOnly,
+    },
+    researchScoreGate: {
+      enabled: config.researchScoreGateEnabled,
+      researchBotUrl: config.researchBotUrl,
+      scoreThreshold: config.researchScoreThreshold,
+      checkpoint: config.researchScoreCheckpoint,
+      logOnly: config.researchScoreLogOnly,
+      modelRefreshIntervalMs: config.researchScoreModelRefreshInterval,
     },
     verbose: LOG_LEVEL === 'debug' || LOG_LEVEL === 'trace',
   });

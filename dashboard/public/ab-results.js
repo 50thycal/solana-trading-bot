@@ -363,9 +363,8 @@ function renderSessionDetail(report) {
   // Find which params differ
   const configKeys = [
     'takeProfit', 'stopLoss', 'maxHoldDurationMs', 'priceCheckIntervalMs',
-    'momentumMinTotalBuys', 'pumpfunMinSolInCurve', 'pumpfunMaxSolInCurve',
-    'maxTokenAgeSeconds', 'momentumInitialDelayMs', 'momentumRecheckIntervalMs',
-    'momentumMaxChecks', 'buySlippage', 'sellSlippage', 'maxTradesPerHour', 'quoteAmount'
+    'pumpfunMinSolInCurve', 'pumpfunMaxSolInCurve',
+    'maxTokenAgeSeconds', 'buySlippage', 'sellSlippage', 'maxTradesPerHour', 'quoteAmount'
   ];
 
   function configRow(label, valA, valB) {
@@ -424,13 +423,9 @@ function renderSessionDetail(report) {
           ${configRow('Stop Loss', cA.stopLoss + '%', cB.stopLoss + '%')}
           ${configRow('Max Hold Duration', (cA.maxHoldDurationMs / 60000).toFixed(4) + ' min', (cB.maxHoldDurationMs / 60000).toFixed(4) + ' min')}
           ${configRow('Price Check Interval', (cA.priceCheckIntervalMs / 60000).toFixed(4) + ' min', (cB.priceCheckIntervalMs / 60000).toFixed(4) + ' min')}
-          ${configRow('Min Buys (Momentum)', cA.momentumMinTotalBuys, cB.momentumMinTotalBuys)}
           ${configRow('Min SOL in Curve', cA.pumpfunMinSolInCurve, cB.pumpfunMinSolInCurve)}
           ${configRow('Max SOL in Curve', cA.pumpfunMaxSolInCurve, cB.pumpfunMaxSolInCurve)}
           ${configRow('Max Token Age', cA.maxTokenAgeSeconds + 's', cB.maxTokenAgeSeconds + 's')}
-          ${configRow('Mom. Initial Delay', (cA.momentumInitialDelayMs / 60000).toFixed(4) + ' min', (cB.momentumInitialDelayMs / 60000).toFixed(4) + ' min')}
-          ${configRow('Mom. Recheck Interval', (cA.momentumRecheckIntervalMs / 60000).toFixed(4) + ' min', (cB.momentumRecheckIntervalMs / 60000).toFixed(4) + ' min')}
-          ${configRow('Mom. Max Checks', cA.momentumMaxChecks, cB.momentumMaxChecks)}
           ${configRow('Buy Slippage', cA.buySlippage + '%', cB.buySlippage + '%')}
           ${configRow('Sell Slippage', cA.sellSlippage + '%', cB.sellSlippage + '%')}
           ${configRow('Quote Amount', cA.quoteAmount + ' SOL', cB.quoteAmount + ' SOL')}
@@ -553,7 +548,6 @@ function buildSessionReportText(report) {
     ['Sell Slippage', `${cA.sellSlippage}%`, `${cB.sellSlippage}%`],
     ['Min SOL in Curve', cA.pumpfunMinSolInCurve, cB.pumpfunMinSolInCurve],
     ['Max SOL in Curve', cA.pumpfunMaxSolInCurve, cB.pumpfunMaxSolInCurve],
-    ['Momentum Min Buys', cA.momentumMinTotalBuys, cB.momentumMinTotalBuys],
     ['Max Trades/Hour', cA.maxTradesPerHour, cB.maxTradesPerHour],
   ];
   lines.push(`${'Param'.padEnd(25)} ${'Config A'.padEnd(15)} Config B`);

@@ -2106,7 +2106,6 @@ export class DashboardServer {
       lines.push(`Config: TP=${e.takeProfitPct}% SL=${e.stopLossPct}% HOLD=${e.maxHoldDurationS}s AMOUNT=${e.quoteAmountSol} SOL`);
       const gates: string[] = [];
       if (e.sniperGateEnabled) gates.push('sniper_gate');
-      if (e.momentumGateEnabled) gates.push('momentum_gate');
       if (e.trailingStopEnabled) gates.push('trailing_stop');
       if (gates.length) lines.push(`Gates: ${gates.join(', ')}`);
       lines.push(`Trades: ${e.totalTrades} | Wins: ${e.totalWins} | Losses: ${e.totalLosses} | Detections: ${e.totalDetections}`);

@@ -139,36 +139,6 @@ export interface DeepFiltersData {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MOMENTUM GATE DATA
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Data produced by momentum gate stage
- *
- * NOTE: The momentum gate is not actively used in production. The sniper gate
- * is the current Stage 4 gate. This type is retained for the fallback path.
- *
- * The momentum gate validates buy activity before allowing purchase.
- * It uses retry-based polling to check if a token has sufficient buys.
- */
-export interface MomentumGateData {
-  /** Number of buy transactions detected */
-  buyCount: number;
-
-  /** Number of sell transactions detected (tracked for future use) */
-  sellCount: number;
-
-  /** Number of checks performed before pass/fail */
-  checksPerformed: number;
-
-  /** Total time spent in momentum gate (ms) */
-  totalWaitMs: number;
-
-  /** When the momentum check started */
-  checkStartedAt: number;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // SNIPER GATE CHECK RESULT
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -250,6 +220,82 @@ export interface SniperGateData {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// RESEARCH SCORE GATE TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Token feature vector — MUST match research bot's TokenFeatureVector exactly.
+ * The model rules reference these field names directly.
+ */
+export interface TokenFeatureVector {
+  mint: string;
+  checkpointSeconds: number;
+
+  // Raw features
+  priceSol: number;
+  priceChangeFromInitial: number;
+  realSolReserves: number;
+  totalTxCount: number;
+  buyCount: number;
+  sellCount: number;
+  uniqueBuyers: number;
+  uniqueSellers: number;
+  buyVelocity: number;
+  sellRatio: number;
+  buyerTxRatio: number;
+  marketCapSol: number;
+
+  // Derived momentum features
+  priceAcceleration: number;
+  buyAcceleration: number;
+  txBurst: number;
+  holderConcentration: number;
+}
+
+/**
+ * A single scoring rule from the research bot's model.
+ * MUST match solana_research_bot/src/analysis/scoring-model.ts
+ */
+export interface ScoringRule {
+  featureName: string;
+  weight: number;
+  direction: 'above' | 'below';
+  threshold: number;
+  min: number;
+  max: number;
+}
+
+/**
+ * The complete scoring model fetched from the research bot.
+ */
+export interface ScoringModel {
+  checkpointSeconds: number;
+  rules: ScoringRule[];
+  sampleCount: number;
+  baseRate2x: number;
+}
+
+/**
+ * Data produced by the research score gate stage.
+ */
+export interface ResearchScoreGateData {
+  /** Computed score 0-100 */
+  score: number;
+  /** Signal classification */
+  signal: 'strong_buy' | 'buy' | 'neutral' | 'avoid';
+  /** Threshold used for pass/fail */
+  scoreThreshold: number;
+  /** How many tokens the model was trained on */
+  modelSampleCount: number;
+  /** Base 2x hit rate before filtering */
+  modelBaseRate2x: number;
+  /** The computed features (for logging/debugging) */
+  features: TokenFeatureVector;
+  /** Per-feature score breakdown */
+  featureScores: Array<{ name: string; score: number; raw: number }>;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // PIPELINE CONTEXT
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -268,11 +314,11 @@ export interface PipelineContext {
   /** Data from deep filters (if passed) */
   deepFilters?: DeepFiltersData;
 
-  /** Data from momentum gate (if passed) */
-  momentumGate?: MomentumGateData;
-
   /** Data from sniper gate (if passed) */
   sniperGate?: SniperGateData;
+
+  /** Data from research score gate (if passed) */
+  researchScore?: ResearchScoreGateData;
 
   /** Log buffer for non-interleaved output */
   logBuffer?: TokenLogBuffer;
@@ -339,14 +385,13 @@ export const RejectionReasons = {
   // Suspicious instruction
   SUSPICIOUS_INSTRUCTION: 'Suspicious instruction detected in transaction logs',
 
-  // Momentum Gate
-  MOMENTUM_THRESHOLD_NOT_MET: 'Momentum threshold not met',
-  MOMENTUM_RPC_FETCH_FAILED: 'Failed to fetch transactions for momentum check',
-
   // Sniper Gate
   SNIPER_GATE_TIMEOUT: 'Sniper gate timeout - bots did not exit in time',
   SNIPER_GATE_LOW_ORGANIC: 'Insufficient organic buyers after bot exit',
   SNIPER_GATE_RPC_FAILED: 'Failed to fetch transactions for sniper gate',
+
+  // Research Score Gate
+  RESEARCH_SCORE_LOW: 'Research score below threshold',
 } as const;
 
 export type RejectionReason = typeof RejectionReasons[keyof typeof RejectionReasons];

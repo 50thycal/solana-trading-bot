@@ -1,7 +1,7 @@
 /**
  * A/B Test Pipeline
  *
- * Reuses the SAME production classes (PumpFunFilters, MomentumGateStage,
+ * Reuses the SAME production classes (PumpFunFilters, SniperGateStage,
  * getBondingCurveState) but instantiated per-variant rather than via singletons.
  *
  * Stage flow matches production:
@@ -10,7 +10,7 @@
  *   3. Rate limit check
  *   4. Name/symbol pattern check (stateless, same logic as cheap-gates)
  *   5. Bonding curve fetch + filters (same as deep-filters)
- *   6. Momentum gate (same as production)
+ *   6. Sniper gate (same as production)
  *
  * Skipped from production cheap-gates (not relevant for paper trading):
  *   - Wallet balance / exposure checks (virtual capital)
@@ -22,7 +22,7 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { ABVariantConfig, ABPipelineResult } from './types';
 import { PumpFunFilters, PumpFunFilterContext } from '../filters/pumpfun-filters';
-import { MomentumGateStage } from '../pipeline/momentum-gate';
+import { SniperGateStage } from '../pipeline/sniper-gate';
 import { DetectionEvent, PipelineContext } from '../pipeline/types';
 import { getBondingCurveState, BondingCurveState } from '../helpers/pumpfun';
 import { logger } from '../helpers';
@@ -75,7 +75,7 @@ export class ABPipeline {
   private connection: Connection;
   private seenMints: Set<string> = new Set();
   private filters: PumpFunFilters;
-  private momentumGate: MomentumGateStage;
+  private sniperGate: SniperGateStage;
   private tradeTimestamps: number[] = [];
 
   constructor(variant: string, connection: Connection, config: ABVariantConfig) {
@@ -92,16 +92,12 @@ export class ABPipeline {
       minScoreRequired: 0,
     });
 
-    this.momentumGate = new MomentumGateStage(connection, {
+    this.sniperGate = new SniperGateStage(connection, {
       enabled: true,
-      minTotalBuys: config.momentumMinTotalBuys,
-      initialDelayMs: config.momentumInitialDelayMs,
-      recheckIntervalMs: config.momentumRecheckIntervalMs,
-      maxChecks: config.momentumMaxChecks,
     });
 
     logger.info(
-      { variant, config: { tp: config.takeProfit, sl: config.stopLoss, minBuys: config.momentumMinTotalBuys } },
+      { variant, config: { tp: config.takeProfit, sl: config.stopLoss } },
       `[ab-pipeline-${variant}] Initialized`
     );
   }
@@ -194,15 +190,15 @@ export class ABPipeline {
       return { passed: false, rejectionStage: 'deep-filters', rejectionReason: `Filter failed: ${filterResults.summary}`, pipelineDurationMs: Date.now() - start };
     }
 
-    // ── Gate 6: Momentum gate ───────────────────────────────────────────────
-    // Build a minimal PipelineContext for the momentum gate
+    // ── Gate 6: Sniper gate ────────────────────────────────────────────────
+    // Build a minimal PipelineContext for the sniper gate
     const pipelineContext: PipelineContext = {
       detection,
     };
 
-    const momentumResult = await this.momentumGate.execute(pipelineContext);
-    if (!momentumResult.pass) {
-      return { passed: false, rejectionStage: 'momentum-gate', rejectionReason: momentumResult.reason, pipelineDurationMs: Date.now() - start };
+    const sniperResult = await this.sniperGate.execute(pipelineContext);
+    if (!sniperResult.pass) {
+      return { passed: false, rejectionStage: 'sniper-gate', rejectionReason: sniperResult.reason, pipelineDurationMs: Date.now() - start };
     }
 
     // ── ALL STAGES PASSED ───────────────────────────────────────────────────
