@@ -217,6 +217,7 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
   private cachedModel: ScoringModel | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private lastFetchError: string | null = null;
+  private noModelSkipCount: number = 0;
 
   constructor(config: Partial<ResearchScoreGateConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -267,9 +268,40 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       throw new Error('Invalid model response: missing rules array');
     }
 
+    // Validate each rule has required fields with correct types
+    const validatedRules: ScoringRule[] = [];
+    for (let i = 0; i < (data.rules as unknown[]).length; i++) {
+      const rule = (data.rules as unknown[])[i] as Record<string, unknown>;
+      if (
+        typeof rule?.featureName !== 'string' ||
+        typeof rule?.weight !== 'number' ||
+        typeof rule?.direction !== 'string' ||
+        typeof rule?.min !== 'number' ||
+        typeof rule?.max !== 'number'
+      ) {
+        logger.warn(
+          { ruleIndex: i, rule },
+          '[research-score-gate] Skipping invalid rule — missing or wrong-typed fields',
+        );
+        continue;
+      }
+      if (rule.direction !== 'above' && rule.direction !== 'below') {
+        logger.warn(
+          { ruleIndex: i, direction: rule.direction },
+          '[research-score-gate] Skipping rule with invalid direction (must be "above" or "below")',
+        );
+        continue;
+      }
+      validatedRules.push(rule as unknown as ScoringRule);
+    }
+
+    if (validatedRules.length === 0) {
+      throw new Error('Invalid model response: no valid rules after validation');
+    }
+
     this.cachedModel = {
       checkpointSeconds: (data.checkpointSeconds as number) || this.config.checkpoint,
-      rules: data.rules as ScoringRule[],
+      rules: validatedRules,
       sampleCount: (data.sampleCount as number) || 0,
       baseRate2x: (data.baseRate2x as number) || 0,
     };
@@ -320,12 +352,13 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
 
     // If no model available (fetch failed), graceful degradation — pass
     if (!this.cachedModel) {
+      this.noModelSkipCount++;
       const reason = `No model available (last error: ${this.lastFetchError || 'not yet fetched'})`;
       if (buf) {
         buf.info(`Research score gate: PASSED (graceful degradation) - ${reason}`);
       } else {
         logger.warn(
-          { stage: this.name, mint: mintStr, lastFetchError: this.lastFetchError },
+          { stage: this.name, mint: mintStr, lastFetchError: this.lastFetchError, noModelSkipCount: this.noModelSkipCount },
           '[research-score-gate] No model available — passing token (graceful degradation)',
         );
       }
@@ -447,6 +480,13 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
    */
   getModel(): ScoringModel | null {
     return this.cachedModel;
+  }
+
+  /**
+   * Get the number of tokens that bypassed scoring due to no model being available.
+   */
+  getNoModelSkipCount(): number {
+    return this.noModelSkipCount;
   }
 
   /**
