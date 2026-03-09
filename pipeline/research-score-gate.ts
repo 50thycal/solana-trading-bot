@@ -249,7 +249,8 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
    * Fetch the scoring model from the research bot API.
    */
   async fetchModel(): Promise<void> {
-    const url = `${this.config.researchBotUrl}/api/analysis/model?checkpoint=${this.config.checkpoint}&full=true`;
+    const baseUrl = this.config.researchBotUrl.replace(/\/+$/, '');
+    const url = `${baseUrl}/api/analysis/model?checkpoint=${this.config.checkpoint}&full=true`;
 
     const response = await fetch(url, {
       signal: AbortSignal.timeout(10000),
