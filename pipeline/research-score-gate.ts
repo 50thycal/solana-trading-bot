@@ -264,15 +264,19 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
 
     const data = await response.json() as Record<string, unknown>;
 
+    // The API returns { model: { rules, checkpointSeconds, ... }, correlations, datasetStats }
+    // Extract the model object first
+    const model = (data.model as Record<string, unknown>) || data;
+
     // Extract the scoring model from the response
-    if (!data.rules || !Array.isArray(data.rules)) {
+    if (!model.rules || !Array.isArray(model.rules)) {
       throw new Error('Invalid model response: missing rules array');
     }
 
     // Validate each rule has required fields with correct types
     const validatedRules: ScoringRule[] = [];
-    for (let i = 0; i < (data.rules as unknown[]).length; i++) {
-      const rule = (data.rules as unknown[])[i] as Record<string, unknown>;
+    for (let i = 0; i < (model.rules as unknown[]).length; i++) {
+      const rule = (model.rules as unknown[])[i] as Record<string, unknown>;
       if (
         typeof rule?.featureName !== 'string' ||
         typeof rule?.weight !== 'number' ||
@@ -301,10 +305,10 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
     }
 
     this.cachedModel = {
-      checkpointSeconds: (data.checkpointSeconds as number) || this.config.checkpoint,
+      checkpointSeconds: (model.checkpointSeconds as number) || this.config.checkpoint,
       rules: validatedRules,
-      sampleCount: (data.sampleCount as number) || 0,
-      baseRate2x: (data.baseRate2x as number) || 0,
+      sampleCount: (model.sampleCount as number) || 0,
+      baseRate2x: (model.baseRate2x as number) || 0,
     };
 
     this.lastFetchError = null;
