@@ -740,6 +740,11 @@ const runListener = async () => {
   // the async pipeline can write to the state-store dedup check.
   const inFlightMints = new Set<string>();
 
+  // Pipeline-level mutex: when ONE_TOKEN_AT_A_TIME is true, only one token
+  // can be in the pipeline at a time. Others are skipped (not queued) to
+  // avoid concurrent RPC calls stacking up and triggering 429 rate limits.
+  let pipelineBusy = false;
+
   pumpFunListener.on('new-token', async (token: DetectedToken) => {
     if (token.source !== 'pumpfun') {
       return;
@@ -767,6 +772,15 @@ const runListener = async () => {
     inFlightMints.add(baseMintStr);
 
     try {
+
+    // ═══════════════ ONE-TOKEN-AT-A-TIME GUARD ═══════════════
+    if (ONE_TOKEN_AT_A_TIME && pipelineBusy) {
+      logger.debug({ mint: baseMintStr }, '[pump.fun] Pipeline busy (one-at-a-time) — skipping');
+      return;
+    }
+    if (ONE_TOKEN_AT_A_TIME) {
+      pipelineBusy = true;
+    }
 
     // ═══════════════ POSITION LIMIT CHECK ═══════════════
     const openCount = getOpenPositionCount();
@@ -1190,6 +1204,9 @@ const runListener = async () => {
     }
 
     } finally {
+      if (ONE_TOKEN_AT_A_TIME) {
+        pipelineBusy = false;
+      }
       inFlightMints.delete(baseMintStr);
     }
   });
