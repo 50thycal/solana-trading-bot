@@ -105,6 +105,7 @@ let pumpFunListener: PumpFunListener | null = null;
 let dashboardServer: DashboardServer | null = null;
 let bot: Bot | null = null;
 let isShuttingDown = false;
+let isIdle = false;
 let currentJournalSessionId: string | null = null;
 
 /**
@@ -201,6 +202,76 @@ function printDetails(wallet: Keypair, bot: Bot) {
   logger.info('------- CONFIGURATION END -------');
 
   logger.info('Bot is running! Press CTRL + C to stop it.');
+}
+
+/**
+ * Enter idle mode: stop scanning and trading but keep dashboard alive for review.
+ * Used when the production time limit is reached so the user can still view results.
+ */
+async function enterIdleMode(): Promise<void> {
+  if (isIdle || isShuttingDown) return;
+
+  isIdle = true;
+  logger.info('Production time limit reached - entering idle mode (dashboard stays active)');
+
+  try {
+    // Stop pump.fun position monitor
+    const pumpFunMonitor = getPumpFunPositionMonitor();
+    if (pumpFunMonitor) {
+      logger.info('Stopping pump.fun position monitor...');
+      pumpFunMonitor.stop();
+    }
+
+    // Stop paper trade monitor (dry run mode)
+    const paperTracker = getPaperTradeTracker();
+    if (paperTracker) {
+      logger.info('Stopping paper trade monitor...');
+      paperTracker.stop();
+    }
+
+    // Stop pump.fun listener
+    if (pumpFunListener) {
+      logger.info('Stopping pump.fun listener...');
+      await pumpFunListener.stop();
+    }
+
+    // Stop mint cache cleanup
+    const mintCacheInstance = getMintCache();
+    if (mintCacheInstance) {
+      mintCacheInstance.stop();
+    }
+
+    // Save P&L data
+    const pnlTracker = getPnlTracker();
+    logger.info('Saving P&L data...');
+    await pnlTracker.forceSave();
+    pnlTracker.logSessionSummary();
+
+    // Stop market context fetcher
+    stopMarketContextFetcher();
+
+    // Close run journal entry with final stats
+    if (currentJournalSessionId) {
+      const shutdownStore = getStateStore();
+      if (shutdownStore) {
+        const tradeStats = shutdownStore.getTradeStats();
+        const detectionStats = shutdownStore.getPoolDetectionStats();
+        shutdownStore.closeJournalEntry({
+          sessionId: currentJournalSessionId,
+          totalDetections: detectionStats.totalDetected,
+          totalTrades: tradeStats.totalBuys,
+          totalWins: tradeStats.totalSells,
+          totalLosses: 0,
+          realizedPnlSol: tradeStats.realizedPnlSol,
+        });
+        logger.info({ sessionId: currentJournalSessionId }, 'Run journal entry closed');
+      }
+    }
+
+    logger.info('Bot is now idle - dashboard remains available for review. Press CTRL+C to exit.');
+  } catch (error) {
+    logger.error({ error }, 'Error entering idle mode');
+  }
 }
 
 /**
@@ -674,6 +745,10 @@ const runListener = async () => {
       return;
     }
 
+    if (isIdle) {
+      return;
+    }
+
     if (dashboardServer) {
       dashboardServer.recordWebSocketActivity();
     }
@@ -1132,15 +1207,15 @@ const runListener = async () => {
     const hours = (PRODUCTION_TIME_LIMIT_MS / 3600000).toFixed(2);
     logger.info(
       { timeLimitMs: PRODUCTION_TIME_LIMIT_MS, timeLimitMinutes: minutes, timeLimitHours: hours },
-      `Production time limit set: bot will shut down in ${minutes} minutes (${hours} hours)`,
+      `Production time limit set: bot will enter idle mode in ${minutes} minutes (${hours} hours)`,
     );
 
     setTimeout(() => {
       logger.info(
         { timeLimitMs: PRODUCTION_TIME_LIMIT_MS },
-        'Production time limit reached - initiating graceful shutdown',
+        'Production time limit reached - entering idle mode (dashboard stays active)',
       );
-      gracefulShutdown('PRODUCTION_TIME_LIMIT');
+      enterIdleMode();
     }, PRODUCTION_TIME_LIMIT_MS);
   }
 
