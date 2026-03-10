@@ -454,22 +454,7 @@ restartBotBtn.addEventListener('click', async () => {
 // UTILITIES
 // ============================================================
 
-async function fetchApi(endpoint) {
-  try {
-    const response = await fetch(endpoint);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return await response.json();
-  } catch (error) {
-    console.error(`API error for ${endpoint}:`, error);
-    return null;
-  }
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
+// fetchApi and escapeHtml are loaded from utils.js
 
 function escapeAttr(text) {
   return text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');

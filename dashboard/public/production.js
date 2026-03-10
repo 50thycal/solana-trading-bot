@@ -10,64 +10,8 @@ let currentTokenFilter = '';
 let pipelineStats = null;
 let recentTokens = [];
 
-async function fetchApi(endpoint) {
-  try {
-    const res = await fetch(`${API_BASE}${endpoint}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } catch (error) {
-    console.error(`API error for ${endpoint}:`, error);
-    return null;
-  }
-}
-
-async function postApi(endpoint, data = {}) {
-  try {
-    const res = await fetch(`${API_BASE}${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    return await res.json();
-  } catch (error) {
-    console.error(`API POST error for ${endpoint}:`, error);
-    return null;
-  }
-}
-
-function formatPnl(value) {
-  if (value === null || value === undefined) return '--';
-  const sign = value >= 0 ? '+' : '';
-  return `${sign}${value.toFixed(4)} SOL`;
-}
-
-function pnlClass(value) {
-  if (value === null || value === undefined) return '';
-  return value >= 0 ? 'positive' : 'negative';
-}
-
-function shortenAddress(address) {
-  if (!address || address.length < 12) return address;
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
-
-function formatTimeAgo(timestamp) {
-  const seconds = Math.floor((Date.now() - timestamp) / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86400)}d ago`;
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-function formatRejectionReason(reason) {
-  return reason.toLowerCase().split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-}
+// Utility functions (fetchApi, postApi, formatPnl, pnlClass, shortenAddress,
+// formatTimeAgo, escapeHtml, formatRejectionReason) are loaded from utils.js
 
 // ============================================================
 // STATUS & P&L
@@ -412,5 +356,10 @@ async function updateAll() {
   ]);
 }
 
-updateAll();
-setInterval(updateAll, POLL_INTERVAL);
+// Initial load, then schedule next poll only after the current one finishes.
+// This prevents overlapping requests when the server is slow.
+async function pollLoop() {
+  await updateAll();
+  setTimeout(pollLoop, POLL_INTERVAL);
+}
+pollLoop();

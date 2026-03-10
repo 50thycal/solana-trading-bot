@@ -78,32 +78,7 @@ const elements = {
 // API CALLS
 // ============================================================
 
-async function fetchApi(endpoint) {
-  try {
-    const response = await fetch(`${API_BASE}${endpoint}`);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    return await response.json();
-  } catch (error) {
-    console.error(`API error for ${endpoint}:`, error);
-    return null;
-  }
-}
-
-async function postApi(endpoint, data = {}) {
-  try {
-    const response = await fetch(`${API_BASE}${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    return await response.json();
-  } catch (error) {
-    console.error(`API POST error for ${endpoint}:`, error);
-    return null;
-  }
-}
+// API functions (fetchApi, postApi) are loaded from utils.js
 
 // ============================================================
 // DATA FETCHING & UPDATES
@@ -276,14 +251,7 @@ function updateRejectionReasons(reasons) {
   `).join('');
 }
 
-function formatRejectionReason(reason) {
-  // Convert SCREAMING_CASE to Title Case
-  return reason
-    .toLowerCase()
-    .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
+// formatRejectionReason is loaded from utils.js
 
 function updateTokenList() {
   let tokens = recentTokens;
@@ -862,55 +830,8 @@ async function confirmResetStats() {
   elements.confirmResetBtn.textContent = 'Reset Stats';
 }
 
-// ============================================================
-// UTILITIES
-// ============================================================
-
-function shortenAddress(address) {
-  if (!address || address.length < 12) return address;
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
-
-function formatTimeAgo(timestamp) {
-  const seconds = Math.floor((Date.now() - timestamp) / 1000);
-
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86400)}d ago`;
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-async function copyToClipboard(text, element) {
-  try {
-    await navigator.clipboard.writeText(text);
-
-    // Show feedback
-    if (element) {
-      const originalText = element.textContent;
-      if (element.classList.contains('copy-btn')) {
-        element.textContent = '✓';
-        element.classList.add('copied');
-        setTimeout(() => {
-          element.textContent = '📋';
-          element.classList.remove('copied');
-        }, 1500);
-      } else {
-        element.style.color = 'var(--accent-green)';
-        setTimeout(() => {
-          element.style.color = '';
-        }, 1500);
-      }
-    }
-  } catch (err) {
-    console.error('Failed to copy:', err);
-  }
-}
+// Utility functions (shortenAddress, formatTimeAgo, escapeHtml, copyToClipboard)
+// are loaded from utils.js
 
 // ============================================================
 // EVENT HANDLERS
@@ -962,10 +883,14 @@ async function updateAll() {
 
 // Initial load
 checkDryRunMode(); // Check if dry run mode, show/hide paper P&L panel
-updateAll();
 
-// Start polling
-setInterval(updateAll, POLL_INTERVAL);
+// Start polling — schedule next poll only after current one finishes
+// to prevent overlapping requests when the server is slow.
+async function pollLoop() {
+  await updateAll();
+  setTimeout(pollLoop, POLL_INTERVAL);
+}
+pollLoop();
 
 // Make functions available globally for onclick handlers
 window.showTokenDetail = showTokenDetail;

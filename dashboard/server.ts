@@ -1878,7 +1878,16 @@ export class DashboardServer {
         return;
       }
 
-      res.writeHead(200, { 'Content-Type': mimeType });
+      // Cache static assets (CSS, JS, images) to avoid re-downloading on every navigation.
+      // HTML files are not cached so the browser always gets the latest page structure.
+      const isStaticAsset = ['.css', '.js', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.woff', '.woff2', '.ttf'].includes(ext);
+      const cacheControl = isStaticAsset ? 'public, max-age=300, stale-while-revalidate=60' : 'no-cache';
+
+      res.writeHead(200, {
+        'Content-Type': mimeType,
+        'Cache-Control': cacheControl,
+        'ETag': `"${Buffer.from(data).length.toString(16)}-${fs.statSync(filePath).mtimeMs.toString(16)}"`,
+      });
       res.end(data);
     });
   }

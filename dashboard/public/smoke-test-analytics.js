@@ -17,15 +17,7 @@ let currentSort = { field: 'date', dir: 'desc' };
 // HELPERS
 // ============================================================
 
-async function fetchApi(endpoint) {
-  try {
-    const res = await fetch(endpoint);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
+// fetchApi is loaded from utils.js
 
 function formatDuration(ms) {
   if (!ms) return '--';
@@ -59,16 +51,7 @@ function formatPnlShort(value) {
   return `${sign}${value.toFixed(4)}`;
 }
 
-function pnlClass(value) {
-  if (value === null || value === undefined) return '';
-  return value >= 0 ? 'positive' : 'negative';
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
+// pnlClass and escapeHtml are loaded from utils.js
 
 // ============================================================
 // RUN SELECTOR
