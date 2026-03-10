@@ -89,6 +89,7 @@ export interface ValidatedConfig {
   sniperGateMinBotExitPercent: number;
   sniperGateMinOrganicBuyers: number;
   sniperGateLogOnly: boolean;
+  sniperGateSignatureLimit: number;
 
   // Trailing Stop Loss
   trailingStopEnabled: boolean;
@@ -441,6 +442,11 @@ export function validateConfig(): ValidatedConfig {
 
   const sniperGateLogOnly = requireBoolean('SNIPER_GATE_LOG_ONLY', false);
 
+  const sniperGateSignatureLimit = requireNumber('SNIPER_GATE_SIGNATURE_LIMIT', 30);
+  if (sniperGateSignatureLimit < 1 || sniperGateSignatureLimit > 100) {
+    errors.push({ variable: 'SNIPER_GATE_SIGNATURE_LIMIT', message: 'must be 1-100' });
+  }
+
   // === RESEARCH SCORE GATE (Pipeline Stage 5) ===
   // Applies the research bot's scoring model after the sniper gate.
   // Requires RESEARCH_BOT_URL to be set for model fetching.
@@ -638,6 +644,7 @@ export function validateConfig(): ValidatedConfig {
     sniperGateMinBotExitPercent,
     sniperGateMinOrganicBuyers,
     sniperGateLogOnly,
+    sniperGateSignatureLimit,
     researchScoreGateEnabled,
     researchScoreThreshold,
     researchScoreCheckpoint,

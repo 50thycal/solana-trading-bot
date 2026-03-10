@@ -83,6 +83,10 @@ export interface SniperGateConfig {
 
   /** Log metrics but always pass - safe data collection mode (default: false) */
   logOnly: boolean;
+
+  /** Max transaction signatures to fetch per poll (default: 30).
+   *  Lower values reduce RPC load; 30 is plenty for sniper detection on new tokens. */
+  signatureLimit: number;
 }
 
 const DEFAULT_CONFIG: SniperGateConfig = {
@@ -94,6 +98,7 @@ const DEFAULT_CONFIG: SniperGateConfig = {
   minBotExitPercent: 50,
   minOrganicBuyers: 3,
   logOnly: false,
+  signatureLimit: 30,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -133,6 +138,7 @@ async function fetchAndAnalyzeTransactions(
   bondingCurve: PublicKey,
   creationSlot: number,
   sniperSlotThreshold: number,
+  signatureLimit: number = 30,
 ): Promise<WalletAnalysis> {
   const sniperWallets = new Map<string, 'bought' | 'exited'>();
   const organicWallets = new Set<string>();
@@ -143,7 +149,7 @@ async function fetchAndAnalyzeTransactions(
   // Step 1: Fetch recent signatures
   const signatures = await connection.getSignaturesForAddress(
     bondingCurve,
-    { limit: 100 },
+    { limit: signatureLimit },
     'confirmed',
   );
 
@@ -333,6 +339,7 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
           sniperWallets: [],
           organicWallets: [],
           logOnly: false,
+          rpcDegraded: false,
           checkHistory: [],
         },
         durationMs: Date.now() - startTime,
@@ -346,6 +353,7 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
 
     let checksPerformed = 0;
     let lastAnalysis: WalletAnalysis | null = null;
+    let rpcDegraded = false;
     const checkHistory: SniperGateCheckResult[] = [];
 
     // Polling loop
@@ -360,22 +368,30 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
           detection.bondingCurve,
           creationSlot,
           this.config.sniperSlotThreshold,
+          this.config.signatureLimit,
         );
       } catch (error) {
-        // RPC failure -> REJECT immediately (no retries)
+        // RPC failure -> graceful degradation: continue with empty/partial data
+        // instead of rejecting (rate-limited tokens could be high-scoring)
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        return this.reject(
-          `${RejectionReasons.SNIPER_GATE_RPC_FAILED}: ${errorMsg}`,
-          startTime,
-          {
-            mint: mintStr,
-            bondingCurve: bondingCurveStr,
-            checksPerformed,
-            error: errorMsg,
-          },
-          buf,
-          checkHistory,
+        rpcDegraded = true;
+        logger.warn(
+          { stage: this.name, mint: mintStr, check: checksPerformed, error: errorMsg },
+          '[sniper-gate] RPC error — continuing with partial data (graceful degradation)',
         );
+        if (buf) {
+          buf.info(`Sniper gate: RPC error on check ${checksPerformed} — degraded mode (${errorMsg})`);
+        }
+        // Use last successful analysis if available, otherwise empty
+        analysis = lastAnalysis ?? {
+          sniperWallets: new Map(),
+          organicWallets: new Set(),
+          allBuyWallets: new Set(),
+          totalBuys: 0,
+          totalSells: 0,
+        };
+        // Skip remaining checks — no point polling again if RPC is rate-limited
+        break;
       }
 
       lastAnalysis = analysis;
@@ -480,6 +496,7 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
             sniperWallets: [...analysis.sniperWallets.keys()],
             organicWallets: [...analysis.organicWallets],
             logOnly: this.config.logOnly,
+            rpcDegraded,
             checkHistory,
           },
           durationMs: duration,
@@ -544,6 +561,47 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
           sniperWallets: lastAnalysis ? [...lastAnalysis.sniperWallets.keys()] : [],
           organicWallets: lastAnalysis ? [...lastAnalysis.organicWallets] : [],
           logOnly: true,
+          rpcDegraded,
+          checkHistory,
+        },
+        durationMs: duration,
+      };
+    }
+
+    // If RPC was degraded, pass with whatever data we have rather than rejecting
+    // a potentially high-scoring token due to infrastructure issues
+    if (rpcDegraded) {
+      const duration = Date.now() - startTime;
+      const passReason = `RPC degraded — passing with partial data: bots=${botCount}, organic=${organicCount}`;
+
+      if (buf) {
+        buf.info(`Sniper gate: PASSED (RPC degraded) - ${passReason} (${duration}ms)`);
+      } else {
+        logger.warn(
+          { stage: this.name, mint: mintStr, botCount, organicCount, checksPerformed },
+          '[pipeline] Sniper gate passed (RPC degraded — graceful degradation)',
+        );
+      }
+
+      return {
+        pass: true,
+        reason: passReason,
+        stage: this.name,
+        data: {
+          sniperWalletCount: botCount,
+          sniperExitCount: botExitCount,
+          sniperExitPercent: botExitPercent,
+          organicBuyerCount: organicCount,
+          totalBuys: lastAnalysis?.totalBuys ?? 0,
+          totalSells: lastAnalysis?.totalSells ?? 0,
+          uniqueBuyWalletCount,
+          checksPerformed,
+          totalWaitMs: duration,
+          checkStartedAt: startTime,
+          sniperWallets: lastAnalysis ? [...lastAnalysis.sniperWallets.keys()] : [],
+          organicWallets: lastAnalysis ? [...lastAnalysis.organicWallets] : [],
+          logOnly: this.config.logOnly,
+          rpcDegraded: true,
           checkHistory,
         },
         durationMs: duration,
@@ -625,6 +683,7 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
         sniperWallets: lastCheck?.sniperWallets ?? [],
         organicWallets: lastCheck?.organicWallets ?? [],
         logOnly: this.config.logOnly,
+        rpcDegraded: false,
         checkHistory,
       },
     };

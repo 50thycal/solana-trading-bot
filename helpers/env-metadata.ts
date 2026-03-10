@@ -499,6 +499,13 @@ export const ENV_CATEGORIES: EnvCategory[] = [
         defaultValue: 'false',
         description: 'Compute metrics but always pass gate (for data collection)',
       },
+      {
+        name: 'SNIPER_GATE_SIGNATURE_LIMIT',
+        label: 'Signature Limit',
+        type: 'number',
+        defaultValue: '30',
+        description: 'Max transaction signatures to fetch per poll (1-100). Lower = less RPC load.',
+      },
     ],
   },
   {

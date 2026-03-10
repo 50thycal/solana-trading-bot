@@ -562,6 +562,7 @@ const runListener = async () => {
       minBotExitPercent: config.sniperGateMinBotExitPercent,
       minOrganicBuyers: config.sniperGateMinOrganicBuyers,
       logOnly: config.sniperGateLogOnly,
+      signatureLimit: config.sniperGateSignatureLimit,
     },
     researchScoreGate: {
       enabled: config.researchScoreGateEnabled,
