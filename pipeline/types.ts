@@ -215,6 +215,10 @@ export interface SniperGateData {
   /** Whether gate was running in log-only mode */
   logOnly: boolean;
 
+  /** True when one or more RPC calls failed (e.g. 429 rate limit) and the gate
+   *  continued with partial data instead of rejecting. */
+  rpcDegraded: boolean;
+
   /** Full time-series of every poll result — populated when the gate runs all maxChecks */
   checkHistory: SniperGateCheckResult[];
 }

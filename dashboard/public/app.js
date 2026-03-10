@@ -672,7 +672,11 @@ async function showTokenDetail(mint) {
           <div class="sniper-stat">
             <div class="sniper-stat-label">Gate Duration</div>
             <div class="sniper-stat-value">${waitSec}s (${checks} checks)</div>
-          </div>
+          </div>${token.sniperRpcDegraded ? `
+          <div class="sniper-stat">
+            <div class="sniper-stat-label">RPC Status</div>
+            <div class="sniper-stat-value" style="color: var(--warning-color, #f59e0b);">DEGRADED</div>
+          </div>` : ''}
         </div>
         <div id="sniper-check-history">
           <div class="loading">Loading check history...</div>

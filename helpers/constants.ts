@@ -109,6 +109,7 @@ export const SNIPER_GATE_SNIPER_SLOT_THRESHOLD = config.sniperGateSniperSlotThre
 export const SNIPER_GATE_MIN_BOT_EXIT_PERCENT = config.sniperGateMinBotExitPercent;
 export const SNIPER_GATE_MIN_ORGANIC_BUYERS = config.sniperGateMinOrganicBuyers;
 export const SNIPER_GATE_LOG_ONLY = config.sniperGateLogOnly;
+export const SNIPER_GATE_SIGNATURE_LIMIT = config.sniperGateSignatureLimit;
 
 // ============================================================================
 // TRAILING STOP

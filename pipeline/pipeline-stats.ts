@@ -79,6 +79,8 @@ export interface RecentToken {
   organicBuyerCount?: number;
   sniperGateChecks?: number;
   sniperGateWaitMs?: number;
+  /** True when sniper gate RPC calls failed and gate used partial data */
+  sniperRpcDegraded?: boolean;
   /** Research score gate fields */
   researchScore?: number;
   researchSignal?: string;
@@ -211,6 +213,7 @@ export class PipelineStats {
       organicBuyerCount: sg?.organicBuyerCount,
       sniperGateChecks: sg?.checksPerformed,
       sniperGateWaitMs: sg?.totalWaitMs,
+      sniperRpcDegraded: sg?.rpcDegraded,
       researchScore: rs?.score,
       researchSignal: rs?.signal,
     };
