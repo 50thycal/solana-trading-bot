@@ -8,15 +8,7 @@ const POLL_INTERVAL = 5000;
 // Track whether the user is viewing a historical report (null = current)
 let viewingReportId = null;
 
-async function fetchApi(endpoint) {
-  try {
-    const res = await fetch(endpoint);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
+// fetchApi is loaded from utils.js
 
 function formatDuration(ms) {
   if (!ms) return '--';
@@ -27,35 +19,11 @@ function formatDuration(ms) {
   return `${minutes}m ${secs}s`;
 }
 
-function formatTimeAgo(timestamp) {
-  if (!timestamp) return '--';
-  const seconds = Math.floor((Date.now() - timestamp) / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86400)}d ago`;
-}
+// formatTimeAgo, formatPnl, pnlClass, escapeHtml are loaded from utils.js
 
 function formatDate(timestamp) {
   if (!timestamp) return '--';
   return new Date(timestamp).toLocaleString();
-}
-
-function formatPnl(value) {
-  if (value === null || value === undefined) return '--';
-  const sign = value >= 0 ? '+' : '';
-  return `${sign}${value.toFixed(4)} SOL`;
-}
-
-function pnlClass(value) {
-  if (value === null || value === undefined) return '';
-  return value >= 0 ? 'positive' : 'negative';
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
 }
 
 function formatTime(timestamp) {

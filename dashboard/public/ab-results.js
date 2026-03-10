@@ -13,16 +13,7 @@ let selectedSessionId = null;
 // API
 // ============================================================
 
-async function fetchApi(endpoint) {
-  try {
-    const response = await fetch(`${API_BASE}${endpoint}`);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return await response.json();
-  } catch (error) {
-    console.error(`API error for ${endpoint}:`, error);
-    return null;
-  }
-}
+// fetchApi is loaded from utils.js
 
 // ============================================================
 // TAB NAVIGATION
@@ -505,11 +496,7 @@ function formatConfidence(conf) {
   return map[conf] || conf;
 }
 
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
+// escapeHtml is loaded from utils.js
 
 // ============================================================
 // COPY TO CLIPBOARD

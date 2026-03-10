@@ -44,51 +44,18 @@ const el = {
   paperClosedTrades: document.getElementById('paper-closed-trades'),
 };
 
-async function fetchApi(endpoint) {
-  try {
-    const res = await fetch(endpoint);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
+// Utility functions (fetchApi, formatPnl, pnlClass, escapeHtml, formatTimeAgo)
+// are loaded from utils.js
 
 function formatSol(value) {
   if (value === null || value === undefined) return '-- SOL';
   return `${value >= 0 ? '' : ''}${value.toFixed(4)} SOL`;
 }
 
-function formatPnl(value) {
-  if (value === null || value === undefined) return '--';
-  const sign = value >= 0 ? '+' : '';
-  return `${sign}${value.toFixed(4)} SOL`;
-}
-
 function formatPnlPercent(value) {
   if (value === null || value === undefined) return '';
   const sign = value >= 0 ? '+' : '';
   return `(${sign}${value.toFixed(1)}%)`;
-}
-
-function pnlClass(value) {
-  if (value === null || value === undefined) return '';
-  return value >= 0 ? 'positive' : 'negative';
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-function formatTimeAgo(timestamp) {
-  if (!timestamp) return '--';
-  const seconds = Math.floor((Date.now() - timestamp) / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86400)}d ago`;
 }
 
 function formatUptime(seconds) {
