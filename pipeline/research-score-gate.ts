@@ -26,7 +26,7 @@ import {
   ScoringModel,
   ResearchScoreGateData,
 } from './types';
-import { logger } from '../helpers';
+import { logger, getBondingCurveState, BondingCurveState } from '../helpers';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -73,20 +73,42 @@ function bnToSol(bn: BN): number {
 /**
  * Build a TokenFeatureVector from pipeline context data.
  * Uses BondingCurveState from deep filters and SniperGateData from sniper gate.
+ * When a fresh bonding curve state is provided, computes priceChangeFromInitial
+ * and priceAcceleration by comparing initial vs current prices.
  * Derives momentum features from sniper gate checkHistory where possible.
  */
-function buildFeatureVector(ctx: PipelineContext): TokenFeatureVector {
-  const bcs = ctx.deepFilters!.bondingCurveState;
+function buildFeatureVector(ctx: PipelineContext, freshBcs?: BondingCurveState): TokenFeatureVector {
+  const initialBcs = ctx.deepFilters!.bondingCurveState;
   const sniper = ctx.sniperGate;
   const detection = ctx.detection;
 
   // Time since detection
   const secondsSinceCreation = (Date.now() - detection.detectedAt) / 1000;
 
-  // Price from bonding curve: virtualSolReserves / virtualTokenReserves
-  const virtualSol = bnToSol(bcs.virtualSolReserves);
-  const virtualTokens = bcs.virtualTokenReserves.toNumber();
-  const priceSol = virtualTokens > 0 ? virtualSol / virtualTokens : 0;
+  // Use fresh bonding curve state for current values if available, otherwise fall back to initial
+  const currentBcs = freshBcs || initialBcs;
+
+  // Initial price from deep filters bonding curve read
+  const initialVirtualSol = bnToSol(initialBcs.virtualSolReserves);
+  const initialVirtualTokens = initialBcs.virtualTokenReserves.toNumber();
+  const initialPriceSol = initialVirtualTokens > 0 ? initialVirtualSol / initialVirtualTokens : 0;
+
+  // Current price from fresh bonding curve read (or initial if unavailable)
+  const currentVirtualSol = bnToSol(currentBcs.virtualSolReserves);
+  const currentVirtualTokens = currentBcs.virtualTokenReserves.toNumber();
+  const currentPriceSol = currentVirtualTokens > 0 ? currentVirtualSol / currentVirtualTokens : 0;
+
+  // Price change from initial (percentage)
+  let priceChangeFromInitial = 0;
+  if (freshBcs && initialPriceSol > 0) {
+    priceChangeFromInitial = ((currentPriceSol - initialPriceSol) / initialPriceSol) * 100;
+  }
+
+  // Price acceleration: rate of price change per second
+  let priceAcceleration = 0;
+  if (freshBcs && secondsSinceCreation > 0) {
+    priceAcceleration = priceChangeFromInitial / secondsSinceCreation;
+  }
 
   // Transaction data from sniper gate
   const buyCount = sniper ? sniper.totalBuys : 0;
@@ -100,8 +122,8 @@ function buildFeatureVector(ctx: PipelineContext): TokenFeatureVector {
   const sellRatio = totalTxCount > 0 ? sellCount / totalTxCount : 0;
   const buyerTxRatio = buyCount > 0 ? uniqueBuyers / buyCount : 0;
 
-  const realTokenReserves = bcs.realTokenReserves.toNumber();
-  const marketCapSol = priceSol * (virtualTokens + realTokenReserves);
+  const realTokenReserves = currentBcs.realTokenReserves.toNumber();
+  const marketCapSol = currentPriceSol * (currentVirtualTokens + realTokenReserves);
 
   // Momentum features derived from sniper gate checkHistory
   let buyAcceleration = 0;
@@ -131,9 +153,9 @@ function buildFeatureVector(ctx: PipelineContext): TokenFeatureVector {
   return {
     mint: detection.mint.toString(),
     checkpointSeconds: secondsSinceCreation,
-    priceSol,
-    priceChangeFromInitial: 0, // Single price point — cannot compute
-    realSolReserves: bnToSol(bcs.realSolReserves),
+    priceSol: currentPriceSol,
+    priceChangeFromInitial,
+    realSolReserves: bnToSol(currentBcs.realSolReserves),
     totalTxCount,
     buyCount,
     sellCount,
@@ -143,7 +165,7 @@ function buildFeatureVector(ctx: PipelineContext): TokenFeatureVector {
     sellRatio,
     buyerTxRatio,
     marketCapSol,
-    priceAcceleration: 0, // Requires two bonding curve reads
+    priceAcceleration,
     buyAcceleration,
     txBurst,
     holderConcentration,
@@ -213,13 +235,15 @@ function classifySignal(score: number): 'strong_buy' | 'buy' | 'neutral' | 'avoi
 export class ResearchScoreGateStage implements PipelineStage<PipelineContext, ResearchScoreGateData> {
   name = 'research-score-gate';
 
+  private connection: Connection;
   private config: ResearchScoreGateConfig;
   private cachedModel: ScoringModel | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private lastFetchError: string | null = null;
   private noModelSkipCount: number = 0;
 
-  constructor(config: Partial<ResearchScoreGateConfig> = {}) {
+  constructor(connection: Connection, config: Partial<ResearchScoreGateConfig> = {}) {
+    this.connection = connection;
     this.config = { ...DEFAULT_CONFIG, ...config };
 
     if (this.config.enabled && this.config.researchBotUrl) {
@@ -375,8 +399,27 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       };
     }
 
-    // Build feature vector from pipeline context
-    const features = buildFeatureVector(context);
+    // Fetch fresh bonding curve state for price comparison
+    let freshBcs: BondingCurveState | undefined;
+    try {
+      const result = await getBondingCurveState(this.connection, context.detection.bondingCurve);
+      if (result) {
+        freshBcs = result;
+      } else {
+        logger.debug(
+          { stage: this.name, mint: mintStr },
+          '[research-score-gate] Fresh bonding curve fetch returned null — using initial state only',
+        );
+      }
+    } catch (err) {
+      logger.debug(
+        { stage: this.name, mint: mintStr, error: err instanceof Error ? err.message : String(err) },
+        '[research-score-gate] Fresh bonding curve fetch failed — using initial state only',
+      );
+    }
+
+    // Build feature vector from pipeline context + fresh bonding curve
+    const features = buildFeatureVector(context, freshBcs);
 
     // Score the token
     const { score, featureScores } = scoreToken(this.cachedModel, features);

@@ -119,7 +119,7 @@ export class PumpFunPipeline {
     this.cheapGatesStage = new CheapGatesStage(connection, this.config.cheapGates);
     this.deepFiltersStage = new DeepFiltersStage(connection, this.config.deepFilters);
     this.sniperGateStage = new SniperGateStage(connection, this.config.sniperGate);
-    this.researchScoreGateStage = new ResearchScoreGateStage(this.config.researchScoreGate);
+    this.researchScoreGateStage = new ResearchScoreGateStage(connection, this.config.researchScoreGate);
 
     logger.info(
       {
