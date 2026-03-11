@@ -297,6 +297,8 @@ export interface ResearchScoreGateData {
   features: TokenFeatureVector;
   /** Per-feature score breakdown */
   featureScores: Array<{ name: string; score: number; raw: number }>;
+  /** Fresh bonding curve state fetched at scoring time (for price drift baseline) */
+  freshBondingCurveState?: BondingCurveState;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

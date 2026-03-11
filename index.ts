@@ -939,14 +939,16 @@ const runListener = async () => {
     }
 
     // ═══════════════ PRE-BUY PRICE DRIFT CHECK ═══════════════
-    // Re-fetch bonding curve state and compare to pipeline snapshot.
-    // If price moved up too much during sniper gate delay, skip the buy
-    // to avoid buying at the top of a pump.
+    // Re-fetch bonding curve state and compare to the most recent pipeline read.
+    // Uses the research score gate's fresh bonding curve state as baseline when
+    // available (fetched seconds ago), falling back to deep filters state.
+    // This prevents false drift rejections on tokens with positive momentum.
     if (MAX_PRICE_DRIFT_PERCENT > 0) {
       try {
         const freshState = await getBondingCurveState(connection, token.bondingCurve!);
         if (freshState && !freshState.complete) {
-          const pipelinePrice = calculatePrice(bondingCurveState);
+          const driftBaseline = context.researchScore?.freshBondingCurveState || bondingCurveState;
+          const pipelinePrice = calculatePrice(driftBaseline);
           const currentPrice = calculatePrice(freshState);
           const driftPercent = ((currentPrice - pipelinePrice) / pipelinePrice) * 100;
 
