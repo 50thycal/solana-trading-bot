@@ -7,6 +7,7 @@ const POLL_INTERVAL = 5000;
 const API_BASE = '';
 
 let currentTokenFilter = '';
+let currentGateFilter = '';
 let pipelineStats = null;
 let recentTokens = [];
 
@@ -171,6 +172,41 @@ function updateGateStats(containerId, gates) {
   }
 }
 
+/**
+ * Group rejection reasons with numeric scores into ranges.
+ */
+function groupRejectionsIntoRanges(reasons) {
+  const RANGE_SIZE = 10;
+  const grouped = [];
+  const scoreBuckets = {};
+
+  for (const item of reasons) {
+    const scoreMatch = item.reason.match(/score[=:]?\s*([\d.]+)/i);
+    if (scoreMatch) {
+      const score = parseFloat(scoreMatch[1]);
+      const low = Math.floor(score / RANGE_SIZE) * RANGE_SIZE;
+      const high = low + RANGE_SIZE - 1;
+      const key = `${low}-${high}`;
+      const baseLabel = item.reason.replace(/[:]\s*score.*$/i, '').trim();
+      if (!scoreBuckets[key]) {
+        scoreBuckets[key] = { low, high, count: 0, baseLabel };
+      }
+      scoreBuckets[key].count += item.count;
+    } else {
+      grouped.push({ label: formatRejectionReason(item.reason), count: item.count });
+    }
+  }
+
+  const bucketEntries = Object.values(scoreBuckets)
+    .sort((a, b) => b.count - a.count)
+    .map(b => ({
+      label: `${formatRejectionReason(b.baseLabel)} (${b.low}\u2013${b.high})`,
+      count: b.count,
+    }));
+
+  return grouped.concat(bucketEntries).sort((a, b) => b.count - a.count);
+}
+
 function updateRejectionReasons(reasons) {
   const el = document.getElementById('rejection-list');
   if (!el) return;
@@ -178,9 +214,10 @@ function updateRejectionReasons(reasons) {
     el.innerHTML = '<div class="empty-state">No rejections yet</div>';
     return;
   }
-  el.innerHTML = reasons.slice(0, 8).map(item => `
+  const grouped = groupRejectionsIntoRanges(reasons);
+  el.innerHTML = grouped.slice(0, 8).map(item => `
     <div class="rejection-item">
-      <span class="rejection-name">${escapeHtml(formatRejectionReason(item.reason))}</span>
+      <span class="rejection-name">${escapeHtml(item.label)}</span>
       <span class="rejection-count">${item.count}</span>
     </div>
   `).join('');
@@ -257,6 +294,13 @@ function updateTokenList() {
   if (currentTokenFilter) {
     tokens = tokens.filter(t => t.outcome === currentTokenFilter);
   }
+  if (currentGateFilter) {
+    if (currentGateFilter === 'passed') {
+      tokens = tokens.filter(t => t.outcome === 'bought');
+    } else {
+      tokens = tokens.filter(t => t.rejectedAt === currentGateFilter);
+    }
+  }
 
   const el = document.getElementById('token-list');
   if (!el) return;
@@ -272,6 +316,10 @@ function updateTokenList() {
     const name = token.name || 'Unknown';
     const symbol = token.symbol ? `($${token.symbol})` : '';
     let metaHtml = `<div class="token-time">${time}</div>`;
+    if (token.outcome === 'rejected' && token.rejectedAt) {
+      const gateLabels = { 'cheap-gates': 'Cheap Gates', 'deep-filters': 'Deep Filters', 'sniper-gate': 'Sniper Gate', 'research-score-gate': 'Research Score' };
+      metaHtml += `<div class="token-gate-badge">${gateLabels[token.rejectedAt] || token.rejectedAt}</div>`;
+    }
     if (token.outcome === 'rejected' && token.rejectionReason) {
       metaHtml += `<div class="token-rejection">${escapeHtml(formatRejectionReason(token.rejectionReason))}</div>`;
     }
@@ -329,6 +377,14 @@ if (tokenFilter) {
   });
 }
 
+const gateFilter = document.getElementById('gate-filter');
+if (gateFilter) {
+  gateFilter.addEventListener('change', (e) => {
+    currentGateFilter = e.target.value;
+    updateTokenList();
+  });
+}
+
 const resetBtn = document.getElementById('reset-stats-btn');
 if (resetBtn) resetBtn.addEventListener('click', openResetModal);
 
@@ -356,10 +412,41 @@ async function updateAll() {
   ]);
 }
 
-// Initial load, then schedule next poll only after the current one finishes.
-// This prevents overlapping requests when the server is slow.
-async function pollLoop() {
-  await updateAll();
-  setTimeout(pollLoop, POLL_INTERVAL);
+// Real-time refresh via Server-Sent Events.
+// Falls back to 5-second polling if the SSE connection drops.
+let pollTimer = null;
+
+function startFallbackPoll() {
+  if (pollTimer) return;
+  pollTimer = setTimeout(async function tick() {
+    await updateAll();
+    pollTimer = setTimeout(tick, POLL_INTERVAL);
+  }, POLL_INTERVAL);
 }
-pollLoop();
+
+function stopFallbackPoll() {
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+}
+
+function connectSSE() {
+  const es = new EventSource('/api/pipeline-events');
+
+  es.onopen = () => {
+    stopFallbackPoll();
+  };
+
+  es.onmessage = () => {
+    updateAll();
+  };
+
+  es.onerror = () => {
+    es.close();
+    startFallbackPoll();
+    setTimeout(connectSSE, 3000);
+  };
+}
+
+updateAll().then(() => {
+  connectSSE();
+  startFallbackPoll();
+});
