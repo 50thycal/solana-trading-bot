@@ -433,6 +433,7 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       modelBaseRate2x: this.cachedModel.baseRate2x,
       features,
       featureScores,
+      freshBondingCurveState: freshBcs,
     };
 
     // Log the score
