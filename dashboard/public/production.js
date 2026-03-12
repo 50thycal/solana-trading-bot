@@ -412,11 +412,11 @@ async function updateAll() {
   ]);
 }
 
-// Real-time refresh via Server-Sent Events.
-// Falls back to 5-second polling if the SSE connection drops.
+// Polling always runs as the reliable baseline.
+// SSE triggers an immediate extra refresh on top of the regular poll cycle.
 let pollTimer = null;
 
-function startFallbackPoll() {
+function startPoll() {
   if (pollTimer) return;
   pollTimer = setTimeout(async function tick() {
     await updateAll();
@@ -424,16 +424,8 @@ function startFallbackPoll() {
   }, POLL_INTERVAL);
 }
 
-function stopFallbackPoll() {
-  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
-}
-
 function connectSSE() {
   const es = new EventSource('/api/pipeline-events');
-
-  es.onopen = () => {
-    stopFallbackPoll();
-  };
 
   es.onmessage = () => {
     updateAll();
@@ -441,12 +433,11 @@ function connectSSE() {
 
   es.onerror = () => {
     es.close();
-    startFallbackPoll();
-    setTimeout(connectSSE, 3000);
+    setTimeout(connectSSE, 5000);
   };
 }
 
 updateAll().then(() => {
+  startPoll();
   connectSSE();
-  startFallbackPoll();
 });

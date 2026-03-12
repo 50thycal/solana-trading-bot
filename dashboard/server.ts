@@ -1201,20 +1201,44 @@ export class DashboardServer {
     // Send an initial comment to establish the connection
     res.write(':ok\n\n');
 
-    const pipelineStats = getPipelineStats();
-    if (!pipelineStats) {
-      // No stats instance yet — keep connection open, nothing to emit
-      return;
+    let listening = false;
+    let onToken: (() => void) | null = null;
+    let retryTimer: ReturnType<typeof setInterval> | null = null;
+
+    const attachListener = () => {
+      const pipelineStats = getPipelineStats();
+      if (!pipelineStats) return false;
+
+      onToken = () => {
+        res.write('data: token-recorded\n\n');
+      };
+      pipelineStats.on('token-recorded', onToken);
+      listening = true;
+
+      // Stop retry timer once we're attached
+      if (retryTimer) {
+        clearInterval(retryTimer);
+        retryTimer = null;
+      }
+      return true;
+    };
+
+    // Try immediately; if stats aren't ready yet, retry every 2s
+    if (!attachListener()) {
+      retryTimer = setInterval(() => {
+        attachListener();
+      }, 2000);
     }
 
-    const onToken = () => {
-      res.write('data: token-recorded\n\n');
-    };
-    pipelineStats.on('token-recorded', onToken);
-
-    // Clean up listener when the client disconnects
+    // Clean up listener and timer when the client disconnects
     res.on('close', () => {
-      pipelineStats.removeListener('token-recorded', onToken);
+      if (retryTimer) clearInterval(retryTimer);
+      if (onToken) {
+        const pipelineStats = getPipelineStats();
+        if (pipelineStats) {
+          pipelineStats.removeListener('token-recorded', onToken);
+        }
+      }
     });
   }
 

@@ -953,11 +953,11 @@ async function updateAll() {
 // Initial load
 checkDryRunMode(); // Check if dry run mode, show/hide paper P&L panel
 
-// Real-time refresh via Server-Sent Events.
-// Falls back to 5-second polling if the SSE connection drops.
+// Polling always runs as the reliable baseline.
+// SSE triggers an immediate extra refresh on top of the regular poll cycle.
 let pollTimer = null;
 
-function startFallbackPoll() {
+function startPoll() {
   if (pollTimer) return;
   pollTimer = setTimeout(async function tick() {
     await updateAll();
@@ -965,34 +965,25 @@ function startFallbackPoll() {
   }, POLL_INTERVAL);
 }
 
-function stopFallbackPoll() {
-  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
-}
-
 function connectSSE() {
   const es = new EventSource('/api/pipeline-events');
 
-  es.onopen = () => {
-    stopFallbackPoll();
-  };
-
   es.onmessage = () => {
-    // New token entered the pipeline — refresh immediately
+    // New token entered the pipeline — refresh immediately on top of the regular poll
     updateAll();
   };
 
   es.onerror = () => {
     es.close();
-    startFallbackPoll();
     // Reconnect after a short delay
-    setTimeout(connectSSE, 3000);
+    setTimeout(connectSSE, 5000);
   };
 }
 
-// Initial load, then connect for real-time updates
+// Initial load, start polling, then layer SSE on top for instant updates
 updateAll().then(() => {
+  startPoll();
   connectSSE();
-  startFallbackPoll(); // start polling as safety net until SSE connects
 });
 
 // Make functions available globally for onclick handlers
