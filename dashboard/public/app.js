@@ -9,6 +9,7 @@ const API_BASE = '';
 
 // State
 let currentTokenFilter = '';
+let currentGateFilter = '';
 let pipelineStats = null;
 let recentTokens = [];
 let isDryRunMode = false;
@@ -47,6 +48,7 @@ const elements = {
   // Token list
   tokenList: document.getElementById('token-list'),
   tokenFilter: document.getElementById('token-filter'),
+  gateFilter: document.getElementById('gate-filter'),
 
   // Positions
   positionsList: document.getElementById('positions-list'),
@@ -237,15 +239,58 @@ function renderGateStat(gate) {
   `;
 }
 
+/**
+ * Group rejection reasons that contain numeric scores into ranges.
+ * Reasons with scores (e.g. "Research score below threshold: score=29.1 ...") are
+ * bucketed into ranges (0-9, 10-19, etc.) so they don't produce dozens of
+ * single-count entries.  Non-score reasons are kept as-is.
+ */
+function groupRejectionsIntoRanges(reasons) {
+  const RANGE_SIZE = 10;
+  const grouped = [];         // { label, count }
+  const scoreBuckets = {};    // rangeKey -> { low, high, count, baseLabel }
+
+  for (const item of reasons) {
+    const scoreMatch = item.reason.match(/score[=:]?\s*([\d.]+)/i);
+    if (scoreMatch) {
+      const score = parseFloat(scoreMatch[1]);
+      const low = Math.floor(score / RANGE_SIZE) * RANGE_SIZE;
+      const high = low + RANGE_SIZE - 1;
+      const key = `${low}-${high}`;
+      // Extract the base label before the score details
+      const baseLabel = item.reason.replace(/[:]\s*score.*$/i, '').trim();
+      if (!scoreBuckets[key]) {
+        scoreBuckets[key] = { low, high, count: 0, baseLabel };
+      }
+      scoreBuckets[key].count += item.count;
+    } else {
+      grouped.push({ label: formatRejectionReason(item.reason), count: item.count });
+    }
+  }
+
+  // Turn score buckets into entries
+  const bucketEntries = Object.values(scoreBuckets)
+    .sort((a, b) => b.count - a.count)
+    .map(b => ({
+      label: `${formatRejectionReason(b.baseLabel)} (${b.low}–${b.high})`,
+      count: b.count,
+    }));
+
+  // Merge and sort by count descending
+  return grouped.concat(bucketEntries).sort((a, b) => b.count - a.count);
+}
+
 function updateRejectionReasons(reasons) {
   if (!reasons || reasons.length === 0) {
     elements.rejectionList.innerHTML = '<div class="empty-state">No rejections yet</div>';
     return;
   }
 
-  elements.rejectionList.innerHTML = reasons.slice(0, 8).map(item => `
+  const grouped = groupRejectionsIntoRanges(reasons);
+
+  elements.rejectionList.innerHTML = grouped.slice(0, 8).map(item => `
     <div class="rejection-item">
-      <span class="rejection-name">${formatRejectionReason(item.reason)}</span>
+      <span class="rejection-name">${item.label}</span>
       <span class="rejection-count">${item.count}</span>
     </div>
   `).join('');
@@ -256,9 +301,18 @@ function updateRejectionReasons(reasons) {
 function updateTokenList() {
   let tokens = recentTokens;
 
-  // Apply filter
+  // Apply outcome filter
   if (currentTokenFilter) {
     tokens = tokens.filter(t => t.outcome === currentTokenFilter);
+  }
+
+  // Apply gate filter
+  if (currentGateFilter) {
+    if (currentGateFilter === 'passed') {
+      tokens = tokens.filter(t => t.outcome === 'bought');
+    } else {
+      tokens = tokens.filter(t => t.rejectedAt === currentGateFilter);
+    }
   }
 
   if (tokens.length === 0) {
@@ -276,6 +330,10 @@ function renderTokenItem(token) {
   const symbol = token.symbol ? `($${token.symbol})` : '';
 
   let metaHtml = `<div class="token-time">${time}</div>`;
+  if (token.outcome === 'rejected' && token.rejectedAt) {
+    const gateLabels = { 'cheap-gates': 'Cheap Gates', 'deep-filters': 'Deep Filters', 'sniper-gate': 'Sniper Gate', 'research-score-gate': 'Research Score' };
+    metaHtml += `<div class="token-gate-badge">${gateLabels[token.rejectedAt] || token.rejectedAt}</div>`;
+  }
   if (token.outcome === 'rejected' && token.rejectionReason) {
     metaHtml += `<div class="token-rejection">${formatRejectionReason(token.rejectionReason)}</div>`;
   }
@@ -846,6 +904,13 @@ elements.tokenFilter.addEventListener('change', (e) => {
   updateTokenList();
 });
 
+if (elements.gateFilter) {
+  elements.gateFilter.addEventListener('change', (e) => {
+    currentGateFilter = e.target.value;
+    updateTokenList();
+  });
+}
+
 elements.resetStatsBtn.addEventListener('click', openResetModal);
 elements.confirmResetBtn.addEventListener('click', confirmResetStats);
 
@@ -888,13 +953,47 @@ async function updateAll() {
 // Initial load
 checkDryRunMode(); // Check if dry run mode, show/hide paper P&L panel
 
-// Start polling — schedule next poll only after current one finishes
-// to prevent overlapping requests when the server is slow.
-async function pollLoop() {
-  await updateAll();
-  setTimeout(pollLoop, POLL_INTERVAL);
+// Real-time refresh via Server-Sent Events.
+// Falls back to 5-second polling if the SSE connection drops.
+let pollTimer = null;
+
+function startFallbackPoll() {
+  if (pollTimer) return;
+  pollTimer = setTimeout(async function tick() {
+    await updateAll();
+    pollTimer = setTimeout(tick, POLL_INTERVAL);
+  }, POLL_INTERVAL);
 }
-pollLoop();
+
+function stopFallbackPoll() {
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+}
+
+function connectSSE() {
+  const es = new EventSource('/api/pipeline-events');
+
+  es.onopen = () => {
+    stopFallbackPoll();
+  };
+
+  es.onmessage = () => {
+    // New token entered the pipeline — refresh immediately
+    updateAll();
+  };
+
+  es.onerror = () => {
+    es.close();
+    startFallbackPoll();
+    // Reconnect after a short delay
+    setTimeout(connectSSE, 3000);
+  };
+}
+
+// Initial load, then connect for real-time updates
+updateAll().then(() => {
+  connectSSE();
+  startFallbackPoll(); // start polling as safety net until SSE connects
+});
 
 // Make functions available globally for onclick handlers
 window.showTokenDetail = showTokenDetail;

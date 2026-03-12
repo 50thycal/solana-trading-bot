@@ -5,6 +5,7 @@
  * In-memory stats that can be reset by the user.
  */
 
+import { EventEmitter } from 'events';
 import { PipelineResult } from './pipeline';
 import { SniperGateData, ResearchScoreGateData } from './types';
 import { logger } from '../helpers';
@@ -123,7 +124,7 @@ const RESEARCH_SCORE_GATE = [
 
 const MAX_RECENT_TOKENS = 100;
 
-export class PipelineStats {
+export class PipelineStats extends EventEmitter {
   private startedAt: number;
   private tokensDetected: number = 0;
   private tokensBought: number = 0;
@@ -151,6 +152,7 @@ export class PipelineStats {
   private recentTokens: RecentToken[] = [];
 
   constructor() {
+    super();
     this.startedAt = Date.now();
     this.cheapGateStats = new Map();
     this.deepFilterStats = new Map();
@@ -233,6 +235,9 @@ export class PipelineStats {
       // Record which gate rejected and track the reason
       this.recordRejection(result.rejectedAt, result.rejectionReason);
     }
+
+    // Emit event so SSE clients can refresh immediately
+    this.emit('token-recorded');
   }
 
   /**

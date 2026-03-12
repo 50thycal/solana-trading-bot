@@ -205,6 +205,12 @@ export class DashboardServer {
       return;
     }
 
+    // SSE endpoint for real-time token notifications
+    if (pathname === '/api/pipeline-events') {
+      this.handlePipelineSSE(res);
+      return;
+    }
+
     // API endpoints
     if (pathname.startsWith('/api/')) {
       await this.handleApiRequest(pathname, url, res);
@@ -1179,6 +1185,37 @@ export class DashboardServer {
       topRejectionReasons: sortedRejections.slice(0, 10),
       blacklist: dbStats.blacklist,
     };
+  }
+
+  /**
+   * SSE endpoint: streams a 'token-recorded' event whenever a new token enters the pipeline.
+   * Dashboards connect here and trigger a full refresh on each event instead of fixed-interval polling.
+   */
+  private handlePipelineSSE(res: http.ServerResponse): void {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+
+    // Send an initial comment to establish the connection
+    res.write(':ok\n\n');
+
+    const pipelineStats = getPipelineStats();
+    if (!pipelineStats) {
+      // No stats instance yet — keep connection open, nothing to emit
+      return;
+    }
+
+    const onToken = () => {
+      res.write('data: token-recorded\n\n');
+    };
+    pipelineStats.on('token-recorded', onToken);
+
+    // Clean up listener when the client disconnects
+    res.on('close', () => {
+      pipelineStats.removeListener('token-recorded', onToken);
+    });
   }
 
   /**
