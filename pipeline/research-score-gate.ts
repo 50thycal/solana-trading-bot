@@ -26,7 +26,8 @@ import {
   ScoringModel,
   ResearchScoreGateData,
 } from './types';
-import { logger, getBondingCurveState, BondingCurveState } from '../helpers';
+import { logger, getBondingCurveState, BondingCurveState, sleep } from '../helpers';
+import { fetchAndAnalyzeTransactions, WalletAnalysis } from './sniper-gate';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -71,13 +72,24 @@ function bnToSol(bn: BN): number {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
+ * Fresh transaction data fetched at checkpoint age, overriding stale sniper gate counts.
+ */
+interface FreshTransactionData {
+  totalBuys: number;
+  totalSells: number;
+  uniqueBuyers: number;
+  uniqueSellers: number;
+}
+
+/**
  * Build a TokenFeatureVector from pipeline context data.
  * Uses BondingCurveState from deep filters and SniperGateData from sniper gate.
  * When a fresh bonding curve state is provided, computes priceChangeFromInitial
  * and priceAcceleration by comparing initial vs current prices.
+ * When freshTxData is provided, uses it for transaction counts instead of stale sniper gate data.
  * Derives momentum features from sniper gate checkHistory where possible.
  */
-function buildFeatureVector(ctx: PipelineContext, freshBcs?: BondingCurveState): TokenFeatureVector {
+function buildFeatureVector(ctx: PipelineContext, freshBcs?: BondingCurveState, freshTxData?: FreshTransactionData): TokenFeatureVector {
   const initialBcs = ctx.deepFilters!.bondingCurveState;
   const sniper = ctx.sniperGate;
   const detection = ctx.detection;
@@ -110,12 +122,12 @@ function buildFeatureVector(ctx: PipelineContext, freshBcs?: BondingCurveState):
     priceAcceleration = priceChangeFromInitial / secondsSinceCreation;
   }
 
-  // Transaction data from sniper gate
-  const buyCount = sniper ? sniper.totalBuys : 0;
-  const sellCount = sniper ? sniper.totalSells : 0;
+  // Transaction data: prefer fresh checkpoint data, fall back to sniper gate
+  const buyCount = freshTxData ? freshTxData.totalBuys : (sniper ? sniper.totalBuys : 0);
+  const sellCount = freshTxData ? freshTxData.totalSells : (sniper ? sniper.totalSells : 0);
   const totalTxCount = buyCount + sellCount;
-  const uniqueBuyers = sniper ? sniper.organicBuyerCount : 0;
-  const uniqueSellers = sniper ? sniper.sniperExitCount : 0;
+  const uniqueBuyers = freshTxData ? freshTxData.uniqueBuyers : (sniper ? sniper.organicBuyerCount : 0);
+  const uniqueSellers = freshTxData ? freshTxData.uniqueSellers : (sniper ? sniper.sniperExitCount : 0);
 
   // Derived features
   const buyVelocity = secondsSinceCreation > 0 ? buyCount / secondsSinceCreation : 0;
@@ -399,7 +411,28 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       };
     }
 
-    // Fetch fresh bonding curve state for price comparison
+    // ─── Wait until token reaches checkpoint age ───────────────────────
+    const elapsedMs = Date.now() - context.detection.detectedAt;
+    const targetMs = this.config.checkpoint * 1000;
+    if (elapsedMs < targetMs) {
+      const waitMs = targetMs - elapsedMs;
+      if (buf) {
+        buf.info(`Research score gate: waiting ${Math.round(waitMs)}ms for checkpoint age (${this.config.checkpoint}s)`);
+      }
+      logger.debug(
+        { stage: this.name, mint: mintStr, elapsedMs, targetMs, waitMs },
+        '[research-score-gate] Waiting for token to reach checkpoint age',
+      );
+      await sleep(waitMs);
+    } else {
+      logger.debug(
+        { stage: this.name, mint: mintStr, elapsedMs, targetMs },
+        '[research-score-gate] Token already past checkpoint age — scoring immediately',
+      );
+    }
+
+    // ─── Fetch fresh data at checkpoint age ───────────────────────────
+    // Refresh bonding curve state for price comparison
     let freshBcs: BondingCurveState | undefined;
     try {
       const result = await getBondingCurveState(this.connection, context.detection.bondingCurve);
@@ -418,8 +451,39 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       );
     }
 
-    // Build feature vector from pipeline context + fresh bonding curve
-    const features = buildFeatureVector(context, freshBcs);
+    // Re-fetch transaction data at checkpoint age for accurate counts
+    let freshTxData: FreshTransactionData | undefined;
+    try {
+      const sniperSlotThreshold = context.sniperGate?.sniperSlotThreshold ?? 3;
+      const signatureLimit = context.sniperGate?.signatureLimit ?? 50;
+      const analysis: WalletAnalysis = await fetchAndAnalyzeTransactions(
+        this.connection,
+        context.detection.bondingCurve,
+        context.detection.slot,
+        sniperSlotThreshold,
+        signatureLimit,
+      );
+      // Count sniper exits as sellers
+      const sniperExitCount = [...analysis.sniperWallets.values()].filter(v => v === 'exited').length;
+      freshTxData = {
+        totalBuys: analysis.totalBuys,
+        totalSells: analysis.totalSells,
+        uniqueBuyers: analysis.organicWallets.size,
+        uniqueSellers: sniperExitCount,
+      };
+      logger.debug(
+        { stage: this.name, mint: mintStr, ...freshTxData },
+        '[research-score-gate] Fresh transaction data fetched at checkpoint age',
+      );
+    } catch (err) {
+      logger.debug(
+        { stage: this.name, mint: mintStr, error: err instanceof Error ? err.message : String(err) },
+        '[research-score-gate] Fresh transaction fetch failed — using stale sniper gate data',
+      );
+    }
+
+    // Build feature vector from pipeline context + fresh data at checkpoint age
+    const features = buildFeatureVector(context, freshBcs, freshTxData);
 
     // Score the token
     const { score, featureScores } = scoreToken(this.cachedModel, features);
