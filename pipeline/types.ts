@@ -221,6 +221,12 @@ export interface SniperGateData {
 
   /** Full time-series of every poll result — populated when the gate runs all maxChecks */
   checkHistory: SniperGateCheckResult[];
+
+  /** Sniper slot threshold used for wallet classification (passed through for downstream re-fetch) */
+  sniperSlotThreshold: number;
+
+  /** Signature limit used per poll (passed through for downstream re-fetch) */
+  signatureLimit: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

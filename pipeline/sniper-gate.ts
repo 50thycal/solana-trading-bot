@@ -108,7 +108,7 @@ const DEFAULT_CONFIG: SniperGateConfig = {
 /**
  * Per-poll wallet state tracking
  */
-interface WalletAnalysis {
+export interface WalletAnalysis {
   /** Wallets that bought early (snipers): wallet -> 'bought' | 'exited' */
   sniperWallets: Map<string, 'bought' | 'exited'>;
   /** Wallets that bought later (organic) */
@@ -133,7 +133,7 @@ interface WalletAnalysis {
  * @param creationSlot - Token creation slot (from detection event)
  * @param sniperSlotThreshold - Max slot delta to classify as sniper
  */
-async function fetchAndAnalyzeTransactions(
+export async function fetchAndAnalyzeTransactions(
   connection: Connection,
   bondingCurve: PublicKey,
   creationSlot: number,
@@ -341,6 +341,8 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
           logOnly: false,
           rpcDegraded: false,
           checkHistory: [],
+          sniperSlotThreshold: this.config.sniperSlotThreshold,
+          signatureLimit: this.config.signatureLimit,
         },
         durationMs: Date.now() - startTime,
       };
@@ -498,6 +500,8 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
             logOnly: this.config.logOnly,
             rpcDegraded,
             checkHistory,
+            sniperSlotThreshold: this.config.sniperSlotThreshold,
+            signatureLimit: this.config.signatureLimit,
           },
           durationMs: duration,
         };
@@ -563,6 +567,8 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
           logOnly: true,
           rpcDegraded,
           checkHistory,
+          sniperSlotThreshold: this.config.sniperSlotThreshold,
+          signatureLimit: this.config.signatureLimit,
         },
         durationMs: duration,
       };
@@ -603,6 +609,8 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
           logOnly: this.config.logOnly,
           rpcDegraded: true,
           checkHistory,
+          sniperSlotThreshold: this.config.sniperSlotThreshold,
+          signatureLimit: this.config.signatureLimit,
         },
         durationMs: duration,
       };
@@ -685,6 +693,8 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
         logOnly: this.config.logOnly,
         rpcDegraded: false,
         checkHistory,
+        sniperSlotThreshold: this.config.sniperSlotThreshold,
+        signatureLimit: this.config.signatureLimit,
       },
     };
   }
