@@ -17,3 +17,6 @@ export * from './pipeline';
 
 // Pipeline stats tracking
 export * from './pipeline-stats';
+
+// Trade feedback loop
+export * from './trade-feedback-loop';

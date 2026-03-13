@@ -367,6 +367,16 @@ export class DashboardServer {
           data = this.getSmokeTestAnalytics(url.searchParams);
           break;
 
+        case '/api/trade-feedback': {
+          // Return the latest trade feedback report from the most recent smoke test
+          const { getLastTradeFeedbackReport } = await import('../smoke-test');
+          const feedbackReport = getLastTradeFeedbackReport();
+          data = feedbackReport
+            ? { status: 'available', report: feedbackReport }
+            : { status: 'no_report', message: 'No trade feedback report available yet' };
+          break;
+        }
+
         case '/api/env-reference':
           data = this.getApiEnvReference();
           break;

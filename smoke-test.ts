@@ -108,6 +108,8 @@ import {
   getPipeline,
   DetectionEvent,
   initPipelineStats,
+  PipelineContext,
+  TradeFeedbackReporter,
 } from './pipeline';
 import {
   initPumpFunFilters,
@@ -284,6 +286,14 @@ function getReportsFilePath(): string {
 
 export function getSmokeTestReport(): SmokeTestReport | null {
   return lastReport;
+}
+
+// Trade feedback report storage (for dashboard access)
+import type { TradeOutcomeReport } from './pipeline/trade-feedback-loop';
+let lastFeedbackReport: TradeOutcomeReport | null = null;
+
+export function getLastTradeFeedbackReport(): TradeOutcomeReport | null {
+  return lastFeedbackReport;
 }
 
 /**
@@ -568,6 +578,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     executor: TransactionExecutor | undefined;
     buyExecutorUsed: string | undefined;
     sellExecutorUsed: string | undefined;
+    pipelineContext: PipelineContext | null;
   } = {
     connection: null,
     wallet: null,
@@ -592,6 +603,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     executor: undefined,
     buyExecutorUsed: undefined,
     sellExecutorUsed: undefined,
+    pipelineContext: null,
   };
 
   // Wrap the entire test body in try/finally to guarantee liveProgress is
@@ -1050,7 +1062,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     bondingCurve: state.passedBondingCurve?.toString() || '',
   } : undefined;
 
-  return buildReport(
+  const report = buildReport(
     startedAt, steps, walletBalanceBefore, walletBalanceAfter, state.exitTrigger,
     buyFailures, tokensEvaluated, tokensPipelinePassed, state.actualSolSpent, tradeAmount,
     tradedToken, state.buyTimestamp || undefined, state.sellTimestamp || undefined,
@@ -1069,6 +1081,44 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
       sellExecutorUsed: state.sellExecutorUsed,
     },
   );
+
+  // ── Trade feedback loop ──────────────────────────────────────────────
+  // Send trade outcome back to the research bot for model improvement.
+  // Only fires on PASS with a completed buy+sell cycle and research score data.
+  if (
+    report.overallResult === 'PASS' &&
+    state.buyTimestamp > 0 &&
+    state.sellTimestamp > 0 &&
+    state.pipelineContext?.researchScore &&
+    state.passedToken
+  ) {
+    try {
+      const feedbackReporter = new TradeFeedbackReporter(config.researchBotUrl);
+      const feedbackReport = feedbackReporter.buildReport({
+        tokenMint: state.passedToken.mint.toString(),
+        tokenSymbol: state.passedToken.symbol || 'Unknown',
+        researchScoreData: state.pipelineContext.researchScore,
+        entryAmountSol: state.actualSolSpent ?? tradeAmount,
+        exitAmountSol: state.sellSolReceived,
+        buyTimestamp: state.buyTimestamp,
+        sellTimestamp: state.sellTimestamp,
+        exitTrigger: state.exitTrigger,
+        buySlippagePercent: state.buySlippagePercent,
+        sellSlippagePercent: state.sellSlippagePercent,
+        buyOverheadSol: report.feeBreakdown?.buyOverhead,
+        highWaterMarkPercent: state.highWaterMarkPercent,
+      });
+      lastFeedbackReport = feedbackReport;
+      await feedbackReporter.sendFeedback(feedbackReport);
+    } catch (feedbackError) {
+      logger.warn(
+        { error: feedbackError instanceof Error ? feedbackError.message : String(feedbackError) },
+        '[smoke-test] Trade feedback loop failed (non-fatal)',
+      );
+    }
+  }
+
+  return report;
 
   } finally {
     // Close run journal entry with per-run stats from this smoke test cycle
@@ -1136,6 +1186,7 @@ async function runListenPipelineAndBuy(
     executor: TransactionExecutor | undefined;
     buyExecutorUsed: string | undefined;
     sellExecutorUsed: string | undefined;
+    pipelineContext: PipelineContext | null;
   },
   tradeAmount: number,
   timeoutMs: number,
@@ -1275,6 +1326,7 @@ async function runListenPipelineAndBuy(
             state.buySlippagePercent = buyResult.slippagePercent;
             state.buyExpectedTokens = buyResult.expectedTokens;
             state.buyExecutorUsed = buyResult.executorUsed;
+            state.pipelineContext = result.context;
             buySucceeded = true;
 
             clearTimeout(overallTimeout);
