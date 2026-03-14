@@ -25,6 +25,7 @@ import {
   RejectionReasons,
   StableGateData,
 } from './types';
+import { BondingCurveState } from '../helpers/pumpfun';
 import { logger, getBondingCurveState, sleep } from '../helpers';
 import { fetchAndAnalyzeTransactions } from './sniper-gate';
 
@@ -134,6 +135,7 @@ export class StableGateStage implements PipelineStage<PipelineContext, StableGat
       totalBuys: 0,
       totalSells: 0,
     };
+    let lastFreshBcs: BondingCurveState | undefined;
 
     for (let attempt = 1; attempt <= totalAttempts; attempt++) {
       const isRetry = attempt > 1;
@@ -208,6 +210,7 @@ export class StableGateStage implements PipelineStage<PipelineContext, StableGat
           const bcs = await getBondingCurveState(this.connection, context.detection.bondingCurve);
           if (bcs) {
             freshSolInCurve = bnToSol(bcs.realSolReserves);
+            lastFreshBcs = bcs;
           } else {
             curveCheckFailed = true;
           }
@@ -220,6 +223,7 @@ export class StableGateStage implements PipelineStage<PipelineContext, StableGat
           const bcs = await getBondingCurveState(this.connection, context.detection.bondingCurve);
           if (bcs) {
             freshSolInCurve = bnToSol(bcs.realSolReserves);
+            lastFreshBcs = bcs;
           } else {
             curveCheckFailed = true;
           }
@@ -301,6 +305,7 @@ export class StableGateStage implements PipelineStage<PipelineContext, StableGat
           curveReValidation: lastCurveResult,
           sellRatioCheck: lastSellResult,
           totalWaitMs: Date.now() - startTime,
+          freshBondingCurveState: lastFreshBcs,
         };
 
         if (this.config.logOnly) {
@@ -354,6 +359,7 @@ export class StableGateStage implements PipelineStage<PipelineContext, StableGat
       curveReValidation: lastCurveResult,
       sellRatioCheck: lastSellResult,
       totalWaitMs: Date.now() - startTime,
+      freshBondingCurveState: lastFreshBcs,
     };
 
     // Determine the primary rejection reason based on which checks failed

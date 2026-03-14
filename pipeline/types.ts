@@ -342,6 +342,8 @@ export interface StableGateData {
   };
   /** Total time spent in this gate including retries (ms) */
   totalWaitMs: number;
+  /** Fresh bonding curve state from the last fetch (for price drift baseline) */
+  freshBondingCurveState?: BondingCurveState;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
