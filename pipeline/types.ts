@@ -308,6 +308,43 @@ export interface ResearchScoreGateData {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// STABLE GATE DATA
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Data produced by the stable gate stage (Stage 6).
+ * Contains results from all three sub-checks plus retry metadata.
+ */
+export interface StableGateData {
+  /** Which attempt succeeded (1-based), or total attempts if rejected */
+  attemptNumber: number;
+  /** Total attempts made */
+  totalAttempts: number;
+  /** Price stabilization sub-check results */
+  priceStabilization: {
+    passed: boolean;
+    snapshots: Array<{ priceSol: number; timestamp: number }>;
+    priceChangePct: number;
+  };
+  /** Bonding curve re-validation sub-check results */
+  curveReValidation: {
+    passed: boolean;
+    freshSolInCurve: number;
+    minRequired: number;
+  };
+  /** Sell ratio hard gate sub-check results */
+  sellRatioCheck: {
+    passed: boolean;
+    sellRatio: number;
+    maxAllowed: number;
+    totalBuys: number;
+    totalSells: number;
+  };
+  /** Total time spent in this gate including retries (ms) */
+  totalWaitMs: number;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // PIPELINE CONTEXT
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -331,6 +368,9 @@ export interface PipelineContext {
 
   /** Data from research score gate (if passed) */
   researchScore?: ResearchScoreGateData;
+
+  /** Data from stable gate (if passed) */
+  stableGate?: StableGateData;
 
   /** Log buffer for non-interleaved output */
   logBuffer?: TokenLogBuffer;
@@ -404,6 +444,12 @@ export const RejectionReasons = {
 
   // Research Score Gate
   RESEARCH_SCORE_LOW: 'Research score below threshold',
+
+  // Stable Gate
+  STABLE_GATE_PRICE_FALLING: 'Price still falling after max retries',
+  STABLE_GATE_CURVE_DEPLETED: 'Bonding curve SOL below minimum after dump',
+  STABLE_GATE_HIGH_SELL_RATIO: 'Sell ratio exceeds maximum threshold',
+  STABLE_GATE_TIMEOUT: 'Stable gate exhausted all retry attempts',
 } as const;
 
 export type RejectionReason = typeof RejectionReasons[keyof typeof RejectionReasons];

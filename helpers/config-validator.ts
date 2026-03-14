@@ -105,6 +105,17 @@ export interface ValidatedConfig {
   researchScoreLogOnly: boolean;
   researchScoreModelRefreshInterval: number;
 
+  // Stable Gate (Pipeline Stage 6)
+  stableGateEnabled: boolean;
+  stableGateLogOnly: boolean;
+  stableGateMaxRetries: number;
+  stableGateRetryDelaySeconds: number;
+  stableGatePriceSnapshots: number;
+  stableGateSnapshotIntervalMs: number;
+  stableGateMaxPriceDropPercent: number;
+  stableGateMinSolInCurve: number;
+  stableGateMaxSellRatio: number;
+
   // Smoke Test (applies when botMode='smoke')
   smokeTestTimeoutMs: number;
   smokeTestRuns: number;
@@ -470,6 +481,48 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'RESEARCH_SCORE_MODEL_REFRESH_INTERVAL', message: 'cannot be negative' });
   }
 
+  // === STABLE GATE (Pipeline Stage 6) ===
+  // Final buy-readiness check: price stabilization, curve re-validation, sell ratio.
+  // Retries up to maxRetries times before rejecting.
+
+  const stableGateEnabled = requireBoolean('STABLE_GATE_ENABLED', true);
+  const stableGateLogOnly = requireBoolean('STABLE_GATE_LOG_ONLY', false);
+
+  const stableGateMaxRetries = requireNumber('STABLE_GATE_MAX_RETRIES', 5);
+  if (stableGateMaxRetries < 0) {
+    errors.push({ variable: 'STABLE_GATE_MAX_RETRIES', message: 'cannot be negative' });
+  }
+
+  const stableGateRetryDelaySeconds = requireNumber('STABLE_GATE_RETRY_DELAY_SECONDS', 5);
+  if (stableGateRetryDelaySeconds < 0) {
+    errors.push({ variable: 'STABLE_GATE_RETRY_DELAY_SECONDS', message: 'cannot be negative' });
+  }
+
+  const stableGatePriceSnapshots = requireNumber('STABLE_GATE_PRICE_SNAPSHOTS', 3);
+  if (stableGatePriceSnapshots < 2) {
+    errors.push({ variable: 'STABLE_GATE_PRICE_SNAPSHOTS', message: 'must be >= 2 (need at least 2 snapshots for comparison)' });
+  }
+
+  const stableGateSnapshotIntervalMs = requireNumber('STABLE_GATE_SNAPSHOT_INTERVAL_MS', 500);
+  if (stableGateSnapshotIntervalMs < 100) {
+    errors.push({ variable: 'STABLE_GATE_SNAPSHOT_INTERVAL_MS', message: 'must be >= 100' });
+  }
+
+  const stableGateMaxPriceDropPercent = requireNumber('STABLE_GATE_MAX_PRICE_DROP_PERCENT', 5);
+  if (stableGateMaxPriceDropPercent < 0) {
+    errors.push({ variable: 'STABLE_GATE_MAX_PRICE_DROP_PERCENT', message: 'cannot be negative' });
+  }
+
+  const stableGateMinSolInCurve = requireNumber('STABLE_GATE_MIN_SOL_IN_CURVE', 0);
+  if (stableGateMinSolInCurve < 0) {
+    errors.push({ variable: 'STABLE_GATE_MIN_SOL_IN_CURVE', message: 'cannot be negative' });
+  }
+
+  const stableGateMaxSellRatio = requireNumber('STABLE_GATE_MAX_SELL_RATIO', 0.4);
+  if (stableGateMaxSellRatio < 0 || stableGateMaxSellRatio > 1) {
+    errors.push({ variable: 'STABLE_GATE_MAX_SELL_RATIO', message: 'must be between 0 and 1' });
+  }
+
   // === TRAILING STOP LOSS ===
   const trailingStopEnabled = requireBoolean('TRAILING_STOP_ENABLED', false);
 
@@ -650,6 +703,15 @@ export function validateConfig(): ValidatedConfig {
     researchScoreCheckpoint,
     researchScoreLogOnly,
     researchScoreModelRefreshInterval,
+    stableGateEnabled,
+    stableGateLogOnly,
+    stableGateMaxRetries,
+    stableGateRetryDelaySeconds,
+    stableGatePriceSnapshots,
+    stableGateSnapshotIntervalMs,
+    stableGateMaxPriceDropPercent,
+    stableGateMinSolInCurve,
+    stableGateMaxSellRatio,
     trailingStopEnabled,
     trailingStopActivationPercent,
     trailingStopDistancePercent,

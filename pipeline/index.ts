@@ -11,6 +11,7 @@ export * from './types';
 export * from './cheap-gates';
 export * from './deep-filters';
 export * from './research-score-gate';
+export * from './stable-gate';
 
 // Pipeline orchestrator
 export * from './pipeline';

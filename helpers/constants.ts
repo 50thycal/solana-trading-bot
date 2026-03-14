@@ -112,6 +112,19 @@ export const SNIPER_GATE_LOG_ONLY = config.sniperGateLogOnly;
 export const SNIPER_GATE_SIGNATURE_LIMIT = config.sniperGateSignatureLimit;
 
 // ============================================================================
+// STABLE GATE
+// ============================================================================
+export const STABLE_GATE_ENABLED = config.stableGateEnabled;
+export const STABLE_GATE_LOG_ONLY = config.stableGateLogOnly;
+export const STABLE_GATE_MAX_RETRIES = config.stableGateMaxRetries;
+export const STABLE_GATE_RETRY_DELAY_SECONDS = config.stableGateRetryDelaySeconds;
+export const STABLE_GATE_PRICE_SNAPSHOTS = config.stableGatePriceSnapshots;
+export const STABLE_GATE_SNAPSHOT_INTERVAL_MS = config.stableGateSnapshotIntervalMs;
+export const STABLE_GATE_MAX_PRICE_DROP_PERCENT = config.stableGateMaxPriceDropPercent;
+export const STABLE_GATE_MIN_SOL_IN_CURVE = config.stableGateMinSolInCurve;
+export const STABLE_GATE_MAX_SELL_RATIO = config.stableGateMaxSellRatio;
+
+// ============================================================================
 // TRAILING STOP
 // ============================================================================
 export const TRAILING_STOP_ENABLED = config.trailingStopEnabled;
