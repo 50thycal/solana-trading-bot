@@ -572,6 +572,18 @@ const runListener = async () => {
       logOnly: config.researchScoreLogOnly,
       modelRefreshIntervalMs: config.researchScoreModelRefreshInterval,
     },
+    stableGate: {
+      enabled: config.stableGateEnabled,
+      logOnly: config.stableGateLogOnly,
+      maxRetries: config.stableGateMaxRetries,
+      retryDelaySeconds: config.stableGateRetryDelaySeconds,
+      priceSnapshots: config.stableGatePriceSnapshots,
+      snapshotIntervalMs: config.stableGateSnapshotIntervalMs,
+      maxPriceDropPercent: config.stableGateMaxPriceDropPercent,
+      minSolInCurve: config.stableGateMinSolInCurve,
+      fallbackMinSolInCurve: config.pumpfunMinSolInCurve,
+      maxSellRatio: config.stableGateMaxSellRatio,
+    },
     verbose: LOG_LEVEL === 'debug' || LOG_LEVEL === 'trace',
   });
   logger.info('[pipeline] pump.fun processing pipeline initialized');

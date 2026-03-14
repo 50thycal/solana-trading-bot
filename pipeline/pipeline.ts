@@ -20,11 +20,13 @@ import {
   DeepFiltersData,
   SniperGateData,
   ResearchScoreGateData,
+  StableGateData,
 } from './types';
 import { CheapGatesStage, CheapGatesConfig } from './cheap-gates';
 import { DeepFiltersStage, DeepFiltersConfig } from './deep-filters';
 import { SniperGateStage, SniperGateConfig } from './sniper-gate';
 import { ResearchScoreGateStage, ResearchScoreGateConfig } from './research-score-gate';
+import { StableGateStage, StableGateConfig } from './stable-gate';
 import { logger } from '../helpers';
 import { TokenLogBuffer } from '../helpers/token-log-buffer';
 
@@ -69,6 +71,9 @@ export interface PipelineConfig {
   /** Research score gate configuration (Stage 5) */
   researchScoreGate: Partial<ResearchScoreGateConfig>;
 
+  /** Stable gate configuration (Stage 6) */
+  stableGate: Partial<StableGateConfig>;
+
   /** Enable verbose logging */
   verbose: boolean;
 }
@@ -78,6 +83,7 @@ const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   deepFilters: {},
   sniperGate: {},
   researchScoreGate: {},
+  stableGate: {},
   verbose: false,
 };
 
@@ -94,7 +100,8 @@ const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
  * 3. Deep Filters (bonding curve state, SOL filters, scoring)
  * 4. Sniper Gate (bot exit monitoring + organic demand validation)
  * 5. Research Score Gate (research bot model scoring)
-   * 6. Execute (external - buys the token)
+   * 6. Stable Gate (price stabilization, curve re-validation, sell ratio)
+   * 7. Execute (external - buys the token)
  */
 export class PumpFunPipeline {
   private connection: Connection;
@@ -105,6 +112,7 @@ export class PumpFunPipeline {
   private deepFiltersStage: DeepFiltersStage;
   private sniperGateStage: SniperGateStage;
   private researchScoreGateStage: ResearchScoreGateStage;
+  private stableGateStage: StableGateStage;
 
   constructor(
     connection: Connection,
@@ -120,14 +128,16 @@ export class PumpFunPipeline {
     this.deepFiltersStage = new DeepFiltersStage(connection, this.config.deepFilters);
     this.sniperGateStage = new SniperGateStage(connection, this.config.sniperGate);
     this.researchScoreGateStage = new ResearchScoreGateStage(connection, this.config.researchScoreGate);
+    this.stableGateStage = new StableGateStage(connection, this.config.stableGate);
 
     logger.info(
       {
-        stages: ['cheap-gates', 'deep-filters', 'sniper-gate', 'research-score-gate'],
+        stages: ['cheap-gates', 'deep-filters', 'sniper-gate', 'research-score-gate', 'stable-gate'],
         cheapGatesConfig: this.config.cheapGates,
         deepFiltersConfig: this.config.deepFilters,
         sniperGateConfig: this.config.sniperGate,
         researchScoreGateConfig: this.config.researchScoreGate,
+        stableGateConfig: this.config.stableGate,
       },
       '[pipeline] Initialized'
     );
@@ -231,6 +241,23 @@ export class PumpFunPipeline {
       }
 
       context.researchScore = researchScoreResult.data as ResearchScoreGateData;
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // STAGE 6: Stable Gate
+      // ═══════════════════════════════════════════════════════════════════════════
+      const stableGateResult = await this.stableGateStage.execute(context);
+      stageResults.push(stableGateResult);
+
+      if (!stableGateResult.pass) {
+        context.rejection = {
+          stage: stableGateResult.stage,
+          reason: stableGateResult.reason,
+          timestamp: Date.now(),
+        };
+        return this.buildResult(false, context, stageResults, pipelineStart, stableGateResult);
+      }
+
+      context.stableGate = stableGateResult.data as StableGateData;
 
       // ═══════════════════════════════════════════════════════════════════════════
       // ALL STAGES PASSED
