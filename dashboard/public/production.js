@@ -129,6 +129,10 @@ async function updatePipelineStats() {
   const lastRS = researchScoreGate[researchScoreGate.length - 1];
   setFunnelValue('funnel-research-score-gate', lastRS ? lastRS.passed : 0);
 
+  const stableGateArr = data.gateStats?.stableGate || [];
+  const lastStableGate = stableGateArr[stableGateArr.length - 1];
+  setFunnelValue('funnel-stable-gate', lastStableGate ? lastStableGate.passed : 0);
+
   setFunnelValue('funnel-bought', bought);
 
   // Gate stats
@@ -317,7 +321,7 @@ function updateTokenList() {
     const symbol = token.symbol ? `($${token.symbol})` : '';
     let metaHtml = `<div class="token-time">${time}</div>`;
     if (token.outcome === 'rejected' && token.rejectedAt) {
-      const gateLabels = { 'cheap-gates': 'Cheap Gates', 'deep-filters': 'Deep Filters', 'sniper-gate': 'Sniper Gate', 'research-score-gate': 'Research Score' };
+      const gateLabels = { 'cheap-gates': 'Cheap Gates', 'deep-filters': 'Deep Filters', 'sniper-gate': 'Sniper Gate', 'research-score-gate': 'Research Score', 'stable-gate': 'Stable Gate' };
       metaHtml += `<div class="token-gate-badge">${gateLabels[token.rejectedAt] || token.rejectedAt}</div>`;
     }
     if (token.outcome === 'rejected' && token.rejectionReason) {

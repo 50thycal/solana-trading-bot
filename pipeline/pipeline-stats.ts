@@ -7,7 +7,7 @@
 
 import { EventEmitter } from 'events';
 import { PipelineResult } from './pipeline';
-import { SniperGateData, ResearchScoreGateData } from './types';
+import { SniperGateData, ResearchScoreGateData, StableGateData } from './types';
 import { logger } from '../helpers';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -44,6 +44,7 @@ export interface PipelineStatsSnapshot {
     deepFilters: GateStats[];
     sniperGate: GateStats[];
     researchScoreGate: GateStats[];
+    stableGate: GateStats[];
   };
 
   /** Whether the sniper gate is active */
@@ -85,6 +86,15 @@ export interface RecentToken {
   /** Research score gate fields */
   researchScore?: number;
   researchSignal?: string;
+  /** Stable gate fields */
+  stableAttempt?: number;
+  stableTotalAttempts?: number;
+  stableTotalWaitMs?: number;
+  stablePricePassed?: boolean;
+  stableCurvePassed?: boolean;
+  stableSellPassed?: boolean;
+  stablePriceChangePct?: number;
+  stableSellRatio?: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -118,6 +128,11 @@ const RESEARCH_SCORE_GATE = [
   { name: 'research-score', displayName: 'Research Score Gate' },
 ];
 
+/** Stable gate (Stage 6) */
+const STABLE_GATE = [
+  { name: 'stable', displayName: 'Stable Gate' },
+];
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // PIPELINE STATS CLASS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -135,6 +150,7 @@ export class PipelineStats extends EventEmitter {
   private deepFilterStats: Map<string, { passed: number; failed: number }>;
   private sniperGateStats: Map<string, { passed: number; failed: number }>;
   private researchScoreGateStats: Map<string, { passed: number; failed: number }>;
+  private stableGateStats: Map<string, { passed: number; failed: number }>;
   /** Whether sniper gate is active */
   private sniperGateActive: boolean = false;
 
@@ -158,6 +174,7 @@ export class PipelineStats extends EventEmitter {
     this.deepFilterStats = new Map();
     this.sniperGateStats = new Map();
     this.researchScoreGateStats = new Map();
+    this.stableGateStats = new Map();
     this.rejectionReasons = new Map();
 
     // Initialize all gates with zero counts
@@ -172,6 +189,9 @@ export class PipelineStats extends EventEmitter {
     }
     for (const gate of RESEARCH_SCORE_GATE) {
       this.researchScoreGateStats.set(gate.name, { passed: 0, failed: 0 });
+    }
+    for (const gate of STABLE_GATE) {
+      this.stableGateStats.set(gate.name, { passed: 0, failed: 0 });
     }
 
     logger.info('[pipeline-stats] Initialized');
@@ -218,6 +238,14 @@ export class PipelineStats extends EventEmitter {
       sniperRpcDegraded: sg?.rpcDegraded,
       researchScore: rs?.score,
       researchSignal: rs?.signal,
+      stableAttempt: result.context.stableGate?.attemptNumber,
+      stableTotalAttempts: result.context.stableGate?.totalAttempts,
+      stableTotalWaitMs: result.context.stableGate?.totalWaitMs,
+      stablePricePassed: result.context.stableGate?.priceStabilization.passed,
+      stableCurvePassed: result.context.stableGate?.curveReValidation.passed,
+      stableSellPassed: result.context.stableGate?.sellRatioCheck.passed,
+      stablePriceChangePct: result.context.stableGate?.priceStabilization.priceChangePct,
+      stableSellRatio: result.context.stableGate?.sellRatioCheck.sellRatio,
     };
 
     // Add to recent tokens (keep last MAX_RECENT_TOKENS)
@@ -263,6 +291,10 @@ export class PipelineStats extends EventEmitter {
     // Stage 5: research score gate
     const researchStats = this.researchScoreGateStats.get('research-score')!;
     researchStats.passed++;
+
+    // Stage 6: stable gate
+    const stableStats = this.stableGateStats.get('stable')!;
+    stableStats.passed++;
   }
 
   /**
@@ -316,6 +348,26 @@ export class PipelineStats extends EventEmitter {
       // Research score gate failed
       const rsStats = this.researchScoreGateStats.get('research-score')!;
       rsStats.failed++;
+    } else if (rejectedAt === 'stable-gate') {
+      // All cheap gates passed
+      for (const gate of CHEAP_GATES) {
+        const stats = this.cheapGateStats.get(gate.name)!;
+        stats.passed++;
+      }
+      // All deep filters passed
+      for (const filter of DEEP_FILTERS) {
+        const stats = this.deepFilterStats.get(filter.name)!;
+        stats.passed++;
+      }
+      // Sniper gate passed
+      const sniperStats = this.sniperGateStats.get('sniper')!;
+      sniperStats.passed++;
+      // Research score gate passed
+      const rsStats = this.researchScoreGateStats.get('research-score')!;
+      rsStats.passed++;
+      // Stable gate failed
+      const stableStats = this.stableGateStats.get('stable')!;
+      stableStats.failed++;
     }
   }
 
@@ -523,6 +575,17 @@ export class PipelineStats extends EventEmitter {
       };
     });
 
+    const stableGateArray: GateStats[] = STABLE_GATE.map((gate) => {
+      const stats = this.stableGateStats.get(gate.name)!;
+      return {
+        name: gate.name,
+        displayName: gate.displayName,
+        passed: stats.passed,
+        failed: stats.failed,
+        totalChecked: stats.passed + stats.failed,
+      };
+    });
+
     return {
       startedAt: this.startedAt,
       tokensDetected: this.tokensDetected,
@@ -534,6 +597,7 @@ export class PipelineStats extends EventEmitter {
         deepFilters: deepFiltersArray,
         sniperGate: sniperGateArray,
         researchScoreGate: researchScoreGateArray,
+        stableGate: stableGateArray,
       },
       sniperGateActive: this.sniperGateActive,
       researchScoreNoModelSkips: this.researchScoreNoModelSkips,
@@ -579,6 +643,9 @@ export class PipelineStats extends EventEmitter {
     }
     for (const gate of RESEARCH_SCORE_GATE) {
       this.researchScoreGateStats.set(gate.name, { passed: 0, failed: 0 });
+    }
+    for (const gate of STABLE_GATE) {
+      this.stableGateStats.set(gate.name, { passed: 0, failed: 0 });
     }
 
     logger.info('[pipeline-stats] Stats reset');
