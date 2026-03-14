@@ -41,6 +41,8 @@ const elements = {
   sniperGateStats: document.getElementById('momentum-gate-stats'),
   researchScoreGateStats: document.getElementById('research-score-gate-stats'),
   funnelResearchScoreGate: document.getElementById('funnel-research-score-gate'),
+  stableGateStats: document.getElementById('stable-gate-stats'),
+  funnelStableGate: document.getElementById('funnel-stable-gate'),
   gate4FunnelLabel: document.getElementById('funnel-gate4-label'),
   gate4PanelTitle: document.getElementById('gate4-panel-title'),
   gate4PanelSubtitle: document.getElementById('gate4-panel-subtitle'),
@@ -181,6 +183,14 @@ function updateFunnel(data) {
   if (elements.funnelResearchScoreGate) {
     elements.funnelResearchScoreGate.querySelector('.funnel-value').textContent = passedResearchScore;
   }
+
+  const stableGateStatsArr = data.gateStats?.stableGate || [];
+  const lastStable = stableGateStatsArr[stableGateStatsArr.length - 1];
+  const passedStable = lastStable ? lastStable.passed : 0;
+  if (elements.funnelStableGate) {
+    elements.funnelStableGate.querySelector('.funnel-value').textContent = passedStable;
+  }
+
   elements.funnelBought.querySelector('.funnel-value').textContent = bought;
 }
 
@@ -216,6 +226,15 @@ function updateGateStats(gateStats, sniperGateActive) {
       elements.researchScoreGateStats.innerHTML = gateStats.researchScoreGate.map(renderGateStat).join('');
     } else {
       elements.researchScoreGateStats.innerHTML = '<div class="empty-state">No data yet</div>';
+    }
+  }
+
+  // Gate 6: stable gate
+  if (elements.stableGateStats) {
+    if (gateStats.stableGate && gateStats.stableGate.length > 0) {
+      elements.stableGateStats.innerHTML = gateStats.stableGate.map(renderGateStat).join('');
+    } else {
+      elements.stableGateStats.innerHTML = '<div class="empty-state">No data yet</div>';
     }
   }
 }
@@ -331,7 +350,7 @@ function renderTokenItem(token) {
 
   let metaHtml = `<div class="token-time">${time}</div>`;
   if (token.outcome === 'rejected' && token.rejectedAt) {
-    const gateLabels = { 'cheap-gates': 'Cheap Gates', 'deep-filters': 'Deep Filters', 'sniper-gate': 'Sniper Gate', 'research-score-gate': 'Research Score' };
+    const gateLabels = { 'cheap-gates': 'Cheap Gates', 'deep-filters': 'Deep Filters', 'sniper-gate': 'Sniper Gate', 'research-score-gate': 'Research Score', 'stable-gate': 'Stable Gate' };
     metaHtml += `<div class="token-gate-badge">${gateLabels[token.rejectedAt] || token.rejectedAt}</div>`;
   }
   if (token.outcome === 'rejected' && token.rejectionReason) {
@@ -794,6 +813,40 @@ async function showTokenDetail(mint) {
         <div class="sniper-stat">
           <div class="sniper-stat-label">Signal</div>
           <div class="sniper-stat-value">${token.researchSignal || '--'}</div>
+        </div>
+      </div>
+    </div>
+    ` : ''}
+
+    ${token.stableAttempt !== undefined ? `
+    <div class="modal-section">
+      <h4>Stable Gate</h4>
+      <div class="sniper-stats-grid">
+        <div class="sniper-stat">
+          <div class="sniper-stat-label">Attempt</div>
+          <div class="sniper-stat-value">${token.stableAttempt}/${token.stableTotalAttempts}</div>
+        </div>
+        <div class="sniper-stat">
+          <div class="sniper-stat-label">Price Check</div>
+          <div class="sniper-stat-value" style="color: ${token.stablePricePassed ? 'var(--positive-color, #4ade80)' : 'var(--negative-color, #f87171)'}">
+            ${token.stablePricePassed ? 'PASS' : 'FAIL'} (${token.stablePriceChangePct != null ? token.stablePriceChangePct + '%' : '--'})
+          </div>
+        </div>
+        <div class="sniper-stat">
+          <div class="sniper-stat-label">Curve Check</div>
+          <div class="sniper-stat-value" style="color: ${token.stableCurvePassed ? 'var(--positive-color, #4ade80)' : 'var(--negative-color, #f87171)'}">
+            ${token.stableCurvePassed ? 'PASS' : 'FAIL'}
+          </div>
+        </div>
+        <div class="sniper-stat">
+          <div class="sniper-stat-label">Sell Ratio</div>
+          <div class="sniper-stat-value" style="color: ${token.stableSellPassed ? 'var(--positive-color, #4ade80)' : 'var(--negative-color, #f87171)'}">
+            ${token.stableSellPassed ? 'PASS' : 'FAIL'} (${token.stableSellRatio != null ? token.stableSellRatio : '--'})
+          </div>
+        </div>
+        <div class="sniper-stat">
+          <div class="sniper-stat-label">Gate Duration</div>
+          <div class="sniper-stat-value">${token.stableTotalWaitMs != null ? (token.stableTotalWaitMs / 1000).toFixed(1) + 's' : '--'}</div>
         </div>
       </div>
     </div>

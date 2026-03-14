@@ -81,6 +81,11 @@
           <div class="funnel-value">0</div>
         </div>
         <div class="funnel-arrow">&rarr;</div>
+        <div class="funnel-stage" id="funnel-stable-gate">
+          <div class="funnel-label">Stable Gate</div>
+          <div class="funnel-value">0</div>
+        </div>
+        <div class="funnel-arrow">&rarr;</div>
         <div class="funnel-stage funnel-stage-success" id="funnel-bought">
           <div class="funnel-label">Bought</div>
           <div class="funnel-value">0</div>
@@ -153,6 +158,16 @@
           </div>
         </section>
 
+        <section class="panel gate-stats-panel">
+          <div class="panel-header">
+            <h2>Stable Gate</h2>
+            <span class="panel-subtitle">Price stability + curve + sell ratio (Stage 6)</span>
+          </div>
+          <div class="gate-stats-list" id="stable-gate-stats">
+            <div class="loading">Loading stats...</div>
+          </div>
+        </section>
+
         <section class="panel">
           <div class="panel-header">
             <h2>Top Rejection Reasons</h2>
@@ -180,6 +195,7 @@
                 <option value="deep-filters">Deep Filters</option>
                 <option value="sniper-gate">Sniper Gate</option>
                 <option value="research-score-gate">Research Score</option>
+                <option value="stable-gate">Stable Gate</option>
                 <option value="passed">Passed All</option>
               </select>
             </div>
