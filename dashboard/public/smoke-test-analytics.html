@@ -169,17 +169,41 @@
     <section class="panel" id="env-impact-panel" style="display:none;">
       <div class="panel-header">
         <h2>Environment Variable Impact</h2>
-        <span class="panel-subtitle">Which settings produce the best results?</span>
-      </div>
-      <div class="env-impact-controls">
-        <div class="env-select-wrapper">
-          <select id="env-var-select" class="env-var-select" onchange="onEnvVarSelected()">
-            <option value="">-- Select a variable to analyze --</option>
-          </select>
+        <div class="env-view-tabs">
+          <button class="btn btn-primary btn-small env-tab active" data-tab="leaderboard" onclick="switchEnvTab('leaderboard')">Impact Leaderboard</button>
+          <button class="btn btn-secondary btn-small env-tab" data-tab="best-config" onclick="switchEnvTab('best-config')">Best Config</button>
+          <button class="btn btn-secondary btn-small env-tab" data-tab="single-var" onclick="switchEnvTab('single-var')">Single Variable</button>
+          <button class="btn btn-secondary btn-small env-tab" data-tab="config-diff" onclick="switchEnvTab('config-diff')">Config Changes</button>
         </div>
-        <div class="env-impact-summary" id="env-impact-summary"></div>
       </div>
-      <div id="env-impact-content"></div>
+      <div class="env-impact-summary" id="env-impact-summary"></div>
+
+      <!-- Tab: Impact Leaderboard (all multi-value vars ranked) -->
+      <div class="env-tab-content" id="env-tab-leaderboard">
+        <div id="env-leaderboard-content"></div>
+      </div>
+
+      <!-- Tab: Best Configuration -->
+      <div class="env-tab-content" id="env-tab-best-config" style="display:none;">
+        <div id="env-best-config-content"></div>
+      </div>
+
+      <!-- Tab: Single Variable Analysis (existing dropdown) -->
+      <div class="env-tab-content" id="env-tab-single-var" style="display:none;">
+        <div class="env-impact-controls">
+          <div class="env-select-wrapper">
+            <select id="env-var-select" class="env-var-select" onchange="onEnvVarSelected()">
+              <option value="">-- Select a variable to analyze --</option>
+            </select>
+          </div>
+        </div>
+        <div id="env-impact-content"></div>
+      </div>
+
+      <!-- Tab: Config Changes Between Runs -->
+      <div class="env-tab-content" id="env-tab-config-diff" style="display:none;">
+        <div id="env-config-diff-content"></div>
+      </div>
     </section>
 
     <!-- Per-Run Detail Table -->
