@@ -1504,35 +1504,67 @@ function buildCopyText() {
     lines.push('');
   }
 
-  // Per-run results with env parameters
+  // Per-run results grouped by config to reduce output size.
+  // Runs with identical env settings are grouped together — the config
+  // is printed once per group instead of once per run.
   lines.push('--- INDIVIDUAL TEST RUNS ---');
   lines.push('');
 
   // Sort by date ascending for chronological output
   const sorted = [...ts].sort((a, b) => a.startedAt - b.startedAt);
 
-  sorted.forEach((t, idx) => {
-    lines.push(`Run #${idx + 1}: ${formatDate(t.startedAt)}`);
-    lines.push(`  Result: ${t.result}`);
-    lines.push(`  P&L: ${formatPnl(t.pnl)}`);
-    lines.push(`  Duration: ${formatDuration(t.duration)}`);
-    lines.push(`  Tokens Evaluated: ${t.tokensEvaluated}`);
-    lines.push(`  Pipeline Passed: ${t.tokensPipelinePassed}`);
-    lines.push(`  Buy Failures: ${t.buyFailures}`);
-    lines.push(`  Exit Trigger: ${t.exitTrigger}`);
+  // Build a config fingerprint for each run
+  function envFingerprint(env) {
+    if (!env || Object.keys(env).length === 0) return '';
+    return Object.keys(env).sort().map(k => `${k}=${env[k]}`).join('|');
+  }
 
-    // Env parameters for this run
-    const env = t.envSnapshot;
-    if (env && Object.keys(env).length > 0) {
+  // Group consecutive runs with the same config
+  const groups = [];
+  let currentGroup = null;
+
+  for (const t of sorted) {
+    const fp = envFingerprint(t.envSnapshot);
+    if (!currentGroup || currentGroup.fingerprint !== fp) {
+      currentGroup = { fingerprint: fp, env: t.envSnapshot, runs: [] };
+      groups.push(currentGroup);
+    }
+    currentGroup.runs.push(t);
+  }
+
+  let runCounter = 0;
+
+  for (let gi = 0; gi < groups.length; gi++) {
+    const group = groups[gi];
+    const hasEnv = group.env && Object.keys(group.env).length > 0;
+
+    // Print config block header for this group
+    if (hasEnv) {
+      lines.push(`--- Config Set ${gi + 1} (${group.runs.length} run${group.runs.length !== 1 ? 's' : ''}) ---`);
       lines.push('  Env Parameters:');
-      for (const [key, val] of Object.entries(env)) {
+      for (const [key, val] of Object.entries(group.env)) {
         lines.push(`    ${key}=${val}`);
       }
-    } else {
-      lines.push('  Env Parameters: (none recorded)');
+      lines.push('');
     }
-    lines.push('');
-  });
+
+    // Print each run's metrics (no env duplication)
+    for (const t of group.runs) {
+      runCounter++;
+      lines.push(`Run #${runCounter}: ${formatDate(t.startedAt)}`);
+      lines.push(`  Result: ${t.result}`);
+      lines.push(`  P&L: ${formatPnl(t.pnl)}`);
+      lines.push(`  Duration: ${formatDuration(t.duration)}`);
+      lines.push(`  Tokens Evaluated: ${t.tokensEvaluated}`);
+      lines.push(`  Pipeline Passed: ${t.tokensPipelinePassed}`);
+      lines.push(`  Buy Failures: ${t.buyFailures}`);
+      lines.push(`  Exit Trigger: ${t.exitTrigger}`);
+      if (!hasEnv) {
+        lines.push('  Env Parameters: (none recorded)');
+      }
+      lines.push('');
+    }
+  }
 
   lines.push('=== END OF REPORT ===');
 
