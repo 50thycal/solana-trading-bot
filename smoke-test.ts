@@ -86,6 +86,16 @@ import {
   CUSTOM_FEE,
   JITO_BUNDLE_TIMEOUT,
   JITO_BUNDLE_POLL_INTERVAL,
+  STABLE_GATE_ENABLED,
+  STABLE_GATE_LOG_ONLY,
+  STABLE_GATE_MAX_RETRIES,
+  STABLE_GATE_RETRY_DELAY_SECONDS,
+  STABLE_GATE_PRICE_SNAPSHOTS,
+  STABLE_GATE_SNAPSHOT_INTERVAL_MS,
+  STABLE_GATE_MAX_PRICE_DROP_PERCENT,
+  STABLE_GATE_MIN_SOL_IN_CURVE,
+  STABLE_GATE_MAX_SELL_RATIO,
+  SNIPER_GATE_SIGNATURE_LIMIT,
 } from './helpers';
 import {
   buyOnPumpFun,
@@ -1557,6 +1567,7 @@ function buildReport(
 
   // Capture environment variables snapshot for cross-run analytics
   // Include all tunable parameters so the dashboard can analyze impact of any setting
+  const config = getConfig();
   const envSnapshot: Record<string, string | number | boolean> = {
     // Trading parameters
     QUOTE_AMOUNT: Number(QUOTE_AMOUNT),
@@ -1605,6 +1616,22 @@ function buildReport(
     SNIPER_GATE_MIN_BOT_EXIT_PERCENT,
     SNIPER_GATE_MIN_ORGANIC_BUYERS,
     SNIPER_GATE_LOG_ONLY,
+    SNIPER_GATE_SIGNATURE_LIMIT,
+    // Stable gate
+    STABLE_GATE_ENABLED,
+    STABLE_GATE_LOG_ONLY,
+    STABLE_GATE_MAX_RETRIES,
+    STABLE_GATE_RETRY_DELAY_SECONDS,
+    STABLE_GATE_PRICE_SNAPSHOTS,
+    STABLE_GATE_SNAPSHOT_INTERVAL_MS,
+    STABLE_GATE_MAX_PRICE_DROP_PERCENT,
+    STABLE_GATE_MIN_SOL_IN_CURVE,
+    STABLE_GATE_MAX_SELL_RATIO,
+    // Research score gate (from config)
+    RESEARCH_SCORE_GATE_ENABLED: config.researchScoreGateEnabled,
+    RESEARCH_SCORE_THRESHOLD: config.researchScoreThreshold,
+    RESEARCH_SCORE_CHECKPOINT: config.researchScoreCheckpoint,
+    RESEARCH_SCORE_LOG_ONLY: config.researchScoreLogOnly,
     // Trailing stop
     TRAILING_STOP_ENABLED,
     TRAILING_STOP_ACTIVATION_PERCENT,
@@ -1612,9 +1639,15 @@ function buildReport(
     HARD_TAKE_PROFIT_PERCENT,
     COST_ADJUSTED_EXITS,
     MAX_PRICE_DRIFT_PERCENT,
+    // Transaction extras
+    CUSTOM_FEE: CUSTOM_FEE || 0,
+    JITO_BUNDLE_TIMEOUT,
+    JITO_BUNDLE_POLL_INTERVAL,
     // Test config
     SMOKE_TEST_TIMEOUT_MS,
     SMOKE_TEST_RUNS,
+    // Hypothesis
+    RUN_HYPOTHESIS: config.runHypothesis || '',
   };
 
   const report: SmokeTestReport = {

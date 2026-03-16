@@ -590,6 +590,232 @@
   color: var(--text-muted);
 }
 
+/* Env View Tabs */
+.env-view-tabs {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.env-tab-content {
+  margin-top: 1rem;
+}
+
+/* Impact Leaderboard */
+.leaderboard-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.leaderboard-item {
+  padding: 0.75rem 1rem;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--border-color);
+}
+
+.leaderboard-item.impact-level-high {
+  border-left-color: var(--accent-green);
+}
+
+.leaderboard-item.impact-level-medium {
+  border-left-color: var(--accent-yellow);
+}
+
+.leaderboard-item.impact-level-low {
+  border-left-color: var(--text-muted);
+}
+
+.leaderboard-item.impact-level-low-confidence {
+  border-left-color: #ce93d8;
+}
+
+.leaderboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.leaderboard-rank {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  min-width: 1.5rem;
+}
+
+.leaderboard-var-name {
+  font-weight: 700;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  flex: 1;
+}
+
+.leaderboard-category {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  padding: 0.1rem 0.4rem;
+  background: var(--bg-secondary);
+  border-radius: 3px;
+}
+
+.leaderboard-values {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+
+.leaderboard-value-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.5rem;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.78rem;
+}
+
+.leaderboard-value-chip.best {
+  background: rgba(0, 200, 83, 0.12);
+  border: 1px solid rgba(0, 200, 83, 0.3);
+}
+
+.leaderboard-value-chip.worst {
+  background: rgba(255, 82, 82, 0.08);
+  border: 1px solid rgba(255, 82, 82, 0.2);
+}
+
+.leaderboard-stat {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-left: 0.25rem;
+}
+
+.leaderboard-meta {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 0.35rem;
+}
+
+/* Best Config View */
+.best-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 0.75rem;
+}
+
+.best-config-card {
+  padding: 0.75rem 1rem;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.best-config-card.has-recommendation {
+  border-left: 3px solid var(--accent-green);
+}
+
+.best-config-var {
+  font-weight: 700;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.35rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.best-config-recommendation {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  font-family: monospace;
+}
+
+.best-config-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.best-config-value {
+  padding: 0.15rem 0.5rem;
+  background: rgba(0, 200, 83, 0.12);
+  border-radius: 4px;
+  color: var(--accent-green);
+  font-weight: 600;
+}
+
+.best-config-stats {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+/* Config Diff View */
+.config-diff-section {
+  margin-bottom: 1.5rem;
+}
+
+.config-diff-header {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.config-diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.config-diff-table th {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.4rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.config-diff-table td {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+  font-family: monospace;
+  font-size: 0.78rem;
+}
+
+.config-diff-table tr:last-child td {
+  border-bottom: none;
+}
+
+.diff-arrow {
+  color: var(--accent-blue);
+  font-weight: 700;
+  padding: 0 0.35rem;
+}
+
+.diff-pnl-change {
+  font-weight: 600;
+}
+
 /* Responsive adjustments */
 @media (max-width: 900px) {
   .chart-container-half {

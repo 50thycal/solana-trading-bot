@@ -681,6 +681,7 @@ const ENV_VAR_CATEGORIES = {
     'COMPUTE_UNIT_LIMIT', 'COMPUTE_UNIT_PRICE', 'TRANSACTION_EXECUTOR',
     'SIMULATE_TRANSACTION', 'USE_DYNAMIC_FEE', 'PRIORITY_FEE_PERCENTILE',
     'MIN_PRIORITY_FEE', 'MAX_PRIORITY_FEE', 'USE_FALLBACK_EXECUTOR',
+    'CUSTOM_FEE', 'JITO_BUNDLE_TIMEOUT', 'JITO_BUNDLE_POLL_INTERVAL',
   ],
   'Pump.fun Filters': [
     'PUMPFUN_MIN_SOL_IN_CURVE', 'PUMPFUN_MAX_SOL_IN_CURVE',
@@ -688,23 +689,30 @@ const ENV_VAR_CATEGORIES = {
     'PUMPFUN_MIN_SCORE_REQUIRED', 'PUMPFUN_DETECTION_COOLDOWN_MS',
     'MAX_TOKEN_AGE_SECONDS',
   ],
-  'Momentum Gate': [
-    'MOMENTUM_GATE_ENABLED', 'MOMENTUM_INITIAL_DELAY_MS',
-    'MOMENTUM_MIN_TOTAL_BUYS', 'MOMENTUM_RECHECK_INTERVAL_MS',
-    'MOMENTUM_MAX_CHECKS',
-  ],
   'Sniper Gate': [
     'SNIPER_GATE_ENABLED', 'SNIPER_GATE_INITIAL_DELAY_MS',
     'SNIPER_GATE_RECHECK_INTERVAL_MS', 'SNIPER_GATE_MAX_CHECKS',
     'SNIPER_GATE_SNIPER_SLOT_THRESHOLD', 'SNIPER_GATE_MIN_BOT_EXIT_PERCENT',
     'SNIPER_GATE_MIN_ORGANIC_BUYERS', 'SNIPER_GATE_LOG_ONLY',
+    'SNIPER_GATE_SIGNATURE_LIMIT',
+  ],
+  'Stable Gate': [
+    'STABLE_GATE_ENABLED', 'STABLE_GATE_LOG_ONLY', 'STABLE_GATE_MAX_RETRIES',
+    'STABLE_GATE_RETRY_DELAY_SECONDS', 'STABLE_GATE_PRICE_SNAPSHOTS',
+    'STABLE_GATE_SNAPSHOT_INTERVAL_MS', 'STABLE_GATE_MAX_PRICE_DROP_PERCENT',
+    'STABLE_GATE_MIN_SOL_IN_CURVE', 'STABLE_GATE_MAX_SELL_RATIO',
+  ],
+  'Research Score Gate': [
+    'RESEARCH_SCORE_GATE_ENABLED', 'RESEARCH_SCORE_THRESHOLD',
+    'RESEARCH_SCORE_CHECKPOINT', 'RESEARCH_SCORE_LOG_ONLY',
   ],
   'Trailing Stop': [
     'TRAILING_STOP_ENABLED', 'TRAILING_STOP_ACTIVATION_PERCENT',
     'TRAILING_STOP_DISTANCE_PERCENT', 'HARD_TAKE_PROFIT_PERCENT',
+    'COST_ADJUSTED_EXITS', 'MAX_PRICE_DRIFT_PERCENT',
   ],
   'Test Config': [
-    'SMOKE_TEST_TIMEOUT_MS',
+    'SMOKE_TEST_TIMEOUT_MS', 'SMOKE_TEST_RUNS', 'RUN_HYPOTHESIS',
   ],
 };
 
@@ -841,6 +849,13 @@ function renderEnvImpact(envImpact) {
   } else {
     container.innerHTML = '<div class="empty-state">All variables have only one value tested. Vary your settings between smoke test runs to see impact analysis.</div>';
   }
+
+  // Render all tab views
+  renderLeaderboard(envImpact);
+  renderBestConfig(envImpact);
+  if (analyticsData) {
+    renderConfigDiff(envImpact, analyticsData.timeSeries);
+  }
 }
 
 /** Called when user picks a variable from the dropdown */
@@ -958,6 +973,333 @@ function renderSelectedEnvVar(varName) {
       </table>
     </div>
   `;
+}
+
+// ============================================================
+// TAB SWITCHING
+// ============================================================
+
+function switchEnvTab(tabName) {
+  // Update tab buttons
+  document.querySelectorAll('.env-tab').forEach(btn => {
+    btn.classList.remove('btn-primary', 'active');
+    btn.classList.add('btn-secondary');
+  });
+  const activeBtn = document.querySelector(`.env-tab[data-tab="${tabName}"]`);
+  if (activeBtn) {
+    activeBtn.classList.remove('btn-secondary');
+    activeBtn.classList.add('btn-primary', 'active');
+  }
+
+  // Show/hide tab content
+  document.querySelectorAll('.env-tab-content').forEach(el => {
+    el.style.display = 'none';
+  });
+  const tabEl = document.getElementById(`env-tab-${tabName}`);
+  if (tabEl) tabEl.style.display = '';
+}
+
+// ============================================================
+// IMPACT LEADERBOARD (all multi-value vars ranked by impact)
+// ============================================================
+
+function renderLeaderboard(envImpact) {
+  const container = document.getElementById('env-leaderboard-content');
+  if (!envImpact || Object.keys(envImpact).length === 0) {
+    container.innerHTML = '<div class="empty-state">No environment variable data available.</div>';
+    return;
+  }
+
+  // Score all vars, separate multi-value from single-value
+  const scored = [];
+  const singleValue = [];
+  for (const [varName, impact] of Object.entries(envImpact)) {
+    const scoreInfo = computeImpactScore(impact);
+    const entry = { varName, impact, scoreInfo, category: getVarCategory(varName) };
+    if (scoreInfo.level === 'single') {
+      singleValue.push(entry);
+    } else {
+      scored.push(entry);
+    }
+  }
+
+  // Sort multi-value by score desc
+  scored.sort((a, b) => b.scoreInfo.score - a.scoreInfo.score);
+
+  if (scored.length === 0) {
+    container.innerHTML = '<div class="empty-state">All variables have only one value tested. Vary your settings between smoke test runs to see impact analysis.</div>';
+    return;
+  }
+
+  let html = '<div class="leaderboard-grid">';
+
+  scored.forEach((entry, idx) => {
+    const { varName, impact, scoreInfo, category } = entry;
+    const values = Object.entries(impact.values).sort((a, b) => b[1].avgPnl - a[1].avgPnl);
+    const best = values[0];
+    const worst = values[values.length - 1];
+    const displayName = varName.replace(/_/g, ' ');
+
+    let impactBadgeClass, impactBadgeLabel;
+    if (scoreInfo.level === 'low-confidence') {
+      impactBadgeClass = 'impact-low-confidence';
+      impactBadgeLabel = 'Low Confidence';
+    } else if (scoreInfo.level === 'high') {
+      impactBadgeClass = 'impact-high';
+      impactBadgeLabel = 'High Impact';
+    } else if (scoreInfo.level === 'medium') {
+      impactBadgeClass = 'impact-medium';
+      impactBadgeLabel = 'Medium Impact';
+    } else {
+      impactBadgeClass = 'impact-low';
+      impactBadgeLabel = 'Low Impact';
+    }
+
+    const valueChips = values.map((v, i) => {
+      const chipClass = i === 0 ? 'best' : i === values.length - 1 ? 'worst' : '';
+      return `<span class="leaderboard-value-chip ${chipClass}">
+        <code>${escapeHtml(String(v[0]))}</code>
+        <span class="leaderboard-stat">${formatPnl(v[1].avgPnl)}</span>
+        <span class="leaderboard-stat">${(v[1].passRate * 100).toFixed(0)}% pass</span>
+        <span class="leaderboard-stat">${v[1].count} runs</span>
+      </span>`;
+    }).join('');
+
+    html += `
+      <div class="leaderboard-item impact-level-${scoreInfo.level}">
+        <div class="leaderboard-header">
+          <span class="leaderboard-rank">#${idx + 1}</span>
+          <span class="leaderboard-var-name">${escapeHtml(displayName)}</span>
+          <span class="leaderboard-category">${escapeHtml(category)}</span>
+          <span class="impact-badge ${impactBadgeClass}">${impactBadgeLabel}</span>
+        </div>
+        <div class="leaderboard-values">${valueChips}</div>
+        <div class="leaderboard-meta">
+          <span>P&L spread: ${formatPnl(scoreInfo.pnlSpread)}</span>
+          <span>Pass rate spread: ${(scoreInfo.passRateSpread * 100).toFixed(1)}%</span>
+          <span>Confidence: ${(scoreInfo.confidenceFactor * 100).toFixed(0)}%</span>
+        </div>
+      </div>
+    `;
+  });
+
+  // Add single-value section
+  if (singleValue.length > 0) {
+    html += `<div style="margin-top: 1rem; padding: 0.75rem; background: var(--bg-tertiary); border-radius: 8px; border: 1px solid var(--border-color);">
+      <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; margin-bottom: 0.5rem; text-transform: uppercase;">
+        Single Value Variables (${singleValue.length} - no comparison possible)
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 0.35rem;">
+        ${singleValue.map(e => {
+          const val = Object.keys(e.impact.values)[0];
+          return `<span class="leaderboard-value-chip"><code>${escapeHtml(e.varName.replace(/_/g, ' '))}</code> = <code>${escapeHtml(val)}</code></span>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
+
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+// ============================================================
+// BEST CONFIGURATION VIEW
+// ============================================================
+
+function renderBestConfig(envImpact) {
+  const container = document.getElementById('env-best-config-content');
+  if (!envImpact || Object.keys(envImpact).length === 0) {
+    container.innerHTML = '<div class="empty-state">No environment variable data available.</div>';
+    return;
+  }
+
+  // For each variable, find the best performing value
+  const categoryOrder = Object.keys(ENV_VAR_CATEGORIES).concat(['Other']);
+  const varsByCategory = {};
+
+  for (const [varName, impact] of Object.entries(envImpact)) {
+    const cat = getVarCategory(varName);
+    if (!varsByCategory[cat]) varsByCategory[cat] = [];
+    const values = Object.entries(impact.values).sort((a, b) => b[1].avgPnl - a[1].avgPnl);
+    const scoreInfo = computeImpactScore(impact);
+    const hasMultiple = values.length > 1;
+    varsByCategory[cat].push({ varName, values, scoreInfo, hasMultiple });
+  }
+
+  let html = '';
+
+  for (const cat of categoryOrder) {
+    const vars = varsByCategory[cat];
+    if (!vars || vars.length === 0) continue;
+
+    // Sort: multi-value first (by impact score), then single-value
+    vars.sort((a, b) => {
+      if (a.hasMultiple && !b.hasMultiple) return -1;
+      if (!a.hasMultiple && b.hasMultiple) return 1;
+      return b.scoreInfo.score - a.scoreInfo.score;
+    });
+
+    html += `<div style="margin-bottom: 1.25rem;">
+      <div style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 700; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.03em;">${escapeHtml(cat)}</div>
+      <div class="best-config-grid">`;
+
+    for (const { varName, values, scoreInfo, hasMultiple } of vars) {
+      const best = values[0];
+      const displayName = varName.replace(/_/g, ' ');
+
+      let impactBadgeClass, impactBadgeLabel;
+      if (!hasMultiple) {
+        impactBadgeClass = 'impact-single';
+        impactBadgeLabel = 'Single';
+      } else if (scoreInfo.level === 'high') {
+        impactBadgeClass = 'impact-high';
+        impactBadgeLabel = 'High';
+      } else if (scoreInfo.level === 'medium') {
+        impactBadgeClass = 'impact-medium';
+        impactBadgeLabel = 'Med';
+      } else if (scoreInfo.level === 'low-confidence') {
+        impactBadgeClass = 'impact-low-confidence';
+        impactBadgeLabel = '?';
+      } else {
+        impactBadgeClass = 'impact-low';
+        impactBadgeLabel = 'Low';
+      }
+
+      const alternativeInfo = hasMultiple && values.length > 1
+        ? `<span style="font-size: 0.7rem; color: var(--text-muted);">vs ${values.slice(1).map(v => v[0]).join(', ')}</span>`
+        : '';
+
+      html += `
+        <div class="best-config-card ${hasMultiple ? 'has-recommendation' : ''}">
+          <div class="best-config-var">
+            <span>${escapeHtml(displayName)}</span>
+            <span class="impact-badge ${impactBadgeClass}">${impactBadgeLabel}</span>
+          </div>
+          <div class="best-config-recommendation">
+            <span class="best-config-label">Best:</span>
+            <span class="best-config-value">${escapeHtml(String(best[0]))}</span>
+            ${alternativeInfo}
+          </div>
+          <div class="best-config-stats">
+            <span>Avg P&L: ${formatPnl(best[1].avgPnl)}</span>
+            <span>Pass: ${(best[1].passRate * 100).toFixed(0)}%</span>
+            <span>${best[1].count} runs</span>
+            <span>Dur: ${formatDuration(best[1].avgDuration)}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    html += '</div></div>';
+  }
+
+  container.innerHTML = html;
+}
+
+// ============================================================
+// CONFIG CHANGES VIEW (shows what changed between run groups and impact)
+// ============================================================
+
+function renderConfigDiff(envImpact, timeSeries) {
+  const container = document.getElementById('env-config-diff-content');
+  if (!timeSeries || timeSeries.length < 2) {
+    container.innerHTML = '<div class="empty-state">Need at least 2 runs to show config changes.</div>';
+    return;
+  }
+
+  // Sort by time
+  const sorted = [...timeSeries].sort((a, b) => a.startedAt - b.startedAt);
+
+  // Find all variables that changed between any consecutive runs
+  const changes = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1].envSnapshot || {};
+    const curr = sorted[i].envSnapshot || {};
+    const allKeys = new Set([...Object.keys(prev), ...Object.keys(curr)]);
+
+    for (const key of allKeys) {
+      const prevVal = String(prev[key] ?? '');
+      const currVal = String(curr[key] ?? '');
+      if (prevVal !== currVal) {
+        changes.push({
+          varName: key,
+          fromVal: prevVal,
+          toVal: currVal,
+          runIndex: i,
+          runDate: sorted[i].startedAt,
+          prevPnl: sorted[i - 1].pnl,
+          currPnl: sorted[i].pnl,
+          prevResult: sorted[i - 1].result,
+          currResult: sorted[i].result,
+        });
+      }
+    }
+  }
+
+  if (changes.length === 0) {
+    container.innerHTML = '<div class="empty-state">No configuration changes detected between runs. All runs used the same settings.</div>';
+    return;
+  }
+
+  // Group changes by variable name
+  const changesByVar = {};
+  for (const ch of changes) {
+    if (!changesByVar[ch.varName]) changesByVar[ch.varName] = [];
+    changesByVar[ch.varName].push(ch);
+  }
+
+  // Sort by number of changes (most changes first)
+  const sortedVars = Object.entries(changesByVar).sort((a, b) => b[1].length - a[1].length);
+
+  let html = `<p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 1rem;">
+    ${changes.length} config change(s) detected across ${sortedVars.length} variable(s).
+    Shows which settings changed between runs and how performance shifted.
+  </p>`;
+
+  for (const [varName, varChanges] of sortedVars) {
+    const displayName = varName.replace(/_/g, ' ');
+    const category = getVarCategory(varName);
+
+    html += `<div class="config-diff-section">
+      <div class="config-diff-header">
+        ${escapeHtml(displayName)}
+        <span class="leaderboard-category" style="margin-left: 0.5rem;">${escapeHtml(category)}</span>
+        <span style="font-size: 0.72rem; color: var(--text-muted); margin-left: 0.5rem;">${varChanges.length} change(s)</span>
+      </div>
+      <table class="config-diff-table">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>From</th>
+            <th></th>
+            <th>To</th>
+            <th>Before P&L</th>
+            <th>After P&L</th>
+            <th>Change</th>
+          </tr>
+        </thead>
+        <tbody>`;
+
+    for (const ch of varChanges) {
+      const pnlDelta = ch.currPnl - ch.prevPnl;
+      const pnlDeltaClass = pnlDelta > 0 ? 'positive' : pnlDelta < 0 ? 'negative' : '';
+
+      html += `
+        <tr>
+          <td style="font-family: inherit; font-size: 0.78rem; color: var(--text-secondary);">${formatDate(ch.runDate)}</td>
+          <td><code>${escapeHtml(ch.fromVal || '(unset)')}</code></td>
+          <td class="diff-arrow">&rarr;</td>
+          <td><code>${escapeHtml(ch.toVal || '(unset)')}</code></td>
+          <td class="${pnlClass(ch.prevPnl)}">${formatPnl(ch.prevPnl)}</td>
+          <td class="${pnlClass(ch.currPnl)}">${formatPnl(ch.currPnl)}</td>
+          <td class="diff-pnl-change ${pnlDeltaClass}">${formatPnl(pnlDelta)}</td>
+        </tr>`;
+    }
+
+    html += '</tbody></table></div>';
+  }
+
+  container.innerHTML = html;
 }
 
 // ============================================================
@@ -1136,35 +1478,93 @@ function buildCopyText() {
   }
   lines.push('');
 
-  // Per-run results with env parameters
+  // Environment variable impact analysis
+  if (analyticsData.envImpact) {
+    lines.push('--- ENVIRONMENT VARIABLE IMPACT ---');
+    const scored = [];
+    for (const [varName, impact] of Object.entries(analyticsData.envImpact)) {
+      const scoreInfo = computeImpactScore(impact);
+      if (scoreInfo.level !== 'single') {
+        scored.push({ varName, impact, scoreInfo });
+      }
+    }
+    scored.sort((a, b) => b.scoreInfo.score - a.scoreInfo.score);
+
+    if (scored.length > 0) {
+      for (const { varName, impact, scoreInfo } of scored) {
+        const values = Object.entries(impact.values).sort((a, b) => b[1].avgPnl - a[1].avgPnl);
+        lines.push(`  ${varName} [${scoreInfo.label}]:`);
+        for (const [val, stats] of values) {
+          lines.push(`    ${val}: avg P&L ${formatPnl(stats.avgPnl)}, pass ${(stats.passRate * 100).toFixed(0)}%, ${stats.count} runs`);
+        }
+      }
+    } else {
+      lines.push('  All variables have only one value tested.');
+    }
+    lines.push('');
+  }
+
+  // Per-run results grouped by config to reduce output size.
+  // Runs with identical env settings are grouped together — the config
+  // is printed once per group instead of once per run.
   lines.push('--- INDIVIDUAL TEST RUNS ---');
   lines.push('');
 
   // Sort by date ascending for chronological output
   const sorted = [...ts].sort((a, b) => a.startedAt - b.startedAt);
 
-  sorted.forEach((t, idx) => {
-    lines.push(`Run #${idx + 1}: ${formatDate(t.startedAt)}`);
-    lines.push(`  Result: ${t.result}`);
-    lines.push(`  P&L: ${formatPnl(t.pnl)}`);
-    lines.push(`  Duration: ${formatDuration(t.duration)}`);
-    lines.push(`  Tokens Evaluated: ${t.tokensEvaluated}`);
-    lines.push(`  Pipeline Passed: ${t.tokensPipelinePassed}`);
-    lines.push(`  Buy Failures: ${t.buyFailures}`);
-    lines.push(`  Exit Trigger: ${t.exitTrigger}`);
+  // Build a config fingerprint for each run
+  function envFingerprint(env) {
+    if (!env || Object.keys(env).length === 0) return '';
+    return Object.keys(env).sort().map(k => `${k}=${env[k]}`).join('|');
+  }
 
-    // Env parameters for this run
-    const env = t.envSnapshot;
-    if (env && Object.keys(env).length > 0) {
+  // Group consecutive runs with the same config
+  const groups = [];
+  let currentGroup = null;
+
+  for (const t of sorted) {
+    const fp = envFingerprint(t.envSnapshot);
+    if (!currentGroup || currentGroup.fingerprint !== fp) {
+      currentGroup = { fingerprint: fp, env: t.envSnapshot, runs: [] };
+      groups.push(currentGroup);
+    }
+    currentGroup.runs.push(t);
+  }
+
+  let runCounter = 0;
+
+  for (let gi = 0; gi < groups.length; gi++) {
+    const group = groups[gi];
+    const hasEnv = group.env && Object.keys(group.env).length > 0;
+
+    // Print config block header for this group
+    if (hasEnv) {
+      lines.push(`--- Config Set ${gi + 1} (${group.runs.length} run${group.runs.length !== 1 ? 's' : ''}) ---`);
       lines.push('  Env Parameters:');
-      for (const [key, val] of Object.entries(env)) {
+      for (const [key, val] of Object.entries(group.env)) {
         lines.push(`    ${key}=${val}`);
       }
-    } else {
-      lines.push('  Env Parameters: (none recorded)');
+      lines.push('');
     }
-    lines.push('');
-  });
+
+    // Print each run's metrics (no env duplication)
+    for (const t of group.runs) {
+      runCounter++;
+      lines.push(`Run #${runCounter}: ${formatDate(t.startedAt)}`);
+      lines.push(`  Result: ${t.result}`);
+      lines.push(`  P&L: ${formatPnl(t.pnl)}`);
+      lines.push(`  Duration: ${formatDuration(t.duration)}`);
+      lines.push(`  Tokens Evaluated: ${t.tokensEvaluated}`);
+      lines.push(`  Pipeline Passed: ${t.tokensPipelinePassed}`);
+      lines.push(`  Buy Failures: ${t.buyFailures}`);
+      lines.push(`  Exit Trigger: ${t.exitTrigger}`);
+      if (!hasEnv) {
+        lines.push('  Env Parameters: (none recorded)');
+      }
+      lines.push('');
+    }
+  }
 
   lines.push('=== END OF REPORT ===');
 
