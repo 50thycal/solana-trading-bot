@@ -21,17 +21,36 @@ let currentSort = { field: 'date', dir: 'desc' };
 
 /**
  * Determine display result for a run.
- * "No Token Found" (yellow/warning) if no tokens were discovered.
- * "FAIL" (red) only for actual errors (broken run, missing sell, etc).
+ * "No Token Found" (yellow/warning) if no token passed the pipeline and was bought.
+ * "FAIL" (red) only for actual errors (broken run, buy failed, missing sell, etc).
  * "PASS" (green) for successful runs.
+ *
+ * Works with both raw report objects (r.overallResult, r.tokensPipelinePassed, r.tradedToken)
+ * and time series objects (t.result, t.tokensPipelinePassed, t.exitTrigger).
  */
 function getDisplayResult(run) {
-  if (run.overallResult === 'PASS' || run.result === 'PASS') return { label: 'PASS', cssClass: 'positive' };
-  // No token found: zero tokens evaluated, or unknown/no exit trigger with no trade
+  const result = run.overallResult || run.result;
+  if (result === 'PASS') return { label: 'PASS', cssClass: 'positive' };
+
+  // A "no token found" run is one where:
+  // - No token passed the pipeline (tokensPipelinePassed === 0)
+  // - AND no token was actually traded (no tradedToken / no buy)
+  // - OR exit trigger is unknown/empty (timed out without finding a token)
+  const pipelinePassed = run.tokensPipelinePassed ?? 0;
   const exitTrigger = run.exitTrigger || '';
-  const tokensEval = run.tokensEvaluated ?? 0;
-  const isNoToken = tokensEval === 0 || (exitTrigger === 'unknown' && !run.tradedToken);
-  if (isNoToken) return { label: 'NO TOKEN', cssClass: 'warning' };
+  const hasTrade = !!run.tradedToken;
+  const buyFailures = run.buyFailures?.length ?? run.buyFailures ?? 0;
+
+  // No token passed pipeline and no trade happened = "no token found"
+  if (pipelinePassed === 0 && !hasTrade && buyFailures === 0) {
+    return { label: 'NO TOKEN', cssClass: 'warning' };
+  }
+
+  // Exit trigger is unknown/empty and no trade = "no token found"
+  if ((exitTrigger === 'unknown' || exitTrigger === '') && !hasTrade) {
+    return { label: 'NO TOKEN', cssClass: 'warning' };
+  }
+
   return { label: 'FAIL', cssClass: 'negative' };
 }
 

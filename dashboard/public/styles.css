@@ -134,6 +134,10 @@ body {
   color: var(--accent-red);
 }
 
+.card-value.warning {
+  color: #ffc107;
+}
+
 /* Pipeline Funnel */
 .pipeline-funnel-panel {
   margin-bottom: 1.5rem;
