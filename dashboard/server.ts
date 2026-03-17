@@ -1853,7 +1853,7 @@ export class DashboardServer {
       }
     }
 
-    // Aggregate gate rejections across all selected runs
+    // Aggregate gate rejections across all selected runs (simple counts)
     const gateRejections: Record<string, number> = {};
     for (const r of reports) {
       if (r.gateRejections) {
@@ -1861,11 +1861,169 @@ export class DashboardServer {
           gateRejections[gate] = (gateRejections[gate] || 0) + count;
         }
       }
-      // Count tokens that passed all gates
       if (r.tokensPipelinePassed > 0) {
         gateRejections['passed'] = (gateRejections['passed'] || 0) + r.tokensPipelinePassed;
       }
     }
+
+    // Compute per-component gate stats (like dry run page)
+    const CHEAP_GATES = [
+      { name: 'dedupe', displayName: 'Dedupe Check' },
+      { name: 'blacklist', displayName: 'Blacklist Check' },
+      { name: 'exposure', displayName: 'Exposure Check' },
+      { name: 'pattern', displayName: 'Name/Symbol Pattern' },
+      { name: 'suspicious-ix', displayName: 'Suspicious Instruction' },
+      { name: 'mint-info', displayName: 'Mint Info Check' },
+    ];
+    const DEEP_FILTERS = [
+      { name: 'graduation', displayName: 'Graduation Check' },
+      { name: 'min-sol', displayName: 'Min SOL in Curve' },
+      { name: 'max-sol', displayName: 'Max SOL in Curve' },
+    ];
+    const SNIPER_GATE = [{ name: 'sniper', displayName: 'Sniper Gate' }];
+    const RESEARCH_SCORE_GATE = [{ name: 'research-score', displayName: 'Research Score Gate' }];
+    const STABLE_GATE = [{ name: 'stable', displayName: 'Stable Gate' }];
+
+    // Initialize counters
+    const makeStats = (gates: Array<{name: string; displayName: string}>) =>
+      gates.map(g => ({ name: g.name, displayName: g.displayName, passed: 0, failed: 0, totalChecked: 0 }));
+
+    const cheapGateStats = makeStats(CHEAP_GATES);
+    const deepFilterStats = makeStats(DEEP_FILTERS);
+    const sniperGateStats = makeStats(SNIPER_GATE);
+    const researchScoreGateStats = makeStats(RESEARCH_SCORE_GATE);
+    const stableGateStats = makeStats(STABLE_GATE);
+
+    // Map rejection reason → cheap gate component
+    const reasonToCheapGate: Record<string, string> = {
+      ALREADY_PROCESSED: 'dedupe', ALREADY_OWNED: 'dedupe', PENDING_TRADE: 'dedupe',
+      MINT_BLACKLISTED: 'blacklist', CREATOR_BLACKLISTED: 'blacklist',
+      EXPOSURE_LIMIT: 'exposure', TRADES_PER_HOUR: 'exposure', INSUFFICIENT_BALANCE: 'exposure',
+      JUNK_NAME: 'pattern', JUNK_SYMBOL: 'pattern',
+      SUSPICIOUS_INSTRUCTION: 'suspicious-ix',
+      MINT_NOT_RENOUNCED: 'mint-info', HAS_FREEZE_AUTHORITY: 'mint-info',
+      INVALID_DECIMALS: 'mint-info', MINT_FETCH_FAILED: 'mint-info',
+    };
+
+    const resolveDeepFilter = (reason: string): string => {
+      const reasonToFilter: Record<string, string> = {
+        CURVE_NOT_FOUND: 'graduation', CURVE_FETCH_FAILED: 'graduation', ALREADY_GRADUATED: 'graduation',
+        MIN_SOL_IN_CURVE: 'min-sol', MAX_SOL_IN_CURVE: 'max-sol', SCORE_TOO_LOW: 'max-sol',
+      };
+      if (reasonToFilter[reason]) return reasonToFilter[reason];
+      const lr = reason.toLowerCase();
+      if (lr.includes('minsolincurve') || lr.includes('min_sol') || lr.includes('min sol')) return 'min-sol';
+      if (lr.includes('maxsolincurve') || lr.includes('max_sol') || lr.includes('max sol')) return 'max-sol';
+      if (lr.includes('graduat') || lr.includes('curve')) return 'graduation';
+      return 'graduation';
+    };
+
+    const resolveCheapGate = (reason: string): string => {
+      if (reasonToCheapGate[reason]) return reasonToCheapGate[reason];
+      const lr = reason.toLowerCase();
+      if (lr.includes('suspicious instruction')) return 'suspicious-ix';
+      if (lr.includes('name') || lr.includes('symbol') || lr.includes('junk pattern') || lr.includes('special characters')) return 'pattern';
+      if (lr.includes('mint') || lr.includes('authority') || lr.includes('decimals') || lr.includes('freeze')) return 'mint-info';
+      if (lr.includes('blacklist')) return 'blacklist';
+      if (lr.includes('exposure') || lr.includes('balance') || lr.includes('trades per')) return 'exposure';
+      return 'dedupe';
+    };
+
+    const incrementPassed = (stats: typeof cheapGateStats) => {
+      for (const s of stats) { s.passed++; s.totalChecked++; }
+    };
+
+    const incrementFailedAt = (stats: typeof cheapGateStats, gateName: string) => {
+      let found = false;
+      for (const s of stats) {
+        if (s.name === gateName) {
+          s.failed++; s.totalChecked++; found = true; break;
+        } else {
+          s.passed++; s.totalChecked++;
+        }
+      }
+      if (!found && stats.length > 0) {
+        stats[0].failed++; stats[0].totalChecked++;
+      }
+    };
+
+    // Process all pipeline rejections from all reports
+    for (const r of reports) {
+      // Count tokens that passed all gates
+      for (let i = 0; i < r.tokensPipelinePassed; i++) {
+        incrementPassed(cheapGateStats);
+        incrementPassed(deepFilterStats);
+        incrementPassed(sniperGateStats);
+        incrementPassed(researchScoreGateStats);
+        incrementPassed(stableGateStats);
+      }
+
+      // Process detailed rejections
+      if (r.pipelineRejections) {
+        for (const rej of r.pipelineRejections) {
+          if (rej.stage === 'cheap-gates') {
+            const component = resolveCheapGate(rej.reason);
+            incrementFailedAt(cheapGateStats, component);
+          } else if (rej.stage === 'deep-filters') {
+            incrementPassed(cheapGateStats);
+            const component = resolveDeepFilter(rej.reason);
+            incrementFailedAt(deepFilterStats, component);
+          } else if (rej.stage === 'sniper-gate') {
+            incrementPassed(cheapGateStats);
+            incrementPassed(deepFilterStats);
+            sniperGateStats[0].failed++; sniperGateStats[0].totalChecked++;
+          } else if (rej.stage === 'research-score-gate') {
+            incrementPassed(cheapGateStats);
+            incrementPassed(deepFilterStats);
+            incrementPassed(sniperGateStats);
+            researchScoreGateStats[0].failed++; researchScoreGateStats[0].totalChecked++;
+          } else if (rej.stage === 'stable-gate') {
+            incrementPassed(cheapGateStats);
+            incrementPassed(deepFilterStats);
+            incrementPassed(sniperGateStats);
+            incrementPassed(researchScoreGateStats);
+            stableGateStats[0].failed++; stableGateStats[0].totalChecked++;
+          }
+        }
+      } else if (r.gateRejections) {
+        // Fallback for older reports without detailed rejections:
+        // use gateRejections counts (no per-component breakdown, just stage-level)
+        for (const [stage, count] of Object.entries(r.gateRejections)) {
+          for (let i = 0; i < count; i++) {
+            if (stage === 'cheap-gates') {
+              // Can't determine component, mark first gate
+              cheapGateStats[0].failed++; cheapGateStats[0].totalChecked++;
+            } else if (stage === 'deep-filters') {
+              incrementPassed(cheapGateStats);
+              deepFilterStats[0].failed++; deepFilterStats[0].totalChecked++;
+            } else if (stage === 'sniper-gate') {
+              incrementPassed(cheapGateStats);
+              incrementPassed(deepFilterStats);
+              sniperGateStats[0].failed++; sniperGateStats[0].totalChecked++;
+            } else if (stage === 'research-score-gate') {
+              incrementPassed(cheapGateStats);
+              incrementPassed(deepFilterStats);
+              incrementPassed(sniperGateStats);
+              researchScoreGateStats[0].failed++; researchScoreGateStats[0].totalChecked++;
+            } else if (stage === 'stable-gate') {
+              incrementPassed(cheapGateStats);
+              incrementPassed(deepFilterStats);
+              incrementPassed(sniperGateStats);
+              incrementPassed(researchScoreGateStats);
+              stableGateStats[0].failed++; stableGateStats[0].totalChecked++;
+            }
+          }
+        }
+      }
+    }
+
+    const gateStats = {
+      cheapGates: cheapGateStats,
+      deepFilters: deepFilterStats,
+      sniperGate: sniperGateStats,
+      researchScoreGate: researchScoreGateStats,
+      stableGate: stableGateStats,
+    };
 
     // Time series data for charts (ordered by startedAt)
     const sortedReports = [...reports].sort((a, b) => a.startedAt - b.startedAt);
@@ -1896,6 +2054,7 @@ export class DashboardServer {
       timeSeries,
       cumulativePnl,
       gateRejections,
+      gateStats,
       reportCount: allReports.length,
       selectedCount: reports.length,
     };

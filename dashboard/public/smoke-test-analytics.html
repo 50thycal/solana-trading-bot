@@ -147,15 +147,68 @@
       </div>
 
       <!-- Exit Trigger Distribution -->
-      <div class="chart-container chart-container-half">
+      <div class="chart-container">
         <h3 class="chart-title">Exit Trigger Distribution</h3>
         <canvas id="chart-exit-triggers" height="250"></canvas>
       </div>
+    </section>
 
-      <!-- Pipeline Gate Rejections -->
-      <div class="chart-container chart-container-half">
-        <h3 class="chart-title">Pipeline Gate Rejections</h3>
-        <canvas id="chart-gate-rejections" height="250"></canvas>
+    <!-- Pipeline Gate Statistics -->
+    <section class="panel" id="gate-stats-panel" style="display:none;">
+      <div class="panel-header">
+        <h2>Pipeline Gate Statistics</h2>
+        <span class="panel-subtitle" style="font-size: 0.82rem; color: var(--text-muted); margin-left: 1rem;">Aggregated pass/fail across selected runs</span>
+      </div>
+      <div class="gate-stats-grid">
+        <section class="panel gate-stats-panel">
+          <div class="panel-header">
+            <h2>Cheap Gates</h2>
+            <span class="panel-subtitle">Fast pre-checks (minimal RPC)</span>
+          </div>
+          <div class="gate-stats-list" id="analytics-cheap-gates-stats">
+            <div class="empty-state">No data</div>
+          </div>
+        </section>
+
+        <section class="panel gate-stats-panel">
+          <div class="panel-header">
+            <h2>Deep Filters</h2>
+            <span class="panel-subtitle">On-chain validation</span>
+          </div>
+          <div class="gate-stats-list" id="analytics-deep-filters-stats">
+            <div class="empty-state">No data</div>
+          </div>
+        </section>
+
+        <section class="panel gate-stats-panel">
+          <div class="panel-header">
+            <h2>Sniper Gate</h2>
+            <span class="panel-subtitle">Bot exit + organic buyer detection</span>
+          </div>
+          <div class="gate-stats-list" id="analytics-sniper-gate-stats">
+            <div class="empty-state">No data</div>
+          </div>
+        </section>
+
+        <section class="panel gate-stats-panel">
+          <div class="panel-header">
+            <h2>Research Score Gate</h2>
+            <span class="panel-subtitle">ML model scoring (Stage 5)</span>
+          </div>
+          <div class="gate-stats-list" id="analytics-research-score-gate-stats">
+            <div class="empty-state">No data</div>
+          </div>
+        </section>
+
+        <section class="panel gate-stats-panel">
+          <div class="panel-header">
+            <h2>Stable Gate</h2>
+            <span class="panel-subtitle">Price stability + curve + sell ratio (Stage 6)</span>
+          </div>
+          <div class="gate-stats-list" id="analytics-stable-gate-stats">
+            <div class="empty-state">No data</div>
+          </div>
+        </section>
       </div>
     </section>
 
