@@ -117,6 +117,11 @@
   color: var(--accent-red);
 }
 
+.run-result.warning {
+  background: rgba(255, 193, 7, 0.15);
+  color: #ffc107;
+}
+
 .run-date {
   color: var(--text-secondary);
   min-width: 160px;
@@ -508,6 +513,10 @@
 
 .analytics-table .negative {
   color: var(--accent-red);
+}
+
+.analytics-table .warning {
+  color: #ffc107;
 }
 
 /* Copy Results Bar */
