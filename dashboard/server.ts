@@ -1853,6 +1853,20 @@ export class DashboardServer {
       }
     }
 
+    // Aggregate gate rejections across all selected runs
+    const gateRejections: Record<string, number> = {};
+    for (const r of reports) {
+      if (r.gateRejections) {
+        for (const [gate, count] of Object.entries(r.gateRejections)) {
+          gateRejections[gate] = (gateRejections[gate] || 0) + count;
+        }
+      }
+      // Count tokens that passed all gates
+      if (r.tokensPipelinePassed > 0) {
+        gateRejections['passed'] = (gateRejections['passed'] || 0) + r.tokensPipelinePassed;
+      }
+    }
+
     // Time series data for charts (ordered by startedAt)
     const sortedReports = [...reports].sort((a, b) => a.startedAt - b.startedAt);
     const timeSeries = sortedReports.map(r => ({
@@ -1881,6 +1895,7 @@ export class DashboardServer {
       envImpact,
       timeSeries,
       cumulativePnl,
+      gateRejections,
       reportCount: allReports.length,
       selectedCount: reports.length,
     };

@@ -19,6 +19,22 @@ let currentSort = { field: 'date', dir: 'desc' };
 
 // fetchApi is loaded from utils.js
 
+/**
+ * Determine display result for a run.
+ * "No Token Found" (yellow/warning) if no tokens were discovered.
+ * "FAIL" (red) only for actual errors (broken run, missing sell, etc).
+ * "PASS" (green) for successful runs.
+ */
+function getDisplayResult(run) {
+  if (run.overallResult === 'PASS' || run.result === 'PASS') return { label: 'PASS', cssClass: 'positive' };
+  // No token found: zero tokens evaluated, or unknown/no exit trigger with no trade
+  const exitTrigger = run.exitTrigger || '';
+  const tokensEval = run.tokensEvaluated ?? 0;
+  const isNoToken = tokensEval === 0 || (exitTrigger === 'unknown' && !run.tradedToken);
+  if (isNoToken) return { label: 'NO TOKEN', cssClass: 'warning' };
+  return { label: 'FAIL', cssClass: 'negative' };
+}
+
 function formatDuration(ms) {
   if (!ms) return '--';
   const seconds = Math.floor(ms / 1000);
@@ -167,7 +183,7 @@ function renderRunSelector() {
     const id = String(r.startedAt);
     const checked = selectedIds.has(id) ? 'checked' : '';
     const pnl = -r.netCostSol;
-    const statusClass = r.overallResult === 'PASS' ? 'positive' : 'negative';
+    const displayResult = getDisplayResult(r);
 
     // Show key env vars if available
     let envTags = '';
@@ -191,13 +207,13 @@ function renderRunSelector() {
       <label class="run-selector-item" data-id="${escapeHtml(id)}">
         <input type="checkbox" class="run-checkbox" value="${escapeHtml(id)}" ${checked}
                onchange="toggleRun('${escapeHtml(id)}', this.checked)">
-        <span class="run-result ${statusClass}">${escapeHtml(r.overallResult)}</span>
+        <span class="run-result ${displayResult.cssClass}">${escapeHtml(displayResult.label)}</span>
         ${groupTag}
         <span class="run-date">${formatDate(r.startedAt)}</span>
         <span class="run-pnl ${pnlClass(pnl)}">${formatPnlShort(pnl)} SOL</span>
         <span class="run-duration">${formatDuration(r.totalDurationMs)}</span>
         ${envTags}
-        <span class="run-exit">${escapeHtml(r.exitTrigger || '--')}</span>
+        <span class="run-exit">${escapeHtml(r.exitTrigger === 'unknown' || !r.exitTrigger ? 'no token found' : r.exitTrigger)}</span>
       </label>
     `;
   }).join('');
@@ -313,10 +329,9 @@ function renderAnalytics(data) {
   // Draw charts
   drawPnlChart(data.timeSeries);
   drawCumulativePnlChart(data.cumulativePnl);
-  drawDurationChart(data.timeSeries);
   drawTokensChart(data.timeSeries);
   drawExitTriggerChart(a.exitTriggers);
-  drawPassFailChart(a.passCount, a.failCount);
+  drawGateRejectionsChart(data.gateRejections);
 
   // Render env impact
   renderEnvImpact(data.envImpact);
@@ -612,15 +627,6 @@ function drawCumulativePnlChart(cumulativePnl) {
   ], labels);
 }
 
-function drawDurationChart(timeSeries) {
-  const data = timeSeries.map(t => ({
-    value: t.duration / 1000,
-    label: formatDateShort(t.startedAt),
-  }));
-
-  drawBarChart('chart-duration', data, () => COLORS.blue);
-}
-
 function drawTokensChart(timeSeries) {
   const labels = timeSeries.map(t => formatDateShort(t.startedAt));
 
@@ -636,11 +642,17 @@ function drawExitTriggerChart(exitTriggers) {
     stop_loss: COLORS.red,
     time_exit: COLORS.yellow,
     max_hold: COLORS.orange,
-    unknown: COLORS.text,
+    no_token_found: COLORS.yellow,
+    unknown: COLORS.yellow,
+  };
+
+  const triggerLabels = {
+    unknown: 'no token found',
+    no_token_found: 'no token found',
   };
 
   const segments = Object.entries(exitTriggers).map(([trigger, count]) => ({
-    label: trigger.replace(/_/g, ' '),
+    label: triggerLabels[trigger] || trigger.replace(/_/g, ' '),
     value: count,
     color: triggerColors[trigger] || COLORS.purple,
   }));
@@ -648,11 +660,74 @@ function drawExitTriggerChart(exitTriggers) {
   drawPieChart('chart-exit-triggers', segments);
 }
 
-function drawPassFailChart(passCount, failCount) {
-  drawPieChart('chart-pass-fail', [
-    { label: 'PASS', value: passCount, color: COLORS.green },
-    { label: 'FAIL', value: failCount, color: COLORS.red },
-  ]);
+function drawGateRejectionsChart(gateRejections) {
+  if (!gateRejections || Object.keys(gateRejections).length === 0) {
+    const canvas = document.getElementById('chart-gate-rejections');
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = canvas.clientWidth * dpr;
+      canvas.height = canvas.clientHeight * dpr;
+      ctx.scale(dpr, dpr);
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '13px inherit';
+      ctx.textAlign = 'center';
+      ctx.fillText('No pipeline gate data available', canvas.clientWidth / 2, canvas.clientHeight / 2);
+    }
+    return;
+  }
+
+  // Order gates by pipeline stage order
+  const gateOrder = ['cheap-gates', 'deep-filters', 'sniper-gate', 'research-score', 'stable-gate'];
+  const gateColors = {
+    'cheap-gates': COLORS.red,
+    'deep-filters': COLORS.orange,
+    'sniper-gate': COLORS.yellow,
+    'research-score': COLORS.purple,
+    'stable-gate': COLORS.cyan,
+    'passed': COLORS.green,
+  };
+
+  const gateLabels = {
+    'cheap-gates': 'Cheap Gates',
+    'deep-filters': 'Deep Filters',
+    'sniper-gate': 'Sniper Gate',
+    'research-score': 'Research Score',
+    'stable-gate': 'Stable Gate',
+    'passed': 'Passed All',
+  };
+
+  // Build segments in pipeline order, then any unknown gates, then passed
+  const segments = [];
+  for (const gate of gateOrder) {
+    if (gateRejections[gate]) {
+      segments.push({
+        label: gateLabels[gate] || gate,
+        value: gateRejections[gate],
+        color: gateColors[gate] || COLORS.text,
+      });
+    }
+  }
+  // Any other gates not in the predefined order
+  for (const [gate, count] of Object.entries(gateRejections)) {
+    if (gate !== 'passed' && !gateOrder.includes(gate)) {
+      segments.push({
+        label: gate,
+        value: count,
+        color: COLORS.text,
+      });
+    }
+  }
+  // Passed last
+  if (gateRejections.passed) {
+    segments.push({
+      label: gateLabels.passed,
+      value: gateRejections.passed,
+      color: gateColors.passed,
+    });
+  }
+
+  drawPieChart('chart-gate-rejections', segments);
 }
 
 // ============================================================
@@ -1311,7 +1386,7 @@ function renderDetailTable(timeSeries) {
   const tbody = document.getElementById('detail-table-body');
 
   tbody.innerHTML = sorted.map((t, idx) => {
-    const resultClass = t.result === 'PASS' ? 'positive' : 'negative';
+    const displayResult = getDisplayResult(t);
     const envSnapshot = t.envSnapshot || {};
     const envKeys = Object.keys(envSnapshot);
     const hasEnv = envKeys.length > 0;
@@ -1353,13 +1428,13 @@ function renderDetailTable(timeSeries) {
     return `
       <tr>
         <td>${groupTag}${formatDate(t.startedAt)}</td>
-        <td class="${resultClass}">${t.result}</td>
+        <td class="${displayResult.cssClass}">${displayResult.label}</td>
         <td class="${pnlClass(t.pnl)}">${formatPnl(t.pnl)}</td>
         <td>${formatDuration(t.duration)}</td>
         <td>${t.tokensEvaluated}</td>
         <td>${t.tokensPipelinePassed}</td>
         <td>${t.buyFailures}</td>
-        <td>${escapeHtml(t.exitTrigger)}</td>
+        <td>${escapeHtml(t.exitTrigger === 'unknown' ? 'no token found' : t.exitTrigger)}</td>
         <td>${hasEnv ? `${envSummary}<button class="btn btn-secondary btn-tiny" onclick="toggleEnvDetail('${toggleId}', this)">Show All</button>` : '<span class="text-muted">--</span>'}</td>
       </tr>
       ${envDetailsHtml}
@@ -1474,7 +1549,8 @@ function buildCopyText() {
   lines.push('Exit Trigger Distribution:');
   for (const [trigger, count] of Object.entries(a.exitTriggers)) {
     const pct = a.totalRuns > 0 ? ((count / a.totalRuns) * 100).toFixed(1) : '0';
-    lines.push(`  ${trigger}: ${count} (${pct}%)`);
+    const displayTrigger = trigger === 'unknown' ? 'no_token_found' : trigger;
+    lines.push(`  ${displayTrigger}: ${count} (${pct}%)`);
   }
   lines.push('');
 
@@ -1552,13 +1628,14 @@ function buildCopyText() {
     for (const t of group.runs) {
       runCounter++;
       lines.push(`Run #${runCounter}: ${formatDate(t.startedAt)}`);
-      lines.push(`  Result: ${t.result}`);
+      const dr = getDisplayResult(t);
+      lines.push(`  Result: ${dr.label}`);
       lines.push(`  P&L: ${formatPnl(t.pnl)}`);
       lines.push(`  Duration: ${formatDuration(t.duration)}`);
       lines.push(`  Tokens Evaluated: ${t.tokensEvaluated}`);
       lines.push(`  Pipeline Passed: ${t.tokensPipelinePassed}`);
       lines.push(`  Buy Failures: ${t.buyFailures}`);
-      lines.push(`  Exit Trigger: ${t.exitTrigger}`);
+      lines.push(`  Exit Trigger: ${t.exitTrigger === 'unknown' ? 'no token found' : t.exitTrigger}`);
       if (!hasEnv) {
         lines.push('  Env Parameters: (none recorded)');
       }

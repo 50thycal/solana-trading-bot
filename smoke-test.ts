@@ -257,6 +257,8 @@ export interface SmokeTestReport {
   runNumber?: number;
   /** Total number of runs configured for this session */
   totalRuns?: number;
+  /** Pipeline gate rejection counts (gate name → count of tokens rejected at that gate) */
+  gateRejections?: Record<string, number>;
 }
 
 // Shared state for the report endpoint
@@ -578,6 +580,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     executor: TransactionExecutor | undefined;
     buyExecutorUsed: string | undefined;
     sellExecutorUsed: string | undefined;
+    gateRejections: Record<string, number>;
   } = {
     connection: null,
     wallet: null,
@@ -602,6 +605,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     executor: undefined,
     buyExecutorUsed: undefined,
     sellExecutorUsed: undefined,
+    gateRejections: {},
   };
 
   // Wrap the entire test body in try/finally to guarantee liveProgress is
@@ -1077,6 +1081,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
       bundleExecutorActive: state.executor !== undefined,
       buyExecutorUsed: state.buyExecutorUsed,
       sellExecutorUsed: state.sellExecutorUsed,
+      gateRejections: Object.keys(state.gateRejections).length > 0 ? state.gateRejections : undefined,
     },
   );
 
@@ -1146,6 +1151,7 @@ async function runListenPipelineAndBuy(
     executor: TransactionExecutor | undefined;
     buyExecutorUsed: string | undefined;
     sellExecutorUsed: string | undefined;
+    gateRejections: Record<string, number>;
   },
   tradeAmount: number,
   timeoutMs: number,
@@ -1225,8 +1231,11 @@ async function runListenPipelineAndBuy(
         const result = await pipeline.process(detectionEvent);
 
         if (!result.success) {
+          // Track which gate rejected this token
+          const gate = result.rejectedAt || 'unknown';
+          state.gateRejections[gate] = (state.gateRejections[gate] || 0) + 1;
           logger.debug(
-            { mint: mintStr, symbol: token.symbol, reason: result.rejectionReason },
+            { mint: mintStr, symbol: token.symbol, reason: result.rejectionReason, gate },
             '[smoke-test] Token rejected by pipeline'
           );
           return;
@@ -1410,6 +1419,7 @@ interface BuildReportExtras {
   bundleExecutorActive?: boolean;
   buyExecutorUsed?: string;
   sellExecutorUsed?: string;
+  gateRejections?: Record<string, number>;
 }
 
 function buildReport(
@@ -1686,6 +1696,7 @@ function buildReport(
     envSnapshot,
     runNumber: currentRunNumber,
     totalRuns: currentTotalRuns,
+    gateRejections: extras?.gateRejections,
   };
 
   // Store for dashboard retrieval (in-memory + persisted to file)
