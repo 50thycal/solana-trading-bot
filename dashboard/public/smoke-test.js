@@ -10,6 +10,33 @@ let viewingReportId = null;
 
 // fetchApi is loaded from utils.js
 
+/**
+ * Determine display result for a smoke test report.
+ * "NO TOKEN" (yellow) if no token passed pipeline and was bought.
+ * "FAIL" (red) only for actual errors (broken run, buy failed, missing sell).
+ * "PASS" (green) for successful runs.
+ */
+function getSmokeDisplayResult(report) {
+  if (report.overallResult === 'PASS') return { label: 'PASS', badgeLabel: 'PASSED', cssClass: 'positive', badgeBg: 'linear-gradient(135deg, #00c853, #69f0ae)' };
+
+  const pipelinePassed = report.tokensPipelinePassed ?? 0;
+  const hasTrade = !!report.tradedToken;
+  const buyFailures = report.buyFailures?.length ?? 0;
+
+  // No token passed pipeline and no trade happened = "no token found"
+  if (pipelinePassed === 0 && !hasTrade && buyFailures === 0) {
+    return { label: 'NO TOKEN', badgeLabel: 'NO TOKEN FOUND', cssClass: 'warning', badgeBg: 'linear-gradient(135deg, #ffc107, #ffca28)' };
+  }
+
+  // Exit trigger is empty/undefined and no trade = "no token found"
+  const exitTrigger = report.exitTrigger || '';
+  if (exitTrigger === '' && !hasTrade) {
+    return { label: 'NO TOKEN', badgeLabel: 'NO TOKEN FOUND', cssClass: 'warning', badgeBg: 'linear-gradient(135deg, #ffc107, #ffca28)' };
+  }
+
+  return { label: 'FAIL', badgeLabel: 'FAILED', cssClass: 'negative', badgeBg: 'linear-gradient(135deg, #ff5252, #ff8a80)' };
+}
+
 function formatDuration(ms) {
   if (!ms) return '--';
   const seconds = Math.floor(ms / 1000);
@@ -169,13 +196,9 @@ function renderReport(report) {
 
   // Update result badge
   const badge = document.getElementById('smoke-badge');
-  if (report.overallResult === 'PASS') {
-    badge.textContent = 'PASSED';
-    badge.style.background = 'linear-gradient(135deg, #00c853, #69f0ae)';
-  } else {
-    badge.textContent = 'FAILED';
-    badge.style.background = 'linear-gradient(135deg, #ff5252, #ff8a80)';
-  }
+  const dr = getSmokeDisplayResult(report);
+  badge.textContent = dr.badgeLabel;
+  badge.style.background = dr.badgeBg;
 
   // Show run group label for multi-run sessions
   const groupEl = document.getElementById('run-group-label');
@@ -191,8 +214,8 @@ function renderReport(report) {
 
   // Summary cards
   const resultEl = document.getElementById('overall-result');
-  resultEl.textContent = report.overallResult;
-  resultEl.className = `card-value ${report.overallResult === 'PASS' ? 'positive' : 'negative'}`;
+  resultEl.textContent = dr.label;
+  resultEl.className = `card-value ${dr.cssClass}`;
 
   // P&L (computed from net cost)
   const pnlEl = document.getElementById('pnl-value');
@@ -862,7 +885,8 @@ async function updateHistory() {
     const pnl = -report.netCostSol;
     const pnlValue = formatPnl(pnl);
     const pnlCls = pnlClass(pnl);
-    const statusClass = report.overallResult === 'PASS' ? 'positive' : 'negative';
+    const histDr = getSmokeDisplayResult(report);
+    const statusClass = histDr.cssClass;
     const isActive = viewingReportId === id;
     const date = formatDate(report.startedAt);
     const duration = formatDuration(report.totalDurationMs);
@@ -875,7 +899,7 @@ async function updateHistory() {
       <div class="run-history-item history-item-clickable ${isActive ? 'active-report' : ''}"
            data-report-id="${escapeHtml(id)}"
            onclick="viewReport('${escapeHtml(id)}')">
-        <div class="run-mode">${escapeHtml(report.overallResult)}</div>
+        <div class="run-mode">${escapeHtml(histDr.label)}</div>
         <div class="run-summary">${groupTag}${escapeHtml(date)} &middot; ${duration}${exitTrigger ? ' &middot; ' + escapeHtml(exitTrigger) : ''}</div>
         <div class="run-pnl ${pnlCls}">${pnlValue}</div>
         <div class="run-status ${statusClass}">${report.passedCount}/${report.totalSteps} steps</div>
@@ -894,7 +918,8 @@ function buildReportText(report) {
   const lines = [];
   const groupInfo = (report.totalRuns && report.totalRuns > 1) ? ` (Run ${report.runNumber}/${report.totalRuns})` : '';
   lines.push(`=== Smoke Test Report${groupInfo} ===`);
-  lines.push(`Result: ${report.overallResult}`);
+  const copyDr = getSmokeDisplayResult(report);
+  lines.push(`Result: ${copyDr.label}`);
   lines.push(`Date: ${formatDate(report.startedAt)}`);
   lines.push(`Duration: ${formatDuration(report.totalDurationMs)}`);
   lines.push(`Steps: ${report.passedCount}/${report.totalSteps} passed, ${report.failedCount} failed`);
