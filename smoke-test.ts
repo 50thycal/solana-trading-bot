@@ -259,6 +259,8 @@ export interface SmokeTestReport {
   totalRuns?: number;
   /** Pipeline gate rejection counts (gate name → count of tokens rejected at that gate) */
   gateRejections?: Record<string, number>;
+  /** Detailed pipeline rejection records: array of { stage, reason } for per-component analytics */
+  pipelineRejections?: Array<{ stage: string; reason: string }>;
 }
 
 // Shared state for the report endpoint
@@ -581,6 +583,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     buyExecutorUsed: string | undefined;
     sellExecutorUsed: string | undefined;
     gateRejections: Record<string, number>;
+    pipelineRejections: Array<{ stage: string; reason: string }>;
   } = {
     connection: null,
     wallet: null,
@@ -606,6 +609,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     buyExecutorUsed: undefined,
     sellExecutorUsed: undefined,
     gateRejections: {},
+    pipelineRejections: [],
   };
 
   // Wrap the entire test body in try/finally to guarantee liveProgress is
@@ -1082,6 +1086,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
       buyExecutorUsed: state.buyExecutorUsed,
       sellExecutorUsed: state.sellExecutorUsed,
       gateRejections: Object.keys(state.gateRejections).length > 0 ? state.gateRejections : undefined,
+      pipelineRejections: state.pipelineRejections.length > 0 ? state.pipelineRejections : undefined,
     },
   );
 
@@ -1152,6 +1157,7 @@ async function runListenPipelineAndBuy(
     buyExecutorUsed: string | undefined;
     sellExecutorUsed: string | undefined;
     gateRejections: Record<string, number>;
+    pipelineRejections: Array<{ stage: string; reason: string }>;
   },
   tradeAmount: number,
   timeoutMs: number,
@@ -1234,6 +1240,11 @@ async function runListenPipelineAndBuy(
           // Track which gate rejected this token
           const gate = result.rejectedAt || 'unknown';
           state.gateRejections[gate] = (state.gateRejections[gate] || 0) + 1;
+          // Record detailed rejection for per-component analytics
+          state.pipelineRejections.push({
+            stage: gate,
+            reason: result.rejectionReason || 'unknown',
+          });
           logger.debug(
             { mint: mintStr, symbol: token.symbol, reason: result.rejectionReason, gate },
             '[smoke-test] Token rejected by pipeline'
@@ -1420,6 +1431,7 @@ interface BuildReportExtras {
   buyExecutorUsed?: string;
   sellExecutorUsed?: string;
   gateRejections?: Record<string, number>;
+  pipelineRejections?: Array<{ stage: string; reason: string }>;
 }
 
 function buildReport(
@@ -1697,6 +1709,7 @@ function buildReport(
     runNumber: currentRunNumber,
     totalRuns: currentTotalRuns,
     gateRejections: extras?.gateRejections,
+    pipelineRejections: extras?.pipelineRejections,
   };
 
   // Store for dashboard retrieval (in-memory + persisted to file)

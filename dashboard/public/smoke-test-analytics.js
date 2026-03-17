@@ -331,7 +331,7 @@ function renderAnalytics(data) {
   drawCumulativePnlChart(data.cumulativePnl);
   drawTokensChart(data.timeSeries);
   drawExitTriggerChart(a.exitTriggers);
-  drawGateRejectionsChart(data.gateRejections);
+  renderGateStats(data.gateStats);
 
   // Render env impact
   renderEnvImpact(data.envImpact);
@@ -640,7 +640,7 @@ function drawExitTriggerChart(exitTriggers) {
   const triggerColors = {
     take_profit: COLORS.green,
     stop_loss: COLORS.red,
-    time_exit: COLORS.yellow,
+    time_exit: COLORS.cyan,
     max_hold: COLORS.orange,
     no_token_found: COLORS.yellow,
     unknown: COLORS.yellow,
@@ -660,74 +660,53 @@ function drawExitTriggerChart(exitTriggers) {
   drawPieChart('chart-exit-triggers', segments);
 }
 
-function drawGateRejectionsChart(gateRejections) {
-  if (!gateRejections || Object.keys(gateRejections).length === 0) {
-    const canvas = document.getElementById('chart-gate-rejections');
-    if (canvas) {
-      const ctx = canvas.getContext('2d');
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = canvas.clientWidth * dpr;
-      canvas.height = canvas.clientHeight * dpr;
-      ctx.scale(dpr, dpr);
-      ctx.fillStyle = COLORS.text;
-      ctx.font = '13px inherit';
-      ctx.textAlign = 'center';
-      ctx.fillText('No pipeline gate data available', canvas.clientWidth / 2, canvas.clientHeight / 2);
-    }
+function renderGateStatItem(gate) {
+  const total = gate.totalChecked || 0;
+  const passRate = total > 0 ? (gate.passed / total) * 100 : 0;
+
+  return `
+    <div class="gate-stat-item">
+      <span class="gate-stat-name">${gate.displayName}</span>
+      <div class="gate-stat-values">
+        <span class="gate-stat-passed" title="Passed">${gate.passed}</span>
+        <span class="gate-stat-failed" title="Failed">${gate.failed}</span>
+        <div class="gate-stat-bar">
+          <div class="gate-stat-bar-fill" style="width: ${passRate}%"></div>
+        </div>
+        <span class="gate-stat-rate">${passRate.toFixed(0)}%</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderGateStats(gateStats) {
+  const panel = document.getElementById('gate-stats-panel');
+  if (!panel) return;
+
+  if (!gateStats) {
+    panel.style.display = 'none';
     return;
   }
 
-  // Order gates by pipeline stage order
-  const gateOrder = ['cheap-gates', 'deep-filters', 'sniper-gate', 'research-score', 'stable-gate'];
-  const gateColors = {
-    'cheap-gates': COLORS.red,
-    'deep-filters': COLORS.orange,
-    'sniper-gate': COLORS.yellow,
-    'research-score': COLORS.purple,
-    'stable-gate': COLORS.cyan,
-    'passed': COLORS.green,
-  };
+  panel.style.display = '';
 
-  const gateLabels = {
-    'cheap-gates': 'Cheap Gates',
-    'deep-filters': 'Deep Filters',
-    'sniper-gate': 'Sniper Gate',
-    'research-score': 'Research Score',
-    'stable-gate': 'Stable Gate',
-    'passed': 'Passed All',
-  };
+  const sections = [
+    { id: 'analytics-cheap-gates-stats', data: gateStats.cheapGates },
+    { id: 'analytics-deep-filters-stats', data: gateStats.deepFilters },
+    { id: 'analytics-sniper-gate-stats', data: gateStats.sniperGate },
+    { id: 'analytics-research-score-gate-stats', data: gateStats.researchScoreGate },
+    { id: 'analytics-stable-gate-stats', data: gateStats.stableGate },
+  ];
 
-  // Build segments in pipeline order, then any unknown gates, then passed
-  const segments = [];
-  for (const gate of gateOrder) {
-    if (gateRejections[gate]) {
-      segments.push({
-        label: gateLabels[gate] || gate,
-        value: gateRejections[gate],
-        color: gateColors[gate] || COLORS.text,
-      });
+  for (const { id, data } of sections) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (data && data.length > 0) {
+      el.innerHTML = data.map(renderGateStatItem).join('');
+    } else {
+      el.innerHTML = '<div class="empty-state">No data</div>';
     }
   }
-  // Any other gates not in the predefined order
-  for (const [gate, count] of Object.entries(gateRejections)) {
-    if (gate !== 'passed' && !gateOrder.includes(gate)) {
-      segments.push({
-        label: gate,
-        value: count,
-        color: COLORS.text,
-      });
-    }
-  }
-  // Passed last
-  if (gateRejections.passed) {
-    segments.push({
-      label: gateLabels.passed,
-      value: gateRejections.passed,
-      color: gateColors.passed,
-    });
-  }
-
-  drawPieChart('chart-gate-rejections', segments);
 }
 
 // ============================================================

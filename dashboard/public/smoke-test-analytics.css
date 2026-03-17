@@ -519,6 +519,18 @@
   color: #ffc107;
 }
 
+/* Pipeline Gate Stats Grid */
+.gate-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 1rem;
+  padding: 0.5rem;
+}
+
+.gate-stats-grid .gate-stats-panel {
+  margin: 0;
+}
+
 /* Copy Results Bar */
 .copy-results-bar {
   display: flex;
