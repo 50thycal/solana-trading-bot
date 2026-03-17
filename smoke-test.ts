@@ -118,6 +118,8 @@ import {
   getPipeline,
   DetectionEvent,
   initPipelineStats,
+  getPipelineStats,
+  resetPipelineStats,
 } from './pipeline';
 import {
   initPumpFunFilters,
@@ -261,6 +263,14 @@ export interface SmokeTestReport {
   gateRejections?: Record<string, number>;
   /** Detailed pipeline rejection records: array of { stage, reason } for per-component analytics */
   pipelineRejections?: Array<{ stage: string; reason: string }>;
+  /** Per-component gate stats snapshot from PipelineStats (pass/fail per gate component) */
+  gateStats?: {
+    cheapGates: Array<{ name: string; displayName: string; passed: number; failed: number; totalChecked: number }>;
+    deepFilters: Array<{ name: string; displayName: string; passed: number; failed: number; totalChecked: number }>;
+    sniperGate: Array<{ name: string; displayName: string; passed: number; failed: number; totalChecked: number }>;
+    researchScoreGate: Array<{ name: string; displayName: string; passed: number; failed: number; totalChecked: number }>;
+    stableGate: Array<{ name: string; displayName: string; passed: number; failed: number; totalChecked: number }>;
+  };
 }
 
 // Shared state for the report endpoint
@@ -501,6 +511,9 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
   // Set module-level run context so buildReport can stamp it on reports
   currentRunNumber = runNumber;
   currentTotalRuns = totalRuns;
+
+  // Reset pipeline stats for this run so gate counters are per-run, not cumulative
+  resetPipelineStats();
 
   logger.level = LOG_LEVEL;
   const startedAt = Date.now();
@@ -1068,6 +1081,10 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     bondingCurve: state.passedBondingCurve?.toString() || '',
   } : undefined;
 
+  // Snapshot pipeline gate stats for this run
+  const pipelineStatsSnapshot = getPipelineStats()?.getSnapshot();
+  const snapshotGateStats = pipelineStatsSnapshot?.gateStats;
+
   return buildReport(
     startedAt, steps, walletBalanceBefore, walletBalanceAfter, state.exitTrigger,
     buyFailures, tokensEvaluated, tokensPipelinePassed, state.actualSolSpent, tradeAmount,
@@ -1087,6 +1104,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
       sellExecutorUsed: state.sellExecutorUsed,
       gateRejections: Object.keys(state.gateRejections).length > 0 ? state.gateRejections : undefined,
       pipelineRejections: state.pipelineRejections.length > 0 ? state.pipelineRejections : undefined,
+      gateStats: snapshotGateStats,
     },
   );
 
@@ -1432,6 +1450,7 @@ interface BuildReportExtras {
   sellExecutorUsed?: string;
   gateRejections?: Record<string, number>;
   pipelineRejections?: Array<{ stage: string; reason: string }>;
+  gateStats?: SmokeTestReport['gateStats'];
 }
 
 function buildReport(
@@ -1710,6 +1729,7 @@ function buildReport(
     totalRuns: currentTotalRuns,
     gateRejections: extras?.gateRejections,
     pipelineRejections: extras?.pipelineRejections,
+    gateStats: extras?.gateStats,
   };
 
   // Store for dashboard retrieval (in-memory + persisted to file)

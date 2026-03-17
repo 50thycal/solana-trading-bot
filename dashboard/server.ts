@@ -1947,27 +1947,47 @@ export class DashboardServer {
       }
     };
 
-    // Process all pipeline rejections from all reports
-    for (const r of reports) {
-      // Count tokens that passed all gates
-      for (let i = 0; i < r.tokensPipelinePassed; i++) {
-        incrementPassed(cheapGateStats);
-        incrementPassed(deepFilterStats);
-        incrementPassed(sniperGateStats);
-        incrementPassed(researchScoreGateStats);
-        incrementPassed(stableGateStats);
-      }
+    // Helper to merge a report's gateStats snapshot into the aggregated counters
+    const addGateStatsFromSnapshot = (
+      snapshot: { cheapGates: any[]; deepFilters: any[]; sniperGate: any[]; researchScoreGate: any[]; stableGate: any[] }
+    ) => {
+      const merge = (target: typeof cheapGateStats, source: any[]) => {
+        for (const src of source) {
+          const dst = target.find(t => t.name === src.name);
+          if (dst) {
+            dst.passed += src.passed || 0;
+            dst.failed += src.failed || 0;
+            dst.totalChecked += src.totalChecked || 0;
+          }
+        }
+      };
+      merge(cheapGateStats, snapshot.cheapGates || []);
+      merge(deepFilterStats, snapshot.deepFilters || []);
+      merge(sniperGateStats, snapshot.sniperGate || []);
+      merge(researchScoreGateStats, snapshot.researchScoreGate || []);
+      merge(stableGateStats, snapshot.stableGate || []);
+    };
 
-      // Process detailed rejections
-      if (r.pipelineRejections) {
+    // Process all reports — prefer gateStats snapshot (most accurate), fall back to pipelineRejections
+    for (const r of reports) {
+      if (r.gateStats) {
+        // Best source: direct PipelineStats snapshot from the run
+        addGateStatsFromSnapshot(r.gateStats);
+      } else if (r.pipelineRejections) {
+        // Fallback: reconstruct from rejection records
+        for (let i = 0; i < r.tokensPipelinePassed; i++) {
+          incrementPassed(cheapGateStats);
+          incrementPassed(deepFilterStats);
+          incrementPassed(sniperGateStats);
+          incrementPassed(researchScoreGateStats);
+          incrementPassed(stableGateStats);
+        }
         for (const rej of r.pipelineRejections) {
           if (rej.stage === 'cheap-gates') {
-            const component = resolveCheapGate(rej.reason);
-            incrementFailedAt(cheapGateStats, component);
+            incrementFailedAt(cheapGateStats, resolveCheapGate(rej.reason));
           } else if (rej.stage === 'deep-filters') {
             incrementPassed(cheapGateStats);
-            const component = resolveDeepFilter(rej.reason);
-            incrementFailedAt(deepFilterStats, component);
+            incrementFailedAt(deepFilterStats, resolveDeepFilter(rej.reason));
           } else if (rej.stage === 'sniper-gate') {
             incrementPassed(cheapGateStats);
             incrementPassed(deepFilterStats);
@@ -1986,12 +2006,17 @@ export class DashboardServer {
           }
         }
       } else if (r.gateRejections) {
-        // Fallback for older reports without detailed rejections:
-        // use gateRejections counts (no per-component breakdown, just stage-level)
+        // Oldest fallback: stage-level counts only (no per-component breakdown)
+        for (let i = 0; i < r.tokensPipelinePassed; i++) {
+          incrementPassed(cheapGateStats);
+          incrementPassed(deepFilterStats);
+          incrementPassed(sniperGateStats);
+          incrementPassed(researchScoreGateStats);
+          incrementPassed(stableGateStats);
+        }
         for (const [stage, count] of Object.entries(r.gateRejections)) {
           for (let i = 0; i < count; i++) {
             if (stage === 'cheap-gates') {
-              // Can't determine component, mark first gate
               cheapGateStats[0].failed++; cheapGateStats[0].totalChecked++;
             } else if (stage === 'deep-filters') {
               incrementPassed(cheapGateStats);
