@@ -861,7 +861,15 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
         try {
           walletBalanceAfter = (await state.connection!.getBalance(state.wallet!.publicKey, 'confirmed')) / LAMPORTS_PER_SOL;
         } catch { /* ignore */ }
-        return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceAfter, '', buyFailures, tokensEvaluated, tokensPipelinePassed);
+        const earlyGateStats = getPipelineStats()?.getSnapshot()?.gateStats;
+        return buildReport(startedAt, steps, walletBalanceBefore, walletBalanceAfter, '', buyFailures, tokensEvaluated, tokensPipelinePassed,
+          undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+          {
+            gateRejections: Object.keys(state.gateRejections).length > 0 ? state.gateRejections : undefined,
+            pipelineRejections: state.pipelineRejections.length > 0 ? state.pipelineRejections : undefined,
+            gateStats: earlyGateStats,
+          },
+        );
       }
     }
   }
