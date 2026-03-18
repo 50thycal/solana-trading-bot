@@ -1262,6 +1262,10 @@ async function runListenPipelineAndBuy(
         // Run through pipeline
         const result = await pipeline.process(detectionEvent);
 
+        // Record result in PipelineStats singleton so gate statistics are tracked
+        // (mirrors index.ts production path — without this, gateStats stays at zero)
+        getPipelineStats()?.recordResult(result);
+
         if (!result.success) {
           // Track which gate rejected this token
           const gate = result.rejectedAt || 'unknown';
