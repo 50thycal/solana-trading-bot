@@ -15,7 +15,7 @@
  * - PASS when:
  *     (botCount === 0 AND organicCount >= minOrganicBuyers)
  *     OR (botExitPercent >= minBotExitPercent AND organicCount >= minOrganicBuyers)
- * - If logOnly === true -> always pass (data collection mode)
+ * - If logOnly === true -> single check, always pass (fast data collection mode)
  * - If maxChecks reached -> REJECT
  *
  * Failure handling:
@@ -348,6 +348,116 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
       };
     }
 
+    // ── Log-only fast path ──────────────────────────────────────────────
+    // In logOnly mode, perform a single check for data collection and pass
+    // immediately. No initial delay, no polling loop — this prevents the
+    // gate from holding back the token for ~17s when it should just observe.
+    if (this.config.logOnly) {
+      let analysis: WalletAnalysis;
+      let rpcDegraded = false;
+      try {
+        analysis = await fetchAndAnalyzeTransactions(
+          this.connection,
+          detection.bondingCurve,
+          creationSlot,
+          this.config.sniperSlotThreshold,
+          this.config.signatureLimit,
+        );
+      } catch (error) {
+        rpcDegraded = true;
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        logger.warn(
+          { stage: this.name, mint: mintStr, error: errorMsg },
+          '[sniper-gate] Log-only RPC error — passing with empty data',
+        );
+        analysis = {
+          sniperWallets: new Map(),
+          organicWallets: new Set(),
+          allBuyWallets: new Set(),
+          totalBuys: 0,
+          totalSells: 0,
+        };
+      }
+
+      const botCount = analysis.sniperWallets.size;
+      const botExitCount = [...analysis.sniperWallets.values()].filter(
+        (v) => v === 'exited',
+      ).length;
+      const botExitPercent = botCount > 0 ? (botExitCount / botCount) * 100 : 0;
+      const organicCount = analysis.organicWallets.size;
+      const uniqueBuyWalletCount = analysis.allBuyWallets.size;
+
+      const hasEnoughOrganic = organicCount >= this.config.minOrganicBuyers;
+      const botsCleared =
+        botCount === 0 || botExitPercent >= this.config.minBotExitPercent;
+      const passConditionsMet = botsCleared && hasEnoughOrganic;
+
+      const checkResult: SniperGateCheckResult = {
+        checkNumber: 1,
+        checkedAt: Date.now(),
+        botCount,
+        botExitCount,
+        botExitPercent,
+        organicCount,
+        totalBuys: analysis.totalBuys,
+        totalSells: analysis.totalSells,
+        uniqueBuyWalletCount,
+        passConditionsMet,
+        sniperWallets: [...analysis.sniperWallets.keys()],
+        organicWallets: [...analysis.organicWallets],
+      };
+
+      const duration = Date.now() - startTime;
+      const passReason = `Log-only mode (1 check): bots=${botCount}, exits=${botExitPercent.toFixed(1)}%, organic=${organicCount}`;
+
+      if (buf) {
+        buf.info(`Sniper gate: PASSED (log-only) - ${passReason} (${duration}ms)`);
+      } else {
+        logger.info(
+          {
+            stage: this.name,
+            mint: mintStr,
+            botCount,
+            botExitCount,
+            botExitPercent: botExitPercent.toFixed(1) + '%',
+            organicCount,
+            checksPerformed: 1,
+            logOnly: true,
+            durationMs: duration,
+          },
+          '[pipeline] Sniper gate passed (log-only, single check)',
+        );
+      }
+
+      return {
+        pass: true,
+        reason: passReason,
+        stage: this.name,
+        data: {
+          sniperWalletCount: botCount,
+          sniperExitCount: botExitCount,
+          sniperExitPercent: botExitPercent,
+          organicBuyerCount: organicCount,
+          totalBuys: analysis.totalBuys,
+          totalSells: analysis.totalSells,
+          uniqueBuyWalletCount,
+          checksPerformed: 1,
+          totalWaitMs: duration,
+          checkStartedAt: startTime,
+          sniperWallets: [...analysis.sniperWallets.keys()],
+          organicWallets: [...analysis.organicWallets],
+          logOnly: true,
+          rpcDegraded,
+          checkHistory: [checkResult],
+          sniperSlotThreshold: this.config.sniperSlotThreshold,
+          signatureLimit: this.config.signatureLimit,
+        },
+        durationMs: duration,
+      };
+    }
+
+    // ── Normal mode: full polling loop ────────────────────────────────────
+
     // Step 1: Initial delay (allow transactions to be indexed)
     if (this.config.initialDelayMs > 0) {
       await sleep(this.config.initialDelayMs);
@@ -422,7 +532,6 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
           totalSells: analysis.totalSells,
           minBotExitPercent: this.config.minBotExitPercent,
           minOrganicBuyers: this.config.minOrganicBuyers,
-          logOnly: this.config.logOnly,
         },
         '[sniper-gate] Check result',
       );
@@ -449,9 +558,7 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
         organicWallets: [...analysis.organicWallets],
       });
 
-      // In log-only mode we run the full loop — do NOT short-circuit here.
-      // The pass happens after maxChecks are exhausted (below the while loop).
-      if (passConditionsMet && !this.config.logOnly) {
+      if (passConditionsMet) {
         const duration = Date.now() - startTime;
         const passReason = botCount === 0
           ? `No bots detected, ${organicCount} organic buyers`
@@ -473,7 +580,6 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
               totalBuys: analysis.totalBuys,
               totalSells: analysis.totalSells,
               checksPerformed,
-              logOnly: this.config.logOnly,
               durationMs: duration,
             },
             '[pipeline] Sniper gate passed',
@@ -497,7 +603,7 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
             checkStartedAt: startTime,
             sniperWallets: [...analysis.sniperWallets.keys()],
             organicWallets: [...analysis.organicWallets],
-            logOnly: this.config.logOnly,
+            logOnly: false,
             rpcDegraded,
             checkHistory,
             sniperSlotThreshold: this.config.sniperSlotThreshold,
@@ -521,58 +627,6 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
     const botExitPercent = botCount > 0 ? (botExitCount / botCount) * 100 : 0;
     const organicCount = lastAnalysis?.organicWallets.size ?? 0;
     const uniqueBuyWalletCount = lastAnalysis?.allBuyWallets.size ?? 0;
-
-    // In log-only mode: run the full loop for data collection, then pass.
-    // Conditions were never met naturally, but we still forward all check data.
-    if (this.config.logOnly) {
-      const duration = Date.now() - startTime;
-      const passReason = `Log-only mode (${checksPerformed} checks complete): bots=${botCount}, exits=${botExitPercent.toFixed(1)}%, organic=${organicCount}`;
-
-      if (buf) {
-        buf.info(`Sniper gate: PASSED (log-only) - ${passReason} (${duration}ms)`);
-      } else {
-        logger.info(
-          {
-            stage: this.name,
-            mint: mintStr,
-            botCount,
-            botExitCount,
-            botExitPercent: botExitPercent.toFixed(1) + '%',
-            organicCount,
-            checksPerformed,
-            logOnly: true,
-            durationMs: duration,
-          },
-          '[pipeline] Sniper gate passed (log-only, all checks complete)',
-        );
-      }
-
-      return {
-        pass: true,
-        reason: passReason,
-        stage: this.name,
-        data: {
-          sniperWalletCount: botCount,
-          sniperExitCount: botExitCount,
-          sniperExitPercent: botExitPercent,
-          organicBuyerCount: organicCount,
-          totalBuys: lastAnalysis?.totalBuys ?? 0,
-          totalSells: lastAnalysis?.totalSells ?? 0,
-          uniqueBuyWalletCount,
-          checksPerformed,
-          totalWaitMs: duration,
-          checkStartedAt: startTime,
-          sniperWallets: lastAnalysis ? [...lastAnalysis.sniperWallets.keys()] : [],
-          organicWallets: lastAnalysis ? [...lastAnalysis.organicWallets] : [],
-          logOnly: true,
-          rpcDegraded,
-          checkHistory,
-          sniperSlotThreshold: this.config.sniperSlotThreshold,
-          signatureLimit: this.config.signatureLimit,
-        },
-        durationMs: duration,
-      };
-    }
 
     // If RPC was degraded, pass with whatever data we have rather than rejecting
     // a potentially high-scoring token due to infrastructure issues
