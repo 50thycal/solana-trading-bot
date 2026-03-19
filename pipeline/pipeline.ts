@@ -231,6 +231,12 @@ export class PumpFunPipeline {
       const researchScoreResult = await this.researchScoreGateStage.execute(context);
       stageResults.push(researchScoreResult);
 
+      // Always populate context with research score data (even on rejection)
+      // so run-wide analytics can track scores for all tokens that reached this gate
+      if (researchScoreResult.data) {
+        context.researchScore = researchScoreResult.data as ResearchScoreGateData;
+      }
+
       if (!researchScoreResult.pass) {
         context.rejection = {
           stage: researchScoreResult.stage,
@@ -239,8 +245,6 @@ export class PumpFunPipeline {
         };
         return this.buildResult(false, context, stageResults, pipelineStart, researchScoreResult);
       }
-
-      context.researchScore = researchScoreResult.data as ResearchScoreGateData;
 
       // ═══════════════════════════════════════════════════════════════════════════
       // STAGE 6: Stable Gate
