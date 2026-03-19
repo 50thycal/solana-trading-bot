@@ -1038,7 +1038,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
   // ─────────────────────────────────────────────────────────────────────
   if (liveProgress) liveProgress.currentStep = 'SELL_EXECUTE';
   const sellOk = await runStep(steps[7], async () => {
-    const smokeTestSlippageBps = Math.max(SELL_SLIPPAGE * 100, 5000); // At least 50% for smoke test
+    const smokeTestSlippageBps = SELL_SLIPPAGE * 100; // Use actual configured slippage
     const maxAttempts = 3;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
