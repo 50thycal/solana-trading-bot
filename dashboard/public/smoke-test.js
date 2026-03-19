@@ -900,8 +900,24 @@ function renderPriceChart(report) {
   yMax += yPad;
 
   // Time range for X axis
-  const tMin = history[0].timestamp;
-  const tMax = history[history.length - 1].timestamp;
+  // Expand to include buy/sell markers so they're always visible on the chart.
+  // If we have pipeline data, anchor the start to when the token was first detected
+  // (buyTimestamp - totalPipelineDurationMs) to show the full token lifecycle.
+  let tMin = history[0].timestamp;
+  let tMax = history[history.length - 1].timestamp;
+
+  // Anchor chart start to token detection time if we have pipeline data
+  if (report.buyTimestamp && report.boughtTokenPipelineData && report.boughtTokenPipelineData.totalPipelineDurationMs) {
+    const detectionTime = report.buyTimestamp - report.boughtTokenPipelineData.totalPipelineDurationMs;
+    tMin = Math.min(tMin, detectionTime);
+  } else if (report.buyTimestamp) {
+    tMin = Math.min(tMin, report.buyTimestamp);
+  }
+  if (report.sellTimestamp) {
+    // Ensure sell marker fits (it always should, but be safe)
+    tMax = Math.max(tMax, report.sellTimestamp);
+  }
+
   const tRange = tMax - tMin || 1;
 
   const xScale = (t) => padding.left + ((t - tMin) / tRange) * plotW;
@@ -980,8 +996,10 @@ function renderPriceChart(report) {
 
   // Draw buy/sell markers as vertical dashed lines with labels
   const drawMarker = (timestamp, label, color, labelYOffset) => {
-    if (!timestamp || timestamp < tMin || timestamp > tMax) return;
+    if (!timestamp) return;
     const mx = xScale(timestamp);
+    // Clamp to chart area so marker doesn't render outside plot
+    if (mx < padding.left || mx > w - padding.right) return;
     ctx.save();
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
