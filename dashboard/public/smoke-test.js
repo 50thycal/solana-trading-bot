@@ -979,7 +979,7 @@ function renderPriceChart(report) {
   ctx.fill();
 
   // Draw buy/sell markers as vertical dashed lines with labels
-  const drawMarker = (timestamp, label, color) => {
+  const drawMarker = (timestamp, label, color, labelYOffset) => {
     if (!timestamp || timestamp < tMin || timestamp > tMax) return;
     const mx = xScale(timestamp);
     ctx.save();
@@ -995,7 +995,7 @@ function renderPriceChart(report) {
     ctx.font = 'bold 10px monospace';
     const textWidth = ctx.measureText(label).width;
     const labelX = mx - textWidth / 2 - 3;
-    const labelY = padding.top - 3;
+    const labelY = padding.top - 3 + (labelYOffset || 0);
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillRect(labelX, labelY - 10, textWidth + 6, 13);
     // Label text
@@ -1005,8 +1005,19 @@ function renderPriceChart(report) {
     ctx.restore();
   };
 
-  if (report.buyTimestamp) drawMarker(report.buyTimestamp, 'BUY', '#2196f3');
-  if (report.sellTimestamp) drawMarker(report.sellTimestamp, 'SELL', '#ff9800');
+  // When buy and sell are very close, offset the sell label down so both are visible
+  let sellLabelOffset = 0;
+  if (report.buyTimestamp && report.sellTimestamp) {
+    const buyX = xScale(report.buyTimestamp);
+    const sellX = xScale(report.sellTimestamp);
+    // If labels would overlap (within ~40px), shift the sell label down
+    if (Math.abs(sellX - buyX) < 40) {
+      sellLabelOffset = 15;
+    }
+  }
+
+  if (report.buyTimestamp) drawMarker(report.buyTimestamp, 'BUY', '#2196f3', 0);
+  if (report.sellTimestamp) drawMarker(report.sellTimestamp, 'SELL', '#ff9800', sellLabelOffset);
 }
 
 /**
