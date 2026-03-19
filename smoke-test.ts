@@ -100,7 +100,10 @@ import {
 import {
   buyOnPumpFun,
   sellOnPumpFun,
+  decodeBondingCurveState,
+  calculateSellSolOut,
 } from './helpers/pumpfun';
+import BN from 'bn.js';
 import { initTradeAuditManager } from './helpers/trade-audit';
 import { initRpcManager } from './helpers/rpc-manager';
 import { getConfig, getRedactedConfigSnapshot } from './helpers/config-validator';
@@ -1078,6 +1081,59 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
       logger.warn(
         { error: persistError instanceof Error ? persistError.message : String(persistError) },
         '[smoke-test] Failed to record sell in persistence layer (non-fatal)'
+      );
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // POST-SELL PRICE TRACKING - Continue monitoring bonding curve price
+  // for up to 5 minutes from the buy to build a fuller price chart
+  // ─────────────────────────────────────────────────────────────────────
+  const POST_SELL_TOTAL_DURATION_MS = 5 * 60 * 1000; // 5 minutes total from buy
+  const POST_SELL_SNAPSHOT_INTERVAL_MS = 5000; // every 5 seconds
+
+  if (state.passedToken && state.passedBondingCurve && state.buyTimestamp && state.tokensReceived > 0) {
+    const trackingDeadline = state.buyTimestamp + POST_SELL_TOTAL_DURATION_MS;
+    const remainingMs = trackingDeadline - Date.now();
+
+    if (remainingMs > POST_SELL_SNAPSHOT_INTERVAL_MS) {
+      if (liveProgress) liveProgress.currentStep = 'POST_SELL_TRACKING';
+      logger.info(
+        { remainingMs: Math.floor(remainingMs / 1000) + 's' },
+        '[smoke-test] Continuing price tracking after sell',
+      );
+
+      const bondingCurveKey = state.passedBondingCurve;
+      const tokenAmountBN = new BN(state.tokensReceived);
+
+      while (Date.now() < trackingDeadline) {
+        await sleep(POST_SELL_SNAPSHOT_INTERVAL_MS);
+        if (Date.now() >= trackingDeadline) break;
+
+        try {
+          const accountInfo = await state.connection!.getAccountInfo(bondingCurveKey, 'confirmed');
+          if (!accountInfo?.data) continue;
+
+          const bcState = decodeBondingCurveState(accountInfo.data as Buffer);
+          if (!bcState || bcState.complete) break; // token graduated, stop tracking
+
+          const expectedSolOut = calculateSellSolOut(bcState, tokenAmountBN);
+          const currentValueSol = expectedSolOut.toNumber() / LAMPORTS_PER_SOL;
+
+          if (!Number.isFinite(currentValueSol) || currentValueSol < 0) continue;
+
+          const rawPnlPercent = ((currentValueSol - tradeAmount) / tradeAmount) * 100;
+
+          if (!state.priceHistory) state.priceHistory = [];
+          state.priceHistory.push({ timestamp: Date.now(), valueSol: currentValueSol, pnlPercent: rawPnlPercent });
+        } catch (err) {
+          logger.debug({ error: err }, '[smoke-test] Post-sell price fetch failed (non-fatal)');
+        }
+      }
+
+      logger.info(
+        { snapshots: state.priceHistory.length },
+        '[smoke-test] Post-sell price tracking complete',
       );
     }
   }

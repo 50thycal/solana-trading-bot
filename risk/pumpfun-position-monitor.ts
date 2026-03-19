@@ -46,6 +46,8 @@ export interface PumpFunPosition {
   highWaterMarkPercent?: number;
   /** Price snapshots captured during position monitoring (for sparkline charts) */
   priceHistory?: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
+  /** Timestamp of last price snapshot (for throttling to ~5s intervals) */
+  lastSnapshotTimestamp?: number;
 }
 
 /**
@@ -356,10 +358,15 @@ export class PumpFunPositionMonitor extends EventEmitter {
     position.lastCurrentValueSol = currentValueSol;
     position.lastCheckTimestamp = Date.now();
 
-    // Append price snapshot for sparkline charts (capped at 200 entries)
+    // Append price snapshot for sparkline charts (throttled to ~5s intervals, capped at 200 entries)
+    const now = Date.now();
+    const SNAPSHOT_INTERVAL_MS = 5000;
     if (!position.priceHistory) position.priceHistory = [];
-    position.priceHistory.push({ timestamp: Date.now(), valueSol: currentValueSol, pnlPercent: rawPnlPercent });
-    if (position.priceHistory.length > 200) position.priceHistory.shift();
+    if (!position.lastSnapshotTimestamp || (now - position.lastSnapshotTimestamp) >= SNAPSHOT_INTERVAL_MS) {
+      position.priceHistory.push({ timestamp: now, valueSol: currentValueSol, pnlPercent: rawPnlPercent });
+      if (position.priceHistory.length > 200) position.priceHistory.shift();
+      position.lastSnapshotTimestamp = now;
+    }
 
     logger.debug(
       {
