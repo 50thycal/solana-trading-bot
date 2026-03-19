@@ -285,6 +285,24 @@
     <!-- Progress info (visible during running test) -->
     <div id="progress-info" style="padding: 0.5rem 1rem; font-size: 0.85rem; color: var(--text-secondary);"></div>
 
+    <!-- Bought Token Analysis (pipeline data for the specific token bought) -->
+    <section class="panel" id="bought-token-panel" style="display:none;">
+      <div class="panel-header">
+        <h2>Bought Token Analysis</h2>
+        <span class="panel-subtitle" id="bought-token-subtitle"></span>
+      </div>
+      <div class="smoke-meta" id="bought-token-meta"></div>
+    </section>
+
+    <!-- Pipeline Run Overview (aggregate stats for all tokens in this run) -->
+    <section class="panel" id="pipeline-run-panel" style="display:none;">
+      <div class="panel-header">
+        <h2>Pipeline Run Overview</h2>
+        <span class="panel-subtitle" id="pipeline-run-subtitle"></span>
+      </div>
+      <div class="smoke-meta" id="pipeline-run-meta"></div>
+    </section>
+
     <!-- Traded Token Info (visible after a successful buy+sell) -->
     <section class="panel" id="traded-token-panel" style="display:none;">
       <div class="panel-header">
