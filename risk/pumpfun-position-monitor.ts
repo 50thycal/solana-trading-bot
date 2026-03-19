@@ -498,6 +498,30 @@ export class PumpFunPositionMonitor extends EventEmitter {
     const mint = new PublicKey(position.tokenMint);
     const bondingCurve = new PublicKey(position.bondingCurve);
 
+    // Fetch FRESH bonding curve state to get accurate price at sell time
+    // The batch-fetched data used during evaluation may already be stale
+    try {
+      const freshState = await getBondingCurveState(this.connection, bondingCurve);
+      if (freshState && !freshState.complete) {
+        const tokenAmountBN = new BN(position.tokenAmount);
+        const freshSolOut = calculateSellSolOut(freshState, tokenAmountBN);
+        const freshValueSol = freshSolOut.toNumber() / LAMPORTS_PER_SOL;
+        if (Number.isFinite(freshValueSol) && freshValueSol >= 0) {
+          currentValueSol = freshValueSol;
+          pnlPercent = ((currentValueSol - position.entryAmountSol) / position.entryAmountSol) * 100;
+          logger.info(
+            { mint: position.tokenMint, freshValueSol: freshValueSol.toFixed(6) },
+            '[pump.fun] Updated sell value with fresh bonding curve data',
+          );
+        }
+      }
+    } catch (error) {
+      logger.warn(
+        { error, mint: position.tokenMint },
+        '[pump.fun] Failed to fetch fresh bonding curve state before sell — using batch data',
+      );
+    }
+
     // Determine token program ID based on token type
     const tokenProgramId = position.isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
 
