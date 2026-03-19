@@ -46,6 +46,8 @@ export interface PumpFunPosition {
   highWaterMarkPercent?: number;
   /** Price snapshots captured during position monitoring (for sparkline charts) */
   priceHistory?: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
+  /** Timestamp of last price snapshot (for throttling to ~5s intervals) */
+  lastSnapshotTimestamp?: number;
 }
 
 /**
@@ -173,6 +175,16 @@ export class PumpFunPositionMonitor extends EventEmitter {
       return;
     }
 
+    // Seed initial price snapshot at entry so the price chart always has a starting point
+    if (!position.priceHistory) position.priceHistory = [];
+    if (position.priceHistory.length === 0) {
+      position.priceHistory.push({
+        timestamp: position.entryTimestamp || Date.now(),
+        valueSol: position.entryAmountSol,
+        pnlPercent: 0,
+      });
+    }
+
     this.positions.set(position.tokenMint, position);
     logger.info(
       {
@@ -250,6 +262,9 @@ export class PumpFunPositionMonitor extends EventEmitter {
       if (holdDuration >= this.config.maxHoldDurationMs) {
         const currentValueSol = position.lastCurrentValueSol ?? position.entryAmountSol;
         const pnlPercent = ((currentValueSol - position.entryAmountSol) / position.entryAmountSol) * 100;
+        // Record a price snapshot before exiting so the price chart has data
+        if (!position.priceHistory) position.priceHistory = [];
+        position.priceHistory.push({ timestamp: Date.now(), valueSol: currentValueSol, pnlPercent });
         logger.info(
           { mint: position.tokenMint, holdDurationMs: holdDuration },
           '[pump.fun] Max hold duration triggered',
@@ -273,6 +288,11 @@ export class PumpFunPositionMonitor extends EventEmitter {
 
     // Check if token graduated
     if (state.complete) {
+      // Record a price snapshot before exiting so the price chart has data
+      const graduatedValueSol = position.lastCurrentValueSol ?? position.entryAmountSol;
+      const graduatedPnl = ((graduatedValueSol - position.entryAmountSol) / position.entryAmountSol) * 100;
+      if (!position.priceHistory) position.priceHistory = [];
+      position.priceHistory.push({ timestamp: Date.now(), valueSol: graduatedValueSol, pnlPercent: graduatedPnl });
       logger.info({ mint: position.tokenMint }, '[pump.fun] Token graduated - triggering sell');
       await this.executeSell(position, 0, 0, 'graduated', 'Token graduated from bonding curve');
       return;
@@ -338,10 +358,15 @@ export class PumpFunPositionMonitor extends EventEmitter {
     position.lastCurrentValueSol = currentValueSol;
     position.lastCheckTimestamp = Date.now();
 
-    // Append price snapshot for sparkline charts (capped at 200 entries)
+    // Append price snapshot for sparkline charts (throttled to ~5s intervals, capped at 200 entries)
+    const now = Date.now();
+    const SNAPSHOT_INTERVAL_MS = 5000;
     if (!position.priceHistory) position.priceHistory = [];
-    position.priceHistory.push({ timestamp: Date.now(), valueSol: currentValueSol, pnlPercent: rawPnlPercent });
-    if (position.priceHistory.length > 200) position.priceHistory.shift();
+    if (!position.lastSnapshotTimestamp || (now - position.lastSnapshotTimestamp) >= SNAPSHOT_INTERVAL_MS) {
+      position.priceHistory.push({ timestamp: now, valueSol: currentValueSol, pnlPercent: rawPnlPercent });
+      if (position.priceHistory.length > 200) position.priceHistory.shift();
+      position.lastSnapshotTimestamp = now;
+    }
 
     logger.debug(
       {

@@ -677,7 +677,9 @@ function renderPriceChart(report) {
 
   const minPnl = Math.min(...history.map(p => p.pnlPercent));
   const maxPnl = Math.max(...history.map(p => p.pnlPercent));
-  subtitle.textContent = `${history.length} snapshots · PnL range: ${minPnl.toFixed(1)}% to ${maxPnl.toFixed(1)}%`;
+  const durationSec = Math.round((history[history.length - 1].timestamp - history[0].timestamp) / 1000);
+  const durationStr = durationSec >= 60 ? `${Math.floor(durationSec / 60)}m ${durationSec % 60}s` : `${durationSec}s`;
+  subtitle.textContent = `${history.length} snapshots · ${durationStr} · PnL range: ${minPnl.toFixed(1)}% to ${maxPnl.toFixed(1)}%`;
 
   // Draw on canvas
   const ctx = canvas.getContext('2d');
@@ -782,6 +784,36 @@ function renderPriceChart(report) {
   ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
   ctx.fillStyle = lastVal >= 0 ? '#00c853' : '#ff5252';
   ctx.fill();
+
+  // Draw buy/sell markers as vertical dashed lines with labels
+  const drawMarker = (timestamp, label, color) => {
+    if (!timestamp || timestamp < tMin || timestamp > tMax) return;
+    const mx = xScale(timestamp);
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(mx, padding.top);
+    ctx.lineTo(mx, h - padding.bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Label background
+    ctx.font = 'bold 10px monospace';
+    const textWidth = ctx.measureText(label).width;
+    const labelX = mx - textWidth / 2 - 3;
+    const labelY = padding.top - 3;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(labelX, labelY - 10, textWidth + 6, 13);
+    // Label text
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.fillText(label, mx, labelY);
+    ctx.restore();
+  };
+
+  if (report.buyTimestamp) drawMarker(report.buyTimestamp, 'BUY', '#2196f3');
+  if (report.sellTimestamp) drawMarker(report.sellTimestamp, 'SELL', '#ff9800');
 }
 
 /**
