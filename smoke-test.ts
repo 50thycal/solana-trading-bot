@@ -274,6 +274,34 @@ export interface SmokeTestReport {
     researchScoreGate: Array<{ name: string; displayName: string; passed: number; failed: number; totalChecked: number }>;
     stableGate: Array<{ name: string; displayName: string; passed: number; failed: number; totalChecked: number }>;
   };
+  /** Pipeline data for the specific token that was bought */
+  boughtTokenPipelineData?: {
+    /** Research bot score (0-100) */
+    researchScore?: number;
+    /** Research signal classification */
+    researchSignal?: string;
+    /** Deep filter composite score */
+    compositeScore?: number;
+    /** Time spent in each pipeline gate (ms) */
+    cheapGateDurationMs?: number;
+    deepFilterDurationMs?: number;
+    sniperGateDurationMs?: number;
+    researchGateDurationMs?: number;
+    stableGateDurationMs?: number;
+    /** Total time in pipeline for this token */
+    totalPipelineDurationMs?: number;
+  };
+  /** Run-wide pipeline timing statistics */
+  runPipelineStats?: {
+    /** Average time a token spent in the pipeline (ms) */
+    avgPipelineDurationMs: number;
+    /** Max time any token spent in the pipeline (ms) */
+    maxPipelineDurationMs: number;
+    /** Min time any token spent in the pipeline (ms) */
+    minPipelineDurationMs: number;
+    /** Average research score across all tokens that reached the research gate */
+    avgResearchScore?: number;
+  };
 }
 
 // Shared state for the report endpoint
@@ -600,6 +628,11 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     sellExecutorUsed: string | undefined;
     gateRejections: Record<string, number>;
     pipelineRejections: Array<{ stage: string; reason: string }>;
+    boughtTokenPipelineData: SmokeTestReport['boughtTokenPipelineData'];
+    /** Per-token pipeline durations for computing min/max/avg */
+    pipelineDurations: number[];
+    /** Research scores for all tokens that reached the research gate */
+    allResearchScores: number[];
   } = {
     connection: null,
     wallet: null,
@@ -626,6 +659,9 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     sellExecutorUsed: undefined,
     gateRejections: {},
     pipelineRejections: [],
+    boughtTokenPipelineData: undefined,
+    pipelineDurations: [],
+    allResearchScores: [],
   };
 
   // Wrap the entire test body in try/finally to guarantee liveProgress is
@@ -871,6 +907,14 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
             gateRejections: Object.keys(state.gateRejections).length > 0 ? state.gateRejections : undefined,
             pipelineRejections: state.pipelineRejections.length > 0 ? state.pipelineRejections : undefined,
             gateStats: earlyGateStats,
+            runPipelineStats: state.pipelineDurations.length > 0 ? {
+              avgPipelineDurationMs: state.pipelineDurations.reduce((a, b) => a + b, 0) / state.pipelineDurations.length,
+              maxPipelineDurationMs: Math.max(...state.pipelineDurations),
+              minPipelineDurationMs: Math.min(...state.pipelineDurations),
+              avgResearchScore: state.allResearchScores.length > 0
+                ? state.allResearchScores.reduce((a, b) => a + b, 0) / state.allResearchScores.length
+                : undefined,
+            } : undefined,
           },
         );
       }
@@ -1169,6 +1213,15 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
       gateRejections: Object.keys(state.gateRejections).length > 0 ? state.gateRejections : undefined,
       pipelineRejections: state.pipelineRejections.length > 0 ? state.pipelineRejections : undefined,
       gateStats: snapshotGateStats,
+      boughtTokenPipelineData: state.boughtTokenPipelineData,
+      runPipelineStats: state.pipelineDurations.length > 0 ? {
+        avgPipelineDurationMs: state.pipelineDurations.reduce((a, b) => a + b, 0) / state.pipelineDurations.length,
+        maxPipelineDurationMs: Math.max(...state.pipelineDurations),
+        minPipelineDurationMs: Math.min(...state.pipelineDurations),
+        avgResearchScore: state.allResearchScores.length > 0
+          ? state.allResearchScores.reduce((a, b) => a + b, 0) / state.allResearchScores.length
+          : undefined,
+      } : undefined,
     },
   );
 
@@ -1240,6 +1293,9 @@ async function runListenPipelineAndBuy(
     sellExecutorUsed: string | undefined;
     gateRejections: Record<string, number>;
     pipelineRejections: Array<{ stage: string; reason: string }>;
+    boughtTokenPipelineData: SmokeTestReport['boughtTokenPipelineData'];
+    pipelineDurations: number[];
+    allResearchScores: number[];
   },
   tradeAmount: number,
   timeoutMs: number,
@@ -1322,6 +1378,14 @@ async function runListenPipelineAndBuy(
         // (mirrors index.ts production path — without this, gateStats stays at zero)
         getPipelineStats()?.recordResult(result);
 
+        // Track per-token pipeline duration for run-wide stats
+        state.pipelineDurations.push(result.totalDurationMs);
+
+        // Track research scores for all tokens that reached the research gate
+        if (result.context.researchScore) {
+          state.allResearchScores.push(result.context.researchScore.score);
+        }
+
         if (!result.success) {
           // Track which gate rejected this token
           const gate = result.rejectedAt || 'unknown';
@@ -1392,6 +1456,23 @@ async function runListenPipelineAndBuy(
             state.buyExpectedTokens = buyResult.expectedTokens;
             state.buyExecutorUsed = buyResult.executorUsed;
             buySucceeded = true;
+
+            // Capture pipeline data for the bought token
+            const stageDurations: Record<string, number> = {};
+            for (const sr of result.stageResults) {
+              stageDurations[sr.stage] = sr.durationMs;
+            }
+            state.boughtTokenPipelineData = {
+              researchScore: result.context.researchScore?.score,
+              researchSignal: result.context.researchScore?.signal,
+              compositeScore: result.context.deepFilters?.filterResults?.score,
+              cheapGateDurationMs: stageDurations['cheap-gates'],
+              deepFilterDurationMs: stageDurations['deep-filters'],
+              sniperGateDurationMs: stageDurations['sniper-gate'],
+              researchGateDurationMs: stageDurations['research-score-gate'],
+              stableGateDurationMs: stageDurations['stable-gate'],
+              totalPipelineDurationMs: result.totalDurationMs,
+            };
 
             clearTimeout(overallTimeout);
 
@@ -1519,6 +1600,8 @@ interface BuildReportExtras {
   gateRejections?: Record<string, number>;
   pipelineRejections?: Array<{ stage: string; reason: string }>;
   gateStats?: SmokeTestReport['gateStats'];
+  boughtTokenPipelineData?: SmokeTestReport['boughtTokenPipelineData'];
+  runPipelineStats?: SmokeTestReport['runPipelineStats'];
 }
 
 function buildReport(
@@ -1798,6 +1881,8 @@ function buildReport(
     gateRejections: extras?.gateRejections,
     pipelineRejections: extras?.pipelineRejections,
     gateStats: extras?.gateStats,
+    boughtTokenPipelineData: extras?.boughtTokenPipelineData,
+    runPipelineStats: extras?.runPipelineStats,
   };
 
   // Store for dashboard retrieval (in-memory + persisted to file)

@@ -135,6 +135,10 @@ function renderProgress(progress) {
   if (slippagePanel) slippagePanel.style.display = 'none';
   const pricePanel = document.getElementById('price-chart-panel');
   if (pricePanel) pricePanel.style.display = 'none';
+  const boughtTokenPanel = document.getElementById('bought-token-panel');
+  if (boughtTokenPanel) boughtTokenPanel.style.display = 'none';
+  const pipelineRunPanel = document.getElementById('pipeline-run-panel');
+  if (pipelineRunPanel) pipelineRunPanel.style.display = 'none';
 
   // Steps list from live progress
   const stepsList = document.getElementById('steps-list');
@@ -335,11 +339,29 @@ function renderReport(report) {
     netCost.className = `card-value ${report.netCostSol > 0 ? 'negative' : 'positive'}`;
   }
 
+  // % Return (Trade) — show TP/SP setting that triggered exit
+  const pctWithoutEl2 = document.getElementById('pnl-percent-without');
+  if (pctWithoutEl2 && report.pnlPercentWithoutOverhead !== undefined && report.envSnapshot) {
+    const sign = report.pnlPercentWithoutOverhead >= 0 ? '+' : '';
+    const isGain = report.pnlPercentWithoutOverhead >= 0;
+    const setting = isGain ? report.envSnapshot.TAKE_PROFIT : report.envSnapshot.STOP_LOSS;
+    const settingLabel = isGain ? 'TP' : 'SL';
+    const settingStr = setting !== undefined ? ` (${settingLabel}: ${setting}%)` : '';
+    pctWithoutEl2.textContent = `${sign}${report.pnlPercentWithoutOverhead.toFixed(2)}%${settingStr}`;
+    pctWithoutEl2.className = `card-value ${pnlClass(report.pnlPercentWithoutOverhead)}`;
+  }
+
   // Fee breakdown panel
   renderFeeBreakdown(report);
 
   // Slippage analysis panel
   renderSlippageAnalysis(report);
+
+  // Bought token analysis panel
+  renderBoughtTokenAnalysis(report);
+
+  // Pipeline run overview panel
+  renderPipelineRunOverview(report);
 
   // Price chart panel
   renderPriceChart(report);
@@ -421,6 +443,177 @@ function copyMint(text, btn) {
     btn.textContent = 'Copied!';
     setTimeout(() => { btn.textContent = original; }, 1500);
   });
+}
+
+/**
+ * Render the Bought Token Analysis panel — pipeline data for the specific token bought.
+ */
+function renderBoughtTokenAnalysis(report) {
+  const panel = document.getElementById('bought-token-panel');
+  const meta = document.getElementById('bought-token-meta');
+  const subtitle = document.getElementById('bought-token-subtitle');
+  if (!panel || !meta) return;
+
+  const pd = report.boughtTokenPipelineData;
+  if (!pd) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  const tokenLabel = report.tradedToken ? `${report.tradedToken.symbol || '?'}` : 'Token';
+  subtitle.textContent = `Pipeline data for ${tokenLabel}`;
+
+  const fmtMs = (v) => {
+    if (v === undefined || v === null) return '—';
+    if (v < 1000) return `${Math.round(v)}ms`;
+    return `${(v / 1000).toFixed(1)}s`;
+  };
+
+  const scoreClass = (score) => {
+    if (score === undefined || score === null) return '';
+    return score >= 60 ? 'positive' : score >= 30 ? '' : 'negative';
+  };
+
+  meta.innerHTML = `
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Research Score</span>
+      <span class="smoke-meta-value ${scoreClass(pd.researchScore)}">${pd.researchScore !== undefined ? pd.researchScore + '/100' : '—'}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Research Signal</span>
+      <span class="smoke-meta-value">${pd.researchSignal || '—'}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Composite Score</span>
+      <span class="smoke-meta-value">${pd.compositeScore !== undefined ? pd.compositeScore + '/100' : '—'}</span>
+    </div>
+    <div style="grid-column: 1 / -1; border-top: 1px solid rgba(255,255,255,0.08); margin: 0.2rem 0;"></div>
+    <div style="grid-column: 1 / -1; font-size:0.75rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;">Pipeline Gate Timing</div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Cheap Gates</span>
+      <span class="smoke-meta-value">${fmtMs(pd.cheapGateDurationMs)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Deep Filters</span>
+      <span class="smoke-meta-value">${fmtMs(pd.deepFilterDurationMs)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Sniper Gate</span>
+      <span class="smoke-meta-value">${fmtMs(pd.sniperGateDurationMs)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Research Gate</span>
+      <span class="smoke-meta-value">${fmtMs(pd.researchGateDurationMs)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Stable Gate</span>
+      <span class="smoke-meta-value">${fmtMs(pd.stableGateDurationMs)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label" style="font-weight:700;">Total Pipeline</span>
+      <span class="smoke-meta-value" style="font-weight:700;">${fmtMs(pd.totalPipelineDurationMs)}</span>
+    </div>
+  `;
+}
+
+/**
+ * Render the Pipeline Run Overview panel — aggregate stats for all tokens reviewed.
+ */
+function renderPipelineRunOverview(report) {
+  const panel = document.getElementById('pipeline-run-panel');
+  const meta = document.getElementById('pipeline-run-meta');
+  const subtitle = document.getElementById('pipeline-run-subtitle');
+  if (!panel || !meta) return;
+
+  // Show if we have tokensEvaluated or gateRejections or runPipelineStats
+  const hasData = report.tokensEvaluated > 0 || report.gateRejections || report.runPipelineStats;
+  if (!hasData) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  subtitle.textContent = `${report.tokensEvaluated || 0} tokens evaluated`;
+
+  const fmtMs = (v) => {
+    if (v === undefined || v === null) return '—';
+    if (v < 1000) return `${Math.round(v)}ms`;
+    return `${(v / 1000).toFixed(1)}s`;
+  };
+
+  let html = '';
+
+  // Tokens reviewed and pipeline passed
+  html += `
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label"># Tokens Reviewed</span>
+      <span class="smoke-meta-value">${report.tokensEvaluated || 0}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label"># Pipeline Passed</span>
+      <span class="smoke-meta-value positive">${report.tokensPipelinePassed || 0}</span>
+    </div>
+  `;
+
+  // Average research score
+  const rps = report.runPipelineStats;
+  if (rps && rps.avgResearchScore !== undefined) {
+    const scoreClass = rps.avgResearchScore >= 60 ? 'positive' : rps.avgResearchScore >= 30 ? '' : 'negative';
+    html += `
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Avg Research Score</span>
+      <span class="smoke-meta-value ${scoreClass}">${rps.avgResearchScore.toFixed(1)}/100</span>
+    </div>`;
+  }
+
+  // Gate rejections section
+  if (report.gateRejections && Object.keys(report.gateRejections).length > 0) {
+    html += `<div style="grid-column: 1 / -1; border-top: 1px solid rgba(255,255,255,0.08); margin: 0.2rem 0;"></div>`;
+    html += `<div style="grid-column: 1 / -1; font-size:0.75rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;">Gate Rejections</div>`;
+
+    const gateDisplayNames = {
+      'cheap-gates': 'Cheap Gates',
+      'deep-filters': 'Deep Filters',
+      'sniper-gate': 'Sniper Gate',
+      'research-score-gate': 'Research Gate',
+      'stable-gate': 'Stable Gate',
+    };
+
+    // Sort by rejection count descending
+    const sorted = Object.entries(report.gateRejections)
+      .sort((a, b) => b[1] - a[1]);
+
+    for (const [gate, count] of sorted) {
+      const displayName = gateDisplayNames[gate] || gate;
+      html += `
+      <div class="smoke-meta-item">
+        <span class="smoke-meta-label">${escapeHtml(displayName)}</span>
+        <span class="smoke-meta-value negative">${count} rejected</span>
+      </div>`;
+    }
+  }
+
+  // Pipeline timing stats
+  if (rps) {
+    html += `<div style="grid-column: 1 / -1; border-top: 1px solid rgba(255,255,255,0.08); margin: 0.2rem 0;"></div>`;
+    html += `<div style="grid-column: 1 / -1; font-size:0.75rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;">Pipeline Timing</div>`;
+    html += `
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Avg Pipeline Time</span>
+      <span class="smoke-meta-value">${fmtMs(rps.avgPipelineDurationMs)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Max Pipeline Time</span>
+      <span class="smoke-meta-value">${fmtMs(rps.maxPipelineDurationMs)}</span>
+    </div>
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Min Pipeline Time</span>
+      <span class="smoke-meta-value">${fmtMs(rps.minPipelineDurationMs)}</span>
+    </div>`;
+  }
+
+  meta.innerHTML = html;
 }
 
 /**
@@ -1011,6 +1204,43 @@ function buildReportText(report) {
     if (s.sellSlippagePercent !== undefined) lines.push(`Sell Slippage:   ${s.sellSlippagePercent.toFixed(2)}%`);
     if (s.buySlippageCostSol !== undefined) lines.push(`Buy Slip Cost:   ${s.buySlippageCostSol.toFixed(6)} SOL`);
     if (s.sellSlippageCostSol !== undefined) lines.push(`Sell Slip Cost:  ${s.sellSlippageCostSol.toFixed(6)} SOL`);
+  }
+
+  // Bought token pipeline analysis
+  if (report.boughtTokenPipelineData) {
+    const pd = report.boughtTokenPipelineData;
+    lines.push('');
+    lines.push('--- Bought Token Pipeline Analysis ---');
+    if (pd.researchScore !== undefined) lines.push(`Research Score:     ${pd.researchScore}/100 (${pd.researchSignal || '—'})`);
+    if (pd.compositeScore !== undefined) lines.push(`Composite Score:   ${pd.compositeScore}/100`);
+    const fmtMs = (v) => v !== undefined ? `${Math.round(v)}ms` : '—';
+    lines.push(`Cheap Gates:       ${fmtMs(pd.cheapGateDurationMs)}`);
+    lines.push(`Deep Filters:      ${fmtMs(pd.deepFilterDurationMs)}`);
+    lines.push(`Sniper Gate:       ${fmtMs(pd.sniperGateDurationMs)}`);
+    lines.push(`Research Gate:     ${fmtMs(pd.researchGateDurationMs)}`);
+    lines.push(`Stable Gate:       ${fmtMs(pd.stableGateDurationMs)}`);
+    lines.push(`Total Pipeline:    ${fmtMs(pd.totalPipelineDurationMs)}`);
+  }
+
+  // Pipeline run overview
+  if (report.tokensEvaluated > 0) {
+    lines.push('');
+    lines.push('--- Pipeline Run Overview ---');
+    lines.push(`Tokens Reviewed:   ${report.tokensEvaluated}`);
+    lines.push(`Pipeline Passed:   ${report.tokensPipelinePassed || 0}`);
+    if (report.runPipelineStats) {
+      const rps = report.runPipelineStats;
+      if (rps.avgResearchScore !== undefined) lines.push(`Avg Research Score: ${rps.avgResearchScore.toFixed(1)}/100`);
+      lines.push(`Avg Pipeline Time: ${Math.round(rps.avgPipelineDurationMs)}ms`);
+      lines.push(`Max Pipeline Time: ${Math.round(rps.maxPipelineDurationMs)}ms`);
+      lines.push(`Min Pipeline Time: ${Math.round(rps.minPipelineDurationMs)}ms`);
+    }
+    if (report.gateRejections) {
+      lines.push('Gate Rejections:');
+      for (const [gate, count] of Object.entries(report.gateRejections).sort((a, b) => b[1] - a[1])) {
+        lines.push(`  ${gate}: ${count}`);
+      }
+    }
   }
 
   if (report.tradedToken && report.tradedToken.mint) {
