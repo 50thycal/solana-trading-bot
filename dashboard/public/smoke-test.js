@@ -556,15 +556,30 @@ function renderPipelineRunOverview(report) {
     </div>
   `;
 
-  // Average research score
+  // Research score stats
   const rps = report.runPipelineStats;
   if (rps && rps.avgResearchScore !== undefined) {
-    const scoreClass = rps.avgResearchScore >= 60 ? 'positive' : rps.avgResearchScore >= 30 ? '' : 'negative';
+    const scoreClass = (s) => s >= 60 ? 'positive' : s >= 30 ? '' : 'negative';
+    const countLabel = rps.researchScoreCount !== undefined ? ` (${rps.researchScoreCount} scored)` : '';
     html += `
     <div class="smoke-meta-item">
       <span class="smoke-meta-label">Avg Research Score</span>
-      <span class="smoke-meta-value ${scoreClass}">${rps.avgResearchScore.toFixed(1)}/100</span>
+      <span class="smoke-meta-value ${scoreClass(rps.avgResearchScore)}">${rps.avgResearchScore.toFixed(1)}/100${countLabel}</span>
     </div>`;
+    if (rps.maxResearchScore !== undefined) {
+      html += `
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Max Research Score</span>
+      <span class="smoke-meta-value ${scoreClass(rps.maxResearchScore)}">${rps.maxResearchScore.toFixed(1)}/100</span>
+    </div>`;
+    }
+    if (rps.minResearchScore !== undefined) {
+      html += `
+    <div class="smoke-meta-item">
+      <span class="smoke-meta-label">Min Research Score</span>
+      <span class="smoke-meta-value ${scoreClass(rps.minResearchScore)}">${rps.minResearchScore.toFixed(1)}/100</span>
+    </div>`;
+    }
   }
 
   // Gate rejections section
@@ -1259,7 +1274,12 @@ function buildReportText(report) {
     lines.push(`Pipeline Passed:   ${report.tokensPipelinePassed || 0}`);
     if (report.runPipelineStats) {
       const rps = report.runPipelineStats;
-      if (rps.avgResearchScore !== undefined) lines.push(`Avg Research Score: ${rps.avgResearchScore.toFixed(1)}/100`);
+      if (rps.avgResearchScore !== undefined) {
+        const countStr = rps.researchScoreCount ? ` (${rps.researchScoreCount} scored)` : '';
+        lines.push(`Avg Research Score: ${rps.avgResearchScore.toFixed(1)}/100${countStr}`);
+      }
+      if (rps.maxResearchScore !== undefined) lines.push(`Max Research Score: ${rps.maxResearchScore.toFixed(1)}/100`);
+      if (rps.minResearchScore !== undefined) lines.push(`Min Research Score: ${rps.minResearchScore.toFixed(1)}/100`);
       lines.push(`Avg Pipeline Time: ${Math.round(rps.avgPipelineDurationMs)}ms`);
       lines.push(`Max Pipeline Time: ${Math.round(rps.maxPipelineDurationMs)}ms`);
       lines.push(`Min Pipeline Time: ${Math.round(rps.minPipelineDurationMs)}ms`);

@@ -301,6 +301,12 @@ export interface SmokeTestReport {
     minPipelineDurationMs: number;
     /** Average research score across all tokens that reached the research gate */
     avgResearchScore?: number;
+    /** Highest research score seen in this run */
+    maxResearchScore?: number;
+    /** Lowest research score seen in this run */
+    minResearchScore?: number;
+    /** Number of tokens that were scored by the research gate */
+    researchScoreCount?: number;
   };
 }
 
@@ -913,6 +919,15 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
               minPipelineDurationMs: Math.min(...state.pipelineDurations),
               avgResearchScore: state.allResearchScores.length > 0
                 ? state.allResearchScores.reduce((a, b) => a + b, 0) / state.allResearchScores.length
+                : undefined,
+              maxResearchScore: state.allResearchScores.length > 0
+                ? Math.max(...state.allResearchScores)
+                : undefined,
+              minResearchScore: state.allResearchScores.length > 0
+                ? Math.min(...state.allResearchScores)
+                : undefined,
+              researchScoreCount: state.allResearchScores.length > 0
+                ? state.allResearchScores.length
                 : undefined,
             } : undefined,
           },
