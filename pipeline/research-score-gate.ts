@@ -349,12 +349,25 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
 
     this.lastFetchError = null;
 
+    const totalWeight = this.cachedModel.rules.reduce((sum, r) => sum + r.weight, 0);
+    const theoreticalMax = Math.round(totalWeight * 100 * 100) / 100;
+
     logger.info(
       {
         checkpoint: this.cachedModel.checkpointSeconds,
         ruleCount: this.cachedModel.rules.length,
         sampleCount: this.cachedModel.sampleCount,
         baseRate2x: this.cachedModel.baseRate2x,
+        totalWeight: Math.round(totalWeight * 10000) / 10000,
+        theoreticalMaxScore: theoreticalMax,
+        ruleDetails: this.cachedModel.rules.map(r => ({
+          feature: r.featureName,
+          weight: r.weight,
+          direction: r.direction,
+          min: r.min,
+          max: r.max,
+          maxContribution: Math.round(r.weight * 100 * 100) / 100,
+        })),
       },
       '[research-score-gate] Model fetched successfully',
     );
@@ -500,8 +513,9 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       freshBondingCurveState: freshBcs,
     };
 
-    // Log the score
-    logger.debug(
+    // Log the score breakdown at info level for diagnostics
+    const sortedFeatures = [...featureScores].sort((a, b) => b.score - a.score);
+    logger.info(
       {
         stage: this.name,
         mint: mintStr,
@@ -509,13 +523,9 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
         signal,
         threshold: this.config.scoreThreshold,
         passed: score >= this.config.scoreThreshold,
-        logOnly: this.config.logOnly,
-        topFeatures: featureScores
-          .sort((a, b) => b.score - a.score)
-          .slice(0, 5)
-          .map((f) => `${f.name}=${f.raw}(${f.score})`),
+        featureBreakdown: sortedFeatures.map((f) => `${f.name}=${f.raw}(${f.score})`),
       },
-      '[research-score-gate] Score result',
+      '[research-score-gate] Score breakdown',
     );
 
     const passed = score >= this.config.scoreThreshold;
