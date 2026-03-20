@@ -866,8 +866,28 @@ function renderSlippageAnalysis(report) {
 }
 
 /**
+ * Format a SOL price for display, using subscript notation for small values.
+ * E.g., 0.00001234 → "0.0₅1234" (subscript 5 = number of leading zeros after decimal)
+ */
+function formatSolPrice(price) {
+  if (price === 0) return '0';
+  if (price >= 0.01) return price.toFixed(6);
+  // Count leading zeros after "0."
+  const s = price.toFixed(20);
+  const match = s.match(/^0\.0*/)
+  if (!match) return price.toFixed(6);
+  const leadingZeros = match[0].length - 2; // subtract "0."
+  const significantDigits = s.slice(match[0].length, match[0].length + 4);
+  // Use unicode subscript digits
+  const subscriptDigits = '₀₁₂₃₄₅₆₇₈₉';
+  const sub = String(leadingZeros).split('').map(d => subscriptDigits[parseInt(d)]).join('');
+  return `0.0${sub}${significantDigits}`;
+}
+
+/**
  * Render the Price During Hold sparkline chart using Canvas.
- * No external chart library needed — draws a simple line chart.
+ * Plots actual SOL spot price (matching DexScreener) when available,
+ * falls back to PnL% for legacy data without priceSol.
  */
 function renderPriceChart(report) {
   const panel = document.getElementById('price-chart-panel');
@@ -883,11 +903,39 @@ function renderPriceChart(report) {
 
   panel.style.display = 'block';
 
-  const minPnl = Math.min(...history.map(p => p.pnlPercent));
-  const maxPnl = Math.max(...history.map(p => p.pnlPercent));
-  const durationSec = Math.round((history[history.length - 1].timestamp - history[0].timestamp) / 1000);
+  // Determine chart mode: use spot price if available, otherwise fall back to PnL%
+  const hasPriceData = history.some(p => p.priceSol !== undefined && p.priceSol !== null);
+  const useSpotPrice = hasPriceData;
+
+  // Get Y values based on mode
+  const getValue = useSpotPrice
+    ? (p) => (p.priceSol !== undefined && p.priceSol !== null) ? p.priceSol : null
+    : (p) => p.pnlPercent;
+
+  // Filter history to only entries with valid values
+  const validHistory = useSpotPrice
+    ? history.filter(p => p.priceSol !== undefined && p.priceSol !== null)
+    : history;
+
+  if (validHistory.length < 2) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  const values = validHistory.map(getValue);
+
+  const durationSec = Math.round((validHistory[validHistory.length - 1].timestamp - validHistory[0].timestamp) / 1000);
   const durationStr = durationSec >= 60 ? `${Math.floor(durationSec / 60)}m ${durationSec % 60}s` : `${durationSec}s`;
-  subtitle.textContent = `${history.length} snapshots · ${durationStr} · PnL range: ${minPnl.toFixed(1)}% to ${maxPnl.toFixed(1)}%`;
+
+  if (useSpotPrice) {
+    const minPrice = Math.min(...values);
+    const maxPrice = Math.max(...values);
+    subtitle.textContent = `${validHistory.length} snapshots · ${durationStr} · Price: ${formatSolPrice(minPrice)} — ${formatSolPrice(maxPrice)} SOL`;
+  } else {
+    const minPnl = Math.min(...values);
+    const maxPnl = Math.max(...values);
+    subtitle.textContent = `${validHistory.length} snapshots · ${durationStr} · PnL range: ${minPnl.toFixed(1)}% to ${maxPnl.toFixed(1)}%`;
+  }
 
   // Draw on canvas
   const ctx = canvas.getContext('2d');
@@ -899,7 +947,7 @@ function renderPriceChart(report) {
 
   const w = rect.width;
   const h = rect.height;
-  const padding = { top: 20, right: 15, bottom: 25, left: 50 };
+  const padding = { top: 20, right: 15, bottom: 25, left: useSpotPrice ? 80 : 50 };
   const plotW = w - padding.left - padding.right;
   const plotH = h - padding.top - padding.bottom;
 
@@ -907,19 +955,21 @@ function renderPriceChart(report) {
   ctx.clearRect(0, 0, w, h);
 
   // Value range for Y axis
-  const values = history.map(p => p.pnlPercent);
-  let yMin = Math.min(...values, 0);
-  let yMax = Math.max(...values, 0);
-  const yPad = Math.max((yMax - yMin) * 0.1, 0.5);
-  yMin -= yPad;
+  let yMin, yMax;
+  if (useSpotPrice) {
+    yMin = Math.min(...values);
+    yMax = Math.max(...values);
+  } else {
+    yMin = Math.min(...values, 0);
+    yMax = Math.max(...values, 0);
+  }
+  const yPad = Math.max((yMax - yMin) * 0.1, useSpotPrice ? yMax * 0.05 : 0.5);
+  yMin = Math.max(0, yMin - yPad); // Price can't go negative
   yMax += yPad;
 
   // Time range for X axis
-  // Expand to include buy/sell markers so they're always visible on the chart.
-  // If we have pipeline data, anchor the start to when the token was first detected
-  // (buyTimestamp - totalPipelineDurationMs) to show the full token lifecycle.
-  let tMin = history[0].timestamp;
-  let tMax = history[history.length - 1].timestamp;
+  let tMin = validHistory[0].timestamp;
+  let tMax = validHistory[validHistory.length - 1].timestamp;
 
   // Anchor chart start to token detection time if we have pipeline data
   if (report.buyTimestamp && report.boughtTokenPipelineData && report.boughtTokenPipelineData.totalPipelineDurationMs) {
@@ -929,33 +979,58 @@ function renderPriceChart(report) {
     tMin = Math.min(tMin, report.buyTimestamp);
   }
   if (report.sellTimestamp) {
-    // Ensure sell marker fits (it always should, but be safe)
     tMax = Math.max(tMax, report.sellTimestamp);
   }
 
   const tRange = tMax - tMin || 1;
 
   const xScale = (t) => padding.left + ((t - tMin) / tRange) * plotW;
-  const yScale = (v) => padding.top + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+  const yScale = (v) => padding.top + plotH - ((v - yMin) / (yMax - yMin || 1)) * plotH;
 
-  // Draw zero line
-  const zeroY = yScale(0);
-  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-  ctx.lineWidth = 1;
-  ctx.setLineDash([4, 4]);
-  ctx.beginPath();
-  ctx.moveTo(padding.left, zeroY);
-  ctx.lineTo(w - padding.right, zeroY);
-  ctx.stroke();
-  ctx.setLineDash([]);
+  // Draw reference line (zero for PnL mode, entry price for spot price mode)
+  if (useSpotPrice) {
+    // Draw entry price reference line if we have the first snapshot as reference
+    const entryPrice = values[0];
+    const entryY = yScale(entryPrice);
+    if (entryY >= padding.top && entryY <= h - padding.bottom) {
+      ctx.strokeStyle = 'rgba(33, 150, 243, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(padding.left, entryY);
+      ctx.lineTo(w - padding.right, entryY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  } else {
+    const zeroY = yScale(0);
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(padding.left, zeroY);
+    ctx.lineTo(w - padding.right, zeroY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
 
   // Draw Y axis labels
   ctx.fillStyle = 'rgba(255,255,255,0.5)';
   ctx.font = '11px monospace';
   ctx.textAlign = 'right';
-  ctx.fillText('0%', padding.left - 5, zeroY + 4);
-  ctx.fillText(`${yMax.toFixed(1)}%`, padding.left - 5, padding.top + 4);
-  ctx.fillText(`${yMin.toFixed(1)}%`, padding.left - 5, h - padding.bottom + 4);
+
+  if (useSpotPrice) {
+    ctx.fillText(formatSolPrice(yMax), padding.left - 5, padding.top + 4);
+    ctx.fillText(formatSolPrice(yMin), padding.left - 5, h - padding.bottom + 4);
+    // Mid label
+    const yMid = (yMax + yMin) / 2;
+    ctx.fillText(formatSolPrice(yMid), padding.left - 5, padding.top + plotH / 2 + 4);
+  } else {
+    const zeroY = yScale(0);
+    ctx.fillText('0%', padding.left - 5, zeroY + 4);
+    ctx.fillText(`${yMax.toFixed(1)}%`, padding.left - 5, padding.top + 4);
+    ctx.fillText(`${yMin.toFixed(1)}%`, padding.left - 5, h - padding.bottom + 4);
+  }
 
   // Draw X axis labels (start and end time)
   ctx.textAlign = 'center';
@@ -971,7 +1046,10 @@ function renderPriceChart(report) {
   // Draw gradient fill
   const gradient = ctx.createLinearGradient(0, padding.top, 0, h - padding.bottom);
   const lastVal = values[values.length - 1];
-  if (lastVal >= 0) {
+  const firstVal = values[0];
+  const isPositive = useSpotPrice ? (lastVal >= firstVal) : (lastVal >= 0);
+
+  if (isPositive) {
     gradient.addColorStop(0, 'rgba(0, 200, 83, 0.3)');
     gradient.addColorStop(1, 'rgba(0, 200, 83, 0.02)');
   } else {
@@ -980,33 +1058,34 @@ function renderPriceChart(report) {
   }
 
   ctx.beginPath();
-  ctx.moveTo(xScale(history[0].timestamp), yScale(history[0].pnlPercent));
-  for (let i = 1; i < history.length; i++) {
-    ctx.lineTo(xScale(history[i].timestamp), yScale(history[i].pnlPercent));
+  ctx.moveTo(xScale(validHistory[0].timestamp), yScale(values[0]));
+  for (let i = 1; i < validHistory.length; i++) {
+    ctx.lineTo(xScale(validHistory[i].timestamp), yScale(values[i]));
   }
-  // Close the fill area down to zero line
-  ctx.lineTo(xScale(history[history.length - 1].timestamp), zeroY);
-  ctx.lineTo(xScale(history[0].timestamp), zeroY);
+  // Close the fill area down to bottom of chart
+  const fillBaseY = useSpotPrice ? (h - padding.bottom) : yScale(0);
+  ctx.lineTo(xScale(validHistory[validHistory.length - 1].timestamp), fillBaseY);
+  ctx.lineTo(xScale(validHistory[0].timestamp), fillBaseY);
   ctx.closePath();
   ctx.fillStyle = gradient;
   ctx.fill();
 
   // Draw the line
   ctx.beginPath();
-  ctx.moveTo(xScale(history[0].timestamp), yScale(history[0].pnlPercent));
-  for (let i = 1; i < history.length; i++) {
-    ctx.lineTo(xScale(history[i].timestamp), yScale(history[i].pnlPercent));
+  ctx.moveTo(xScale(validHistory[0].timestamp), yScale(values[0]));
+  for (let i = 1; i < validHistory.length; i++) {
+    ctx.lineTo(xScale(validHistory[i].timestamp), yScale(values[i]));
   }
-  ctx.strokeStyle = lastVal >= 0 ? '#00c853' : '#ff5252';
+  ctx.strokeStyle = isPositive ? '#00c853' : '#ff5252';
   ctx.lineWidth = 2;
   ctx.stroke();
 
   // Draw endpoint dot
-  const lastX = xScale(history[history.length - 1].timestamp);
-  const lastY = yScale(history[history.length - 1].pnlPercent);
+  const lastX = xScale(validHistory[validHistory.length - 1].timestamp);
+  const lastY = yScale(values[values.length - 1]);
   ctx.beginPath();
   ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
-  ctx.fillStyle = lastVal >= 0 ? '#00c853' : '#ff5252';
+  ctx.fillStyle = isPositive ? '#00c853' : '#ff5252';
   ctx.fill();
 
   // Draw buy/sell markers as vertical dashed lines with labels
