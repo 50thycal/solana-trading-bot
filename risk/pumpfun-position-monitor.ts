@@ -13,6 +13,7 @@ import {
   decodeBondingCurveState,
   deriveBondingCurve,
   calculateSellSolOut,
+  calculatePrice,
   sellOnPumpFun,
   SELL_SLIPPAGE,
   COMPUTE_UNIT_LIMIT,
@@ -45,7 +46,7 @@ export interface PumpFunPosition {
   // Trailing stop: highest PnL % seen (updated each check)
   highWaterMarkPercent?: number;
   /** Price snapshots captured during position monitoring (for sparkline charts) */
-  priceHistory?: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
+  priceHistory?: Array<{ timestamp: number; valueSol: number; pnlPercent: number; priceSol?: number }>;
   /** Timestamp of last price snapshot (for throttling to ~5s intervals) */
   lastSnapshotTimestamp?: number;
 }
@@ -358,12 +359,14 @@ export class PumpFunPositionMonitor extends EventEmitter {
     position.lastCurrentValueSol = currentValueSol;
     position.lastCheckTimestamp = Date.now();
 
-    // Append price snapshot for sparkline charts (throttled to ~5s intervals, capped at 200 entries)
+    // Append price snapshot for sparkline charts (throttled to ~2s intervals, capped at 200 entries)
     const now = Date.now();
-    const SNAPSHOT_INTERVAL_MS = 5000;
+    const SNAPSHOT_INTERVAL_MS = 2000;
     if (!position.priceHistory) position.priceHistory = [];
     if (!position.lastSnapshotTimestamp || (now - position.lastSnapshotTimestamp) >= SNAPSHOT_INTERVAL_MS) {
-      position.priceHistory.push({ timestamp: now, valueSol: currentValueSol, pnlPercent: rawPnlPercent });
+      // Capture spot price (SOL per token) for accurate price charts matching DexScreener
+      const spotPriceSol = calculatePrice(state) / LAMPORTS_PER_SOL;
+      position.priceHistory.push({ timestamp: now, valueSol: currentValueSol, pnlPercent: rawPnlPercent, priceSol: spotPriceSol });
       if (position.priceHistory.length > 200) position.priceHistory.shift();
       position.lastSnapshotTimestamp = now;
     }

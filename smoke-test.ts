@@ -102,6 +102,7 @@ import {
   sellOnPumpFun,
   decodeBondingCurveState,
   calculateSellSolOut,
+  calculatePrice,
 } from './helpers/pumpfun';
 import BN from 'bn.js';
 import { initTradeAuditManager } from './helpers/trade-audit';
@@ -249,7 +250,7 @@ export interface SmokeTestReport {
     sellSlippageCostSol?: number;
   };
   /** Price snapshots during position hold (for sparkline chart) */
-  priceHistory?: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
+  priceHistory?: Array<{ timestamp: number; valueSol: number; pnlPercent: number; priceSol?: number }>;
   /** Highest PnL % reached during the hold */
   highWaterMarkPercent?: number;
   /** Hold duration in ms (buyTimestamp to sellTimestamp) */
@@ -627,7 +628,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
     sellSlippagePercent: number | undefined;
     buyExpectedTokens: number | undefined;
     sellExpectedSol: number | undefined;
-    priceHistory: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
+    priceHistory: Array<{ timestamp: number; valueSol: number; pnlPercent: number; priceSol?: number }>;
     highWaterMarkPercent: number | undefined;
     executor: TransactionExecutor | undefined;
     buyExecutorUsed: string | undefined;
@@ -1149,7 +1150,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
   // for up to 5 minutes from the buy to build a fuller price chart
   // ─────────────────────────────────────────────────────────────────────
   const POST_SELL_TOTAL_DURATION_MS = 5 * 60 * 1000; // 5 minutes total from buy
-  const POST_SELL_SNAPSHOT_INTERVAL_MS = 5000; // every 5 seconds
+  const POST_SELL_SNAPSHOT_INTERVAL_MS = 2000; // every 2 seconds
 
   if (state.passedToken && state.passedBondingCurve && state.buyTimestamp && state.tokensReceived > 0) {
     const trackingDeadline = state.buyTimestamp + POST_SELL_TOTAL_DURATION_MS;
@@ -1182,9 +1183,10 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
           if (!Number.isFinite(currentValueSol) || currentValueSol < 0) continue;
 
           const rawPnlPercent = ((currentValueSol - tradeAmount) / tradeAmount) * 100;
+          const spotPriceSol = calculatePrice(bcState) / LAMPORTS_PER_SOL;
 
           if (!state.priceHistory) state.priceHistory = [];
-          state.priceHistory.push({ timestamp: Date.now(), valueSol: currentValueSol, pnlPercent: rawPnlPercent });
+          state.priceHistory.push({ timestamp: Date.now(), valueSol: currentValueSol, pnlPercent: rawPnlPercent, priceSol: spotPriceSol });
         } catch (err) {
           logger.debug({ error: err }, '[smoke-test] Post-sell price fetch failed (non-fatal)');
         }
@@ -1301,7 +1303,7 @@ async function runListenPipelineAndBuy(
     sellSlippagePercent: number | undefined;
     buyExpectedTokens: number | undefined;
     sellExpectedSol: number | undefined;
-    priceHistory: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
+    priceHistory: Array<{ timestamp: number; valueSol: number; pnlPercent: number; priceSol?: number }>;
     highWaterMarkPercent: number | undefined;
     executor: TransactionExecutor | undefined;
     buyExecutorUsed: string | undefined;
@@ -1607,7 +1609,7 @@ interface BuildReportExtras {
   buyExpectedTokens?: number;
   buyActualTokens?: number;
   sellExpectedSol?: number;
-  priceHistory?: Array<{ timestamp: number; valueSol: number; pnlPercent: number }>;
+  priceHistory?: Array<{ timestamp: number; valueSol: number; pnlPercent: number; priceSol?: number }>;
   highWaterMarkPercent?: number;
   bundleExecutorActive?: boolean;
   buyExecutorUsed?: string;
