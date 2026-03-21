@@ -417,8 +417,6 @@ export class PaperTradeTracker extends EventEmitter {
     sniperBotCount?: number;
     sniperExitPercent?: number;
     organicBuyerCount?: number;
-    sniperGateChecks?: number;
-    sniperGateWaitMs?: number;
   }): void {
     const {
       mint,
@@ -432,8 +430,6 @@ export class PaperTradeTracker extends EventEmitter {
       sniperBotCount,
       sniperExitPercent,
       organicBuyerCount,
-      sniperGateChecks,
-      sniperGateWaitMs,
     } = params;
 
     // Calculate how many tokens would be received
@@ -491,8 +487,6 @@ export class PaperTradeTracker extends EventEmitter {
         sniperBotCount,
         sniperExitPercent,
         organicBuyerCount,
-        sniperGateChecks,
-        sniperGateWaitMs,
       });
     }
 

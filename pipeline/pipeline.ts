@@ -63,9 +63,6 @@ export interface PipelineConfig {
   /** Deep filters configuration */
   deepFilters: Partial<DeepFiltersConfig>;
 
-  /** @deprecated Sniper gate removed — config ignored. Use researchScoreGate polling instead. */
-  sniperGate?: Record<string, unknown>;
-
   /** Research score gate configuration (Stage 4) */
   researchScoreGate: Partial<ResearchScoreGateConfig>;
 

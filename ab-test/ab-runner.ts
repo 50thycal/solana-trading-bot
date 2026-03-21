@@ -3,7 +3,7 @@
  *
  * Coordinates a single PumpFunListener feeding two independent variant pipelines
  * running in parallel. Each variant has its own:
- *   - ABPipeline (filters + momentum gate)
+ *   - ABPipeline (filters + research score gate)
  *   - PaperTradeTracker (TP/SL/time exit monitoring)
  *
  * Results are persisted to ABTestStore (data/ab-test.db).

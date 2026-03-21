@@ -712,7 +712,6 @@ function renderGateStats(gateStats) {
   const sections = [
     { id: 'analytics-cheap-gates-stats', data: gateStats.cheapGates },
     { id: 'analytics-deep-filters-stats', data: gateStats.deepFilters },
-    { id: 'analytics-sniper-gate-stats', data: gateStats.sniperGate },
     { id: 'analytics-research-score-gate-stats', data: gateStats.researchScoreGate },
     { id: 'analytics-stable-gate-stats', data: gateStats.stableGate },
   ];
@@ -761,13 +760,6 @@ const ENV_VAR_CATEGORIES = {
     'PUMPFUN_ENABLE_MIN_SOL_FILTER', 'PUMPFUN_ENABLE_MAX_SOL_FILTER',
     'PUMPFUN_MIN_SCORE_REQUIRED', 'PUMPFUN_DETECTION_COOLDOWN_MS',
     'MAX_TOKEN_AGE_SECONDS',
-  ],
-  'Sniper Gate': [
-    'SNIPER_GATE_ENABLED', 'SNIPER_GATE_INITIAL_DELAY_MS',
-    'SNIPER_GATE_RECHECK_INTERVAL_MS', 'SNIPER_GATE_MAX_CHECKS',
-    'SNIPER_GATE_SNIPER_SLOT_THRESHOLD', 'SNIPER_GATE_MIN_BOT_EXIT_PERCENT',
-    'SNIPER_GATE_MIN_ORGANIC_BUYERS', 'SNIPER_GATE_LOG_ONLY',
-    'SNIPER_GATE_SIGNATURE_LIMIT',
   ],
   'Stable Gate': [
     'STABLE_GATE_ENABLED', 'STABLE_GATE_LOG_ONLY', 'STABLE_GATE_MAX_RETRIES',

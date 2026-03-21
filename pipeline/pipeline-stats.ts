@@ -42,13 +42,9 @@ export interface PipelineStatsSnapshot {
   gateStats: {
     cheapGates: GateStats[];
     deepFilters: GateStats[];
-    sniperGate: GateStats[];
     researchScoreGate: GateStats[];
     stableGate: GateStats[];
   };
-
-  /** Whether the sniper gate is active */
-  sniperGateActive: boolean;
 
   /** Tokens that bypassed research score gate due to no model available */
   researchScoreNoModelSkips: number;
@@ -75,14 +71,6 @@ export interface RecentToken {
   rejectedAt?: string;
   rejectionReason?: string;
   pipelineDurationMs: number;
-  /** Sniper gate summary fields (populated when sniper gate ran) */
-  sniperBotCount?: number;
-  sniperExitPercent?: number;
-  organicBuyerCount?: number;
-  sniperGateChecks?: number;
-  sniperGateWaitMs?: number;
-  /** True when sniper gate RPC calls failed and gate used partial data */
-  sniperRpcDegraded?: boolean;
   /** Research score gate fields */
   researchScore?: number;
   researchSignal?: string;
@@ -118,17 +106,12 @@ const DEEP_FILTERS = [
   { name: 'max-sol', displayName: 'Max SOL in Curve' },
 ];
 
-/** Sniper gate (Stage 4) */
-const SNIPER_GATE = [
-  { name: 'sniper', displayName: 'Sniper Gate' },
-];
-
-/** Research score gate (Stage 5) */
+/** Research score gate (Stage 4) */
 const RESEARCH_SCORE_GATE = [
   { name: 'research-score', displayName: 'Research Score Gate' },
 ];
 
-/** Stable gate (Stage 6) */
+/** Stable gate (Stage 5) */
 const STABLE_GATE = [
   { name: 'stable', displayName: 'Stable Gate' },
 ];
@@ -148,11 +131,8 @@ export class PipelineStats extends EventEmitter {
   /** Gate pass/fail counters */
   private cheapGateStats: Map<string, { passed: number; failed: number }>;
   private deepFilterStats: Map<string, { passed: number; failed: number }>;
-  private sniperGateStats: Map<string, { passed: number; failed: number }>;
   private researchScoreGateStats: Map<string, { passed: number; failed: number }>;
   private stableGateStats: Map<string, { passed: number; failed: number }>;
-  /** Whether sniper gate is active */
-  private sniperGateActive: boolean = false;
 
   /** Tokens that bypassed research score gate due to no model */
   private researchScoreNoModelSkips: number = 0;
@@ -172,7 +152,6 @@ export class PipelineStats extends EventEmitter {
     this.startedAt = Date.now();
     this.cheapGateStats = new Map();
     this.deepFilterStats = new Map();
-    this.sniperGateStats = new Map();
     this.researchScoreGateStats = new Map();
     this.stableGateStats = new Map();
     this.rejectionReasons = new Map();
@@ -183,9 +162,6 @@ export class PipelineStats extends EventEmitter {
     }
     for (const filter of DEEP_FILTERS) {
       this.deepFilterStats.set(filter.name, { passed: 0, failed: 0 });
-    }
-    for (const gate of SNIPER_GATE) {
-      this.sniperGateStats.set(gate.name, { passed: 0, failed: 0 });
     }
     for (const gate of RESEARCH_SCORE_GATE) {
       this.researchScoreGateStats.set(gate.name, { passed: 0, failed: 0 });
@@ -272,15 +248,11 @@ export class PipelineStats extends EventEmitter {
       stats.passed++;
     }
 
-    // Stage 4: sniper gate
-    const sniperStats = this.sniperGateStats.get('sniper')!;
-    sniperStats.passed++;
-
-    // Stage 5: research score gate
+    // Stage 4: research score gate
     const researchStats = this.researchScoreGateStats.get('research-score')!;
     researchStats.passed++;
 
-    // Stage 6: stable gate
+    // Stage 5: stable gate
     const stableStats = this.stableGateStats.get('stable')!;
     stableStats.passed++;
   }
@@ -305,20 +277,6 @@ export class PipelineStats extends EventEmitter {
         stats.passed++;
       }
       this.recordDeepFiltersRejection(reason);
-    } else if (rejectedAt === 'sniper-gate') {
-      // All cheap gates passed
-      for (const gate of CHEAP_GATES) {
-        const stats = this.cheapGateStats.get(gate.name)!;
-        stats.passed++;
-      }
-      // All deep filters passed
-      for (const filter of DEEP_FILTERS) {
-        const stats = this.deepFilterStats.get(filter.name)!;
-        stats.passed++;
-      }
-      // Sniper gate failed
-      const stats = this.sniperGateStats.get('sniper')!;
-      stats.failed++;
     } else if (rejectedAt === 'research-score-gate') {
       // All cheap gates passed
       for (const gate of CHEAP_GATES) {
@@ -330,9 +288,6 @@ export class PipelineStats extends EventEmitter {
         const stats = this.deepFilterStats.get(filter.name)!;
         stats.passed++;
       }
-      // Sniper gate passed
-      const sniperStats = this.sniperGateStats.get('sniper')!;
-      sniperStats.passed++;
       // Research score gate failed
       const rsStats = this.researchScoreGateStats.get('research-score')!;
       rsStats.failed++;
@@ -347,9 +302,6 @@ export class PipelineStats extends EventEmitter {
         const stats = this.deepFilterStats.get(filter.name)!;
         stats.passed++;
       }
-      // Sniper gate passed
-      const sniperStats = this.sniperGateStats.get('sniper')!;
-      sniperStats.passed++;
       // Research score gate passed
       const rsStats = this.researchScoreGateStats.get('research-score')!;
       rsStats.passed++;
@@ -529,17 +481,6 @@ export class PipelineStats extends EventEmitter {
       };
     });
 
-    const sniperGateArray: GateStats[] = SNIPER_GATE.map((gate) => {
-      const stats = this.sniperGateStats.get(gate.name)!;
-      return {
-        name: gate.name,
-        displayName: gate.displayName,
-        passed: stats.passed,
-        failed: stats.failed,
-        totalChecked: stats.passed + stats.failed,
-      };
-    });
-
     // Build top rejection reasons
     const topRejectionReasons = Array.from(this.rejectionReasons.entries())
       .map(([reason, count]) => ({ reason, count }))
@@ -583,11 +524,9 @@ export class PipelineStats extends EventEmitter {
       gateStats: {
         cheapGates: cheapGatesArray,
         deepFilters: deepFiltersArray,
-        sniperGate: sniperGateArray,
         researchScoreGate: researchScoreGateArray,
         stableGate: stableGateArray,
       },
-      sniperGateActive: this.sniperGateActive,
       researchScoreNoModelSkips: this.researchScoreNoModelSkips,
       topRejectionReasons,
       avgPipelineDurationMs,
@@ -616,7 +555,6 @@ export class PipelineStats extends EventEmitter {
     this.recentTokens = [];
     this.rejectionReasons.clear();
 
-    this.sniperGateActive = false;
     this.researchScoreNoModelSkips = 0;
 
     // Reset all gate counters
@@ -625,9 +563,6 @@ export class PipelineStats extends EventEmitter {
     }
     for (const filter of DEEP_FILTERS) {
       this.deepFilterStats.set(filter.name, { passed: 0, failed: 0 });
-    }
-    for (const gate of SNIPER_GATE) {
-      this.sniperGateStats.set(gate.name, { passed: 0, failed: 0 });
     }
     for (const gate of RESEARCH_SCORE_GATE) {
       this.researchScoreGateStats.set(gate.name, { passed: 0, failed: 0 });

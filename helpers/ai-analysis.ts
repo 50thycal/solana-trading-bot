@@ -40,7 +40,6 @@ interface SessionSummary {
   takeProfitPct: number;
   stopLossPct: number;
   maxHoldDurationS: number;
-  sniperGateEnabled: boolean;
   trailingStopEnabled: boolean;
   tags?: string;
 }
@@ -228,7 +227,6 @@ export function generateCompactReport(sessionId?: string, lastN?: number): strin
     lines.push('### Config');
     lines.push(`QUOTE_AMOUNT=${journal.quoteAmountSol} SOL | TP=${journal.takeProfitPct}% | SL=${journal.stopLossPct}% | MAX_HOLD=${journal.maxHoldDurationS}s`);
     const gates = [];
-    if (journal.sniperGateEnabled) gates.push('sniper_gate');
     if (journal.trailingStopEnabled) gates.push('trailing_stop');
     lines.push(`Gates: ${gates.length > 0 ? gates.join(', ') : 'none'}`);
     lines.push('');
@@ -398,7 +396,6 @@ function buildSessionSummary(journal: RunJournalRecord): SessionSummary {
     takeProfitPct: journal.takeProfitPct,
     stopLossPct: journal.stopLossPct,
     maxHoldDurationS: journal.maxHoldDurationS,
-    sniperGateEnabled: journal.sniperGateEnabled,
     trailingStopEnabled: journal.trailingStopEnabled,
     tags: journal.tags,
   };
