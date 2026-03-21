@@ -365,9 +365,6 @@ export interface PipelineContext {
   /** Data from deep filters (if passed) */
   deepFilters?: DeepFiltersData;
 
-  /** Data from sniper gate (if passed) */
-  sniperGate?: SniperGateData;
-
   /** Data from research score gate (if passed) */
   researchScore?: ResearchScoreGateData;
 

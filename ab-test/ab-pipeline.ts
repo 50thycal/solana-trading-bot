@@ -1,7 +1,7 @@
 /**
  * A/B Test Pipeline
  *
- * Reuses the SAME production classes (PumpFunFilters, SniperGateStage,
+ * Reuses the SAME production classes (PumpFunFilters,
  * getBondingCurveState) but instantiated per-variant rather than via singletons.
  *
  * Stage flow matches production:
@@ -10,7 +10,6 @@
  *   3. Rate limit check
  *   4. Name/symbol pattern check (stateless, same logic as cheap-gates)
  *   5. Bonding curve fetch + filters (same as deep-filters)
- *   6. Sniper gate (same as production)
  *
  * Skipped from production cheap-gates (not relevant for paper trading):
  *   - Wallet balance / exposure checks (virtual capital)
@@ -22,8 +21,7 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { ABVariantConfig, ABPipelineResult } from './types';
 import { PumpFunFilters, PumpFunFilterContext } from '../filters/pumpfun-filters';
-import { SniperGateStage } from '../pipeline/sniper-gate';
-import { DetectionEvent, PipelineContext } from '../pipeline/types';
+import { DetectionEvent } from '../pipeline/types';
 import { getBondingCurveState, BondingCurveState } from '../helpers/pumpfun';
 import { logger } from '../helpers';
 
@@ -75,7 +73,6 @@ export class ABPipeline {
   private connection: Connection;
   private seenMints: Set<string> = new Set();
   private filters: PumpFunFilters;
-  private sniperGate: SniperGateStage;
   private tradeTimestamps: number[] = [];
 
   constructor(variant: string, connection: Connection, config: ABVariantConfig) {
@@ -90,10 +87,6 @@ export class ABPipeline {
       enableMinSolFilter: true,
       enableMaxSolFilter: true,
       minScoreRequired: 0,
-    });
-
-    this.sniperGate = new SniperGateStage(connection, {
-      enabled: true,
     });
 
     logger.info(
@@ -188,17 +181,6 @@ export class ABPipeline {
     const filterResults = await this.filters.execute(filterContext);
     if (!filterResults.allPassed) {
       return { passed: false, rejectionStage: 'deep-filters', rejectionReason: `Filter failed: ${filterResults.summary}`, pipelineDurationMs: Date.now() - start };
-    }
-
-    // ── Gate 6: Sniper gate ────────────────────────────────────────────────
-    // Build a minimal PipelineContext for the sniper gate
-    const pipelineContext: PipelineContext = {
-      detection,
-    };
-
-    const sniperResult = await this.sniperGate.execute(pipelineContext);
-    if (!sniperResult.pass) {
-      return { passed: false, rejectionStage: 'sniper-gate', rejectionReason: sniperResult.reason, pipelineDurationMs: Date.now() - start };
     }
 
     // ── ALL STAGES PASSED ───────────────────────────────────────────────────

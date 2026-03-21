@@ -98,12 +98,15 @@ export interface ValidatedConfig {
   hardTakeProfitPercent: number;
   costAdjustedExits: boolean;
 
-  // Research Score Gate (Pipeline Stage 5)
+  // Research Score Gate (Pipeline Stage 4)
   researchScoreGateEnabled: boolean;
   researchScoreThreshold: number;
   researchScoreCheckpoint: number;
   researchScoreLogOnly: boolean;
   researchScoreModelRefreshInterval: number;
+  researchScorePollIntervalSeconds: number;
+  researchScoreSignatureLimit: number;
+  researchScoreSniperSlotThreshold: number;
 
   // Stable Gate (Pipeline Stage 6)
   stableGateEnabled: boolean;
@@ -458,8 +461,8 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'SNIPER_GATE_SIGNATURE_LIMIT', message: 'must be 1-100' });
   }
 
-  // === RESEARCH SCORE GATE (Pipeline Stage 5) ===
-  // Applies the research bot's scoring model after the sniper gate.
+  // === RESEARCH SCORE GATE (Pipeline Stage 4) ===
+  // Polls transactions during checkpoint wait, then scores using research bot model.
   // Requires RESEARCH_BOT_URL to be set for model fetching.
 
   const researchScoreGateEnabled = requireBoolean('RESEARCH_SCORE_GATE_ENABLED', true);
@@ -479,6 +482,21 @@ export function validateConfig(): ValidatedConfig {
   const researchScoreModelRefreshInterval = requireNumber('RESEARCH_SCORE_MODEL_REFRESH_INTERVAL', 300000);
   if (researchScoreModelRefreshInterval < 0) {
     errors.push({ variable: 'RESEARCH_SCORE_MODEL_REFRESH_INTERVAL', message: 'cannot be negative' });
+  }
+
+  const researchScorePollIntervalSeconds = requireNumber('RESEARCH_SCORE_POLL_INTERVAL_SECONDS', 3);
+  if (researchScorePollIntervalSeconds < 0.5) {
+    errors.push({ variable: 'RESEARCH_SCORE_POLL_INTERVAL_SECONDS', message: 'must be >= 0.5' });
+  }
+
+  const researchScoreSignatureLimit = requireNumber('RESEARCH_SCORE_SIGNATURE_LIMIT', 40);
+  if (researchScoreSignatureLimit < 1 || researchScoreSignatureLimit > 100) {
+    errors.push({ variable: 'RESEARCH_SCORE_SIGNATURE_LIMIT', message: 'must be 1-100' });
+  }
+
+  const researchScoreSniperSlotThreshold = requireNumber('RESEARCH_SCORE_SNIPER_SLOT_THRESHOLD', 3);
+  if (researchScoreSniperSlotThreshold < 0) {
+    errors.push({ variable: 'RESEARCH_SCORE_SNIPER_SLOT_THRESHOLD', message: 'cannot be negative' });
   }
 
   // === STABLE GATE (Pipeline Stage 6) ===
@@ -703,6 +721,9 @@ export function validateConfig(): ValidatedConfig {
     researchScoreCheckpoint,
     researchScoreLogOnly,
     researchScoreModelRefreshInterval,
+    researchScorePollIntervalSeconds,
+    researchScoreSignatureLimit,
+    researchScoreSniperSlotThreshold,
     stableGateEnabled,
     stableGateLogOnly,
     stableGateMaxRetries,

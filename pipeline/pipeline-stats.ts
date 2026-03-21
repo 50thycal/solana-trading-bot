@@ -7,7 +7,7 @@
 
 import { EventEmitter } from 'events';
 import { PipelineResult } from './pipeline';
-import { SniperGateData, ResearchScoreGateData, StableGateData } from './types';
+import { ResearchScoreGateData, StableGateData } from './types';
 import { logger } from '../helpers';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -206,18 +206,12 @@ export class PipelineStats extends EventEmitter {
     this.totalPipelineDurationMs += result.totalDurationMs;
 
     const detection = result.context.detection;
-    const sg = result.context.sniperGate;
-
-    // Detect if sniper gate is the active Stage 4 gate
-    if (sg || result.rejectedAt === 'sniper-gate') {
-      this.sniperGateActive = true;
-    }
 
     const rs = result.context.researchScore;
 
-    // Detect graceful degradation: token reached Stage 5 (has sniperGate data or was not
-    // rejected before research-score-gate) but has no researchScore data — model was unavailable
-    if (result.success && !rs && sg) {
+    // Detect graceful degradation: token reached research-score-gate but has no
+    // researchScore data — model was unavailable
+    if (result.success && !rs) {
       this.researchScoreNoModelSkips++;
     }
 
@@ -230,12 +224,6 @@ export class PipelineStats extends EventEmitter {
       rejectedAt: result.rejectedAt,
       rejectionReason: result.rejectionReason,
       pipelineDurationMs: result.totalDurationMs,
-      sniperBotCount: sg?.sniperWalletCount,
-      sniperExitPercent: sg?.sniperExitPercent,
-      organicBuyerCount: sg?.organicBuyerCount,
-      sniperGateChecks: sg?.checksPerformed,
-      sniperGateWaitMs: sg?.totalWaitMs,
-      sniperRpcDegraded: sg?.rpcDegraded,
       researchScore: rs?.score,
       researchSignal: rs?.signal,
       stableAttempt: result.context.stableGate?.attemptNumber,
@@ -257,7 +245,7 @@ export class PipelineStats extends EventEmitter {
     if (result.success) {
       this.tokensBought++;
       // All gates passed
-      this.recordAllGatesPassed(sg);
+      this.recordAllGatesPassed();
     } else {
       this.tokensRejected++;
       // Record which gate rejected and track the reason
@@ -271,7 +259,7 @@ export class PipelineStats extends EventEmitter {
   /**
    * Record that all gates passed (for bought tokens)
    */
-  private recordAllGatesPassed(sg?: SniperGateData): void {
+  private recordAllGatesPassed(): void {
     // All cheap gates passed
     for (const gate of CHEAP_GATES) {
       const stats = this.cheapGateStats.get(gate.name)!;
