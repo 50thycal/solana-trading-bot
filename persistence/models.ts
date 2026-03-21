@@ -272,38 +272,6 @@ export interface PoolDetectionStats {
 }
 
 // ============================================================
-// SNIPER GATE OBSERVATION MODELS
-// ============================================================
-
-/**
- * Input for bulk-inserting sniper gate poll observations.
- * Each item in `checks` corresponds to one poll cycle within the gate's
- * polling loop and contains the full wallet classification snapshot.
- */
-export interface RecordSniperGateObservationsInput {
-  tokenMint: string;
-  bondingCurve: string;
-  /** Slot from the token creation transaction (used to derive slotDelta) */
-  creationSlot: number;
-  /** Whether the gate was running in log-only mode */
-  logOnly: boolean;
-  checks: Array<{
-    checkNumber: number;
-    checkedAt: number;
-    botCount: number;
-    botExitCount: number;
-    botExitPercent: number;
-    organicCount: number;
-    totalBuys: number;
-    totalSells: number;
-    uniqueBuyWallets: number;
-    passConditionsMet: boolean;
-    sniperWallets: string[];
-    organicWallets: string[];
-  }>;
-}
-
-// ============================================================
 // PAPER TRADE MODELS
 // ============================================================
 
@@ -335,8 +303,6 @@ export interface PaperTradeRecord {
   sniperBotCount?: number;
   sniperExitPercent?: number;
   organicBuyerCount?: number;
-  sniperGateChecks?: number;
-  sniperGateWaitMs?: number;
 }
 
 /**
@@ -359,8 +325,6 @@ export interface RecordPaperTradeEntryInput {
   sniperBotCount?: number;
   sniperExitPercent?: number;
   organicBuyerCount?: number;
-  sniperGateChecks?: number;
-  sniperGateWaitMs?: number;
 }
 
 /**
@@ -394,7 +358,6 @@ export interface RunJournalRecord {
   takeProfitPct: number;
   stopLossPct: number;
   maxHoldDurationS: number;
-  sniperGateEnabled: boolean;
   trailingStopEnabled: boolean;
   totalDetections: number;
   totalTrades: number;
@@ -418,7 +381,6 @@ export interface CreateRunJournalInput {
   takeProfitPct: number;
   stopLossPct: number;
   maxHoldDurationS: number;
-  sniperGateEnabled: boolean;
   trailingStopEnabled: boolean;
   runNumber?: number;             // For multi-run smoke tests: which run (1-indexed)
   totalRuns?: number;             // For multi-run smoke tests: total runs in series

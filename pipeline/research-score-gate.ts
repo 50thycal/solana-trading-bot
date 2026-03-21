@@ -1,14 +1,15 @@
 /**
  * Research Score Gate Stage
  *
- * Stage 5 of the pipeline — runs AFTER the sniper gate. Fetches a scoring
- * model from the research bot, computes token features from pipeline context,
- * and applies the model's rules to produce a 0-100 score. Only passes if
- * the score exceeds the configured threshold.
+ * Fetches a scoring model from the research bot, polls transaction data
+ * during the checkpoint wait period to build momentum features (txBurst,
+ * buyAcceleration), then scores the token using the model's rules.
+ * Only passes if the score exceeds the configured threshold.
  *
  * Design:
  * - Fetch model from research bot on startup + periodic refresh
- * - Build TokenFeatureVector from BondingCurveState + SniperGateData
+ * - Poll transactions during checkpoint wait to build time-series data
+ * - Build TokenFeatureVector from BondingCurveState + polled tx data
  * - Score token using same algorithm as research bot
  * - PASS when score >= threshold (or logOnly mode)
  * - Graceful degradation: if no model available, pass with warning
@@ -46,6 +47,12 @@ export interface ResearchScoreGateConfig {
   logOnly: boolean;
   /** Which checkpoint model to use in seconds (default: 30) */
   checkpoint: number;
+  /** How often to poll transactions during checkpoint wait, in seconds (default: 3) */
+  pollIntervalSeconds: number;
+  /** Sniper slot threshold for wallet classification (default: 3) */
+  sniperSlotThreshold: number;
+  /** Max signatures to fetch per poll (default: 40) */
+  signatureLimit: number;
 }
 
 const DEFAULT_CONFIG: ResearchScoreGateConfig = {
@@ -55,6 +62,9 @@ const DEFAULT_CONFIG: ResearchScoreGateConfig = {
   scoreThreshold: 50,
   logOnly: false,
   checkpoint: 30,
+  pollIntervalSeconds: 3,
+  sniperSlotThreshold: 3,
+  signatureLimit: 40,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -68,30 +78,38 @@ function bnToSol(bn: BN): number {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// POLL SNAPSHOT (replaces SniperGateCheckResult for momentum features)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface PollSnapshot {
+  /** Unix timestamp (ms) when this poll completed */
+  checkedAt: number;
+  /** Total buy transactions seen */
+  totalBuys: number;
+  /** Total sell transactions seen */
+  totalSells: number;
+  /** Unique organic buyer wallets */
+  uniqueBuyers: number;
+  /** Sniper wallets that exited */
+  uniqueSellers: number;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // FEATURE VECTOR BUILDER
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Fresh transaction data fetched at checkpoint age, overriding stale sniper gate counts.
+ * Build a TokenFeatureVector from pipeline context data + polled transaction snapshots.
+ * Uses BondingCurveState from deep filters for price data.
+ * Uses pollHistory for momentum features (txBurst, buyAcceleration).
+ * Uses the final poll snapshot for transaction counts.
  */
-interface FreshTransactionData {
-  totalBuys: number;
-  totalSells: number;
-  uniqueBuyers: number;
-  uniqueSellers: number;
-}
-
-/**
- * Build a TokenFeatureVector from pipeline context data.
- * Uses BondingCurveState from deep filters and SniperGateData from sniper gate.
- * When a fresh bonding curve state is provided, computes priceChangeFromInitial
- * and priceAcceleration by comparing initial vs current prices.
- * When freshTxData is provided, uses it for transaction counts instead of stale sniper gate data.
- * Derives momentum features from sniper gate checkHistory where possible.
- */
-function buildFeatureVector(ctx: PipelineContext, freshBcs?: BondingCurveState, freshTxData?: FreshTransactionData): TokenFeatureVector {
+function buildFeatureVector(
+  ctx: PipelineContext,
+  freshBcs: BondingCurveState | undefined,
+  pollHistory: PollSnapshot[],
+): TokenFeatureVector {
   const initialBcs = ctx.deepFilters!.bondingCurveState;
-  const sniper = ctx.sniperGate;
   const detection = ctx.detection;
 
   // Time since detection
@@ -122,12 +140,13 @@ function buildFeatureVector(ctx: PipelineContext, freshBcs?: BondingCurveState, 
     priceAcceleration = priceChangeFromInitial / secondsSinceCreation;
   }
 
-  // Transaction data: prefer fresh checkpoint data, fall back to sniper gate
-  const buyCount = freshTxData ? freshTxData.totalBuys : (sniper ? sniper.totalBuys : 0);
-  const sellCount = freshTxData ? freshTxData.totalSells : (sniper ? sniper.totalSells : 0);
+  // Transaction data from the latest poll snapshot (or zeros if no polls)
+  const lastPoll = pollHistory.length > 0 ? pollHistory[pollHistory.length - 1] : null;
+  const buyCount = lastPoll ? lastPoll.totalBuys : 0;
+  const sellCount = lastPoll ? lastPoll.totalSells : 0;
   const totalTxCount = buyCount + sellCount;
-  const uniqueBuyers = freshTxData ? freshTxData.uniqueBuyers : (sniper ? sniper.organicBuyerCount : 0);
-  const uniqueSellers = freshTxData ? freshTxData.uniqueSellers : (sniper ? sniper.sniperExitCount : 0);
+  const uniqueBuyers = lastPoll ? lastPoll.uniqueBuyers : 0;
+  const uniqueSellers = lastPoll ? lastPoll.uniqueSellers : 0;
 
   // Derived features
   const buyVelocity = secondsSinceCreation > 0 ? buyCount / secondsSinceCreation : 0;
@@ -137,22 +156,22 @@ function buildFeatureVector(ctx: PipelineContext, freshBcs?: BondingCurveState, 
   const realTokenReserves = currentBcs.realTokenReserves.toNumber();
   const marketCapSol = currentPriceSol * (currentVirtualTokens + realTokenReserves);
 
-  // Momentum features derived from sniper gate checkHistory
+  // Momentum features derived from poll history
   let buyAcceleration = 0;
   let txBurst = 0;
 
-  if (sniper && sniper.checkHistory.length >= 2) {
-    const first = sniper.checkHistory[0];
-    const last = sniper.checkHistory[sniper.checkHistory.length - 1];
+  if (pollHistory.length >= 2) {
+    const first = pollHistory[0];
+    const last = pollHistory[pollHistory.length - 1];
     const timeDelta = (last.checkedAt - first.checkedAt) / 1000;
     if (timeDelta > 0) {
       buyAcceleration = (last.totalBuys - first.totalBuys) / timeDelta;
     }
 
     // txBurst: max new transactions between consecutive polls
-    for (let i = 1; i < sniper.checkHistory.length; i++) {
-      const prevTotal = sniper.checkHistory[i - 1].totalBuys + sniper.checkHistory[i - 1].totalSells;
-      const currTotal = sniper.checkHistory[i].totalBuys + sniper.checkHistory[i].totalSells;
+    for (let i = 1; i < pollHistory.length; i++) {
+      const prevTotal = pollHistory[i - 1].totalBuys + pollHistory[i - 1].totalSells;
+      const currTotal = pollHistory[i].totalBuys + pollHistory[i].totalSells;
       const delta = currTotal - prevTotal;
       if (delta > txBurst) {
         txBurst = delta;
@@ -373,6 +392,99 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
     );
   }
 
+  /**
+   * Poll transactions once and return a snapshot.
+   */
+  private async pollTransactions(context: PipelineContext): Promise<PollSnapshot | null> {
+    try {
+      const analysis: WalletAnalysis = await fetchAndAnalyzeTransactions(
+        this.connection,
+        context.detection.bondingCurve,
+        context.detection.slot,
+        this.config.sniperSlotThreshold,
+        this.config.signatureLimit,
+      );
+      const sniperExitCount = [...analysis.sniperWallets.values()].filter(v => v === 'exited').length;
+      return {
+        checkedAt: Date.now(),
+        totalBuys: analysis.totalBuys,
+        totalSells: analysis.totalSells,
+        uniqueBuyers: analysis.organicWallets.size,
+        uniqueSellers: sniperExitCount,
+      };
+    } catch (err) {
+      logger.debug(
+        { stage: this.name, mint: context.detection.mint.toString(), error: err instanceof Error ? err.message : String(err) },
+        '[research-score-gate] Transaction poll failed — skipping this snapshot',
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Wait for checkpoint age while polling transactions to build momentum data.
+   * Returns the accumulated poll history.
+   */
+  private async waitAndPoll(context: PipelineContext): Promise<PollSnapshot[]> {
+    const pollHistory: PollSnapshot[] = [];
+    const mintStr = context.detection.mint.toString();
+    const buf = context.logBuffer;
+    const pollIntervalMs = this.config.pollIntervalSeconds * 1000;
+    const targetMs = this.config.checkpoint * 1000;
+
+    // How long until checkpoint age?
+    const elapsedMs = Date.now() - context.detection.detectedAt;
+    const remainingMs = targetMs - elapsedMs;
+
+    if (remainingMs <= 0) {
+      // Already past checkpoint — do a single poll for fresh data
+      logger.debug(
+        { stage: this.name, mint: mintStr, elapsedMs, targetMs },
+        '[research-score-gate] Token already past checkpoint age — doing single poll',
+      );
+      const snapshot = await this.pollTransactions(context);
+      if (snapshot) pollHistory.push(snapshot);
+      return pollHistory;
+    }
+
+    if (buf) {
+      buf.info(`Research score gate: polling transactions every ${this.config.pollIntervalSeconds}s for ${Math.round(remainingMs)}ms until checkpoint age (${this.config.checkpoint}s)`);
+    }
+
+    // Do an immediate first poll, then poll at intervals until checkpoint
+    const snapshot = await this.pollTransactions(context);
+    if (snapshot) pollHistory.push(snapshot);
+
+    while (true) {
+      const nowElapsed = Date.now() - context.detection.detectedAt;
+      const timeLeft = targetMs - nowElapsed;
+      if (timeLeft <= 0) break;
+
+      // Sleep for the shorter of pollInterval or remaining time
+      const sleepMs = Math.min(pollIntervalMs, timeLeft);
+      await sleep(sleepMs);
+
+      // Check again if we've reached checkpoint
+      const postSleepElapsed = Date.now() - context.detection.detectedAt;
+      if (postSleepElapsed >= targetMs) break;
+
+      // Poll
+      const snap = await this.pollTransactions(context);
+      if (snap) pollHistory.push(snap);
+    }
+
+    // Final poll at checkpoint age
+    const finalSnap = await this.pollTransactions(context);
+    if (finalSnap) pollHistory.push(finalSnap);
+
+    logger.debug(
+      { stage: this.name, mint: mintStr, pollCount: pollHistory.length },
+      '[research-score-gate] Checkpoint polling complete',
+    );
+
+    return pollHistory;
+  }
+
   async execute(context: PipelineContext): Promise<StageResult<ResearchScoreGateData>> {
     const startTime = Date.now();
     const mintStr = context.detection.mint.toString();
@@ -424,28 +536,10 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       };
     }
 
-    // ─── Wait until token reaches checkpoint age ───────────────────────
-    const elapsedMs = Date.now() - context.detection.detectedAt;
-    const targetMs = this.config.checkpoint * 1000;
-    if (elapsedMs < targetMs) {
-      const waitMs = targetMs - elapsedMs;
-      if (buf) {
-        buf.info(`Research score gate: waiting ${Math.round(waitMs)}ms for checkpoint age (${this.config.checkpoint}s)`);
-      }
-      logger.debug(
-        { stage: this.name, mint: mintStr, elapsedMs, targetMs, waitMs },
-        '[research-score-gate] Waiting for token to reach checkpoint age',
-      );
-      await sleep(waitMs);
-    } else {
-      logger.debug(
-        { stage: this.name, mint: mintStr, elapsedMs, targetMs },
-        '[research-score-gate] Token already past checkpoint age — scoring immediately',
-      );
-    }
+    // ─── Wait for checkpoint age while polling transactions ───────────
+    const pollHistory = await this.waitAndPoll(context);
 
-    // ─── Fetch fresh data at checkpoint age ───────────────────────────
-    // Refresh bonding curve state for price comparison
+    // ─── Fetch fresh bonding curve state at checkpoint age ────────────
     let freshBcs: BondingCurveState | undefined;
     try {
       const result = await getBondingCurveState(this.connection, context.detection.bondingCurve);
@@ -464,39 +558,8 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       );
     }
 
-    // Re-fetch transaction data at checkpoint age for accurate counts
-    let freshTxData: FreshTransactionData | undefined;
-    try {
-      const sniperSlotThreshold = context.sniperGate?.sniperSlotThreshold ?? 3;
-      const signatureLimit = context.sniperGate?.signatureLimit ?? 50;
-      const analysis: WalletAnalysis = await fetchAndAnalyzeTransactions(
-        this.connection,
-        context.detection.bondingCurve,
-        context.detection.slot,
-        sniperSlotThreshold,
-        signatureLimit,
-      );
-      // Count sniper exits as sellers
-      const sniperExitCount = [...analysis.sniperWallets.values()].filter(v => v === 'exited').length;
-      freshTxData = {
-        totalBuys: analysis.totalBuys,
-        totalSells: analysis.totalSells,
-        uniqueBuyers: analysis.organicWallets.size,
-        uniqueSellers: sniperExitCount,
-      };
-      logger.debug(
-        { stage: this.name, mint: mintStr, ...freshTxData },
-        '[research-score-gate] Fresh transaction data fetched at checkpoint age',
-      );
-    } catch (err) {
-      logger.debug(
-        { stage: this.name, mint: mintStr, error: err instanceof Error ? err.message : String(err) },
-        '[research-score-gate] Fresh transaction fetch failed — using stale sniper gate data',
-      );
-    }
-
-    // Build feature vector from pipeline context + fresh data at checkpoint age
-    const features = buildFeatureVector(context, freshBcs, freshTxData);
+    // Build feature vector from pipeline context + polled data
+    const features = buildFeatureVector(context, freshBcs, pollHistory);
 
     // Score the token
     const { score, featureScores } = scoreToken(this.cachedModel, features);
@@ -523,6 +586,7 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
         signal,
         threshold: this.config.scoreThreshold,
         passed: score >= this.config.scoreThreshold,
+        pollSnapshots: pollHistory.length,
         featureBreakdown: sortedFeatures.map((f) => `${f.name}=${f.raw}(${f.score})`),
       },
       '[research-score-gate] Score breakdown',

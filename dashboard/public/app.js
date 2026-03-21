@@ -32,13 +32,11 @@ const elements = {
   funnelDetected: document.getElementById('funnel-detected'),
   funnelCheapGates: document.getElementById('funnel-cheap-gates'),
   funnelDeepFilters: document.getElementById('funnel-deep-filters'),
-  funnelSniperGate: document.getElementById('funnel-momentum-gate'),
   funnelBought: document.getElementById('funnel-bought'),
 
   // Gate stats
   cheapGatesStats: document.getElementById('cheap-gates-stats'),
   deepFiltersStats: document.getElementById('deep-filters-stats'),
-  sniperGateStats: document.getElementById('momentum-gate-stats'),
   researchScoreGateStats: document.getElementById('research-score-gate-stats'),
   funnelResearchScoreGate: document.getElementById('funnel-research-score-gate'),
   stableGateStats: document.getElementById('stable-gate-stats'),
@@ -135,7 +133,7 @@ async function updatePipelineStats() {
   updateFunnel(data);
 
   // Update gate stats
-  updateGateStats(data.gateStats, data.sniperGateActive);
+  updateGateStats(data.gateStats);
 
   // Update rejection reasons
   updateRejectionReasons(data.topRejectionReasons);
@@ -151,10 +149,6 @@ function updateFunnel(data) {
   // Calculate how many passed each stage
   const cheapGates = data.gateStats?.cheapGates || [];
   const deepFilters = data.gateStats?.deepFilters || [];
-  const sniperGateActive = data.sniperGateActive || false;
-
-  // Gate 4: sniper gate
-  const gate4Stats = data.gateStats?.sniperGate || [];
   // Gate 5: research score gate
   const researchScoreGateStats = data.gateStats?.researchScoreGate || [];
 
@@ -163,9 +157,6 @@ function updateFunnel(data) {
 
   const lastDeepFilter = deepFilters[deepFilters.length - 1];
   const passedDeepFilters = lastDeepFilter ? lastDeepFilter.passed : 0;
-
-  const lastGate4 = gate4Stats[gate4Stats.length - 1];
-  const passedGate4 = lastGate4 ? lastGate4.passed : 0;
 
   const lastResearchScore = researchScoreGateStats[researchScoreGateStats.length - 1];
   const passedResearchScore = lastResearchScore ? lastResearchScore.passed : 0;
@@ -179,7 +170,6 @@ function updateFunnel(data) {
   elements.funnelDetected.querySelector('.funnel-value').textContent = detected;
   elements.funnelCheapGates.querySelector('.funnel-value').textContent = passedCheapGates;
   elements.funnelDeepFilters.querySelector('.funnel-value').textContent = passedDeepFilters;
-  elements.funnelSniperGate.querySelector('.funnel-value').textContent = passedGate4;
   if (elements.funnelResearchScoreGate) {
     elements.funnelResearchScoreGate.querySelector('.funnel-value').textContent = passedResearchScore;
   }
@@ -194,7 +184,7 @@ function updateFunnel(data) {
   elements.funnelBought.querySelector('.funnel-value').textContent = bought;
 }
 
-function updateGateStats(gateStats, sniperGateActive) {
+function updateGateStats(gateStats) {
   if (!gateStats) return;
 
   // Cheap gates
@@ -209,15 +199,6 @@ function updateGateStats(gateStats, sniperGateActive) {
     elements.deepFiltersStats.innerHTML = gateStats.deepFilters.map(renderGateStat).join('');
   } else {
     elements.deepFiltersStats.innerHTML = '<div class="empty-state">No data yet</div>';
-  }
-
-  // Gate 4: sniper gate
-  if (elements.gate4PanelTitle) elements.gate4PanelTitle.textContent = 'Sniper Gate';
-  if (elements.gate4PanelSubtitle) elements.gate4PanelSubtitle.textContent = 'Bot exit + organic buyer detection';
-  if (gateStats.sniperGate && gateStats.sniperGate.length > 0) {
-    elements.sniperGateStats.innerHTML = gateStats.sniperGate.map(renderGateStat).join('');
-  } else {
-    elements.sniperGateStats.innerHTML = '<div class="empty-state">No data yet</div>';
   }
 
   // Gate 5: research score gate
@@ -350,7 +331,7 @@ function renderTokenItem(token) {
 
   let metaHtml = `<div class="token-time">${time}</div>`;
   if (token.outcome === 'rejected' && token.rejectedAt) {
-    const gateLabels = { 'cheap-gates': 'Cheap Gates', 'deep-filters': 'Deep Filters', 'sniper-gate': 'Sniper Gate', 'research-score-gate': 'Research Score', 'stable-gate': 'Stable Gate' };
+    const gateLabels = { 'cheap-gates': 'Cheap Gates', 'deep-filters': 'Deep Filters', 'research-score-gate': 'Research Score', 'stable-gate': 'Stable Gate' };
     metaHtml += `<div class="token-gate-badge">${gateLabels[token.rejectedAt] || token.rejectedAt}</div>`;
   }
   if (token.outcome === 'rejected' && token.rejectionReason) {
@@ -727,8 +708,6 @@ async function showTokenDetail(mint) {
     const exitPercent = token.sniperExitPercent ?? 0;
     const exitCount = Math.round(botCount * exitPercent / 100);
     const organicCount = token.organicBuyerCount ?? 0;
-    const checks = token.sniperGateChecks ?? 0;
-    const waitSec = token.sniperGateWaitMs != null ? (token.sniperGateWaitMs / 1000).toFixed(1) : '--';
 
     sniperSummaryHtml = `
       <div class="modal-section">
@@ -868,7 +847,7 @@ async function showTokenDetail(mint) {
   if (sniperSummaryHtml) {
     const historyEl = document.getElementById('sniper-check-history');
     if (historyEl) {
-      const data = await fetchApi(`/api/sniper-gate/token/${mint}`);
+      const data = await fetchApi(`/api/gate/token/${mint}`);
       if (data && data.observations && data.observations.length > 0) {
         historyEl.innerHTML = renderSniperCheckHistory(data.observations);
       } else {

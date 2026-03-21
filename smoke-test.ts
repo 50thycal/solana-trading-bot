@@ -69,14 +69,6 @@ import {
   MAX_PRIORITY_FEE,
   USE_FALLBACK_EXECUTOR,
   MAX_TOKEN_AGE_SECONDS,
-  SNIPER_GATE_ENABLED,
-  SNIPER_GATE_INITIAL_DELAY_MS,
-  SNIPER_GATE_RECHECK_INTERVAL_MS,
-  SNIPER_GATE_MAX_CHECKS,
-  SNIPER_GATE_SNIPER_SLOT_THRESHOLD,
-  SNIPER_GATE_MIN_BOT_EXIT_PERCENT,
-  SNIPER_GATE_MIN_ORGANIC_BUYERS,
-  SNIPER_GATE_LOG_ONLY,
   TRAILING_STOP_ENABLED,
   TRAILING_STOP_ACTIVATION_PERCENT,
   TRAILING_STOP_DISTANCE_PERCENT,
@@ -95,7 +87,6 @@ import {
   STABLE_GATE_MAX_PRICE_DROP_PERCENT,
   STABLE_GATE_MIN_SOL_IN_CURVE,
   STABLE_GATE_MAX_SELL_RATIO,
-  SNIPER_GATE_SIGNATURE_LIMIT,
 } from './helpers';
 import {
   buyOnPumpFun,
@@ -271,7 +262,6 @@ export interface SmokeTestReport {
   gateStats?: {
     cheapGates: Array<{ name: string; displayName: string; passed: number; failed: number; totalChecked: number }>;
     deepFilters: Array<{ name: string; displayName: string; passed: number; failed: number; totalChecked: number }>;
-    sniperGate: Array<{ name: string; displayName: string; passed: number; failed: number; totalChecked: number }>;
     researchScoreGate: Array<{ name: string; displayName: string; passed: number; failed: number; totalChecked: number }>;
     stableGate: Array<{ name: string; displayName: string; passed: number; failed: number; totalChecked: number }>;
   };
@@ -286,7 +276,6 @@ export interface SmokeTestReport {
     /** Time spent in each pipeline gate (ms) */
     cheapGateDurationMs?: number;
     deepFilterDurationMs?: number;
-    sniperGateDurationMs?: number;
     researchGateDurationMs?: number;
     stableGateDurationMs?: number;
     /** Total time in pipeline for this token */
@@ -753,7 +742,6 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
         takeProfitPct: config.takeProfit,
         stopLossPct: config.stopLoss,
         maxHoldDurationS: Math.round(maxHoldMs / 1000),
-        sniperGateEnabled: config.sniperGateEnabled,
         trailingStopEnabled: config.trailingStopEnabled,
         runNumber,
         totalRuns,
@@ -780,16 +768,6 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
         skipBondingCurveCheck: false,
         skipFilters: false,
       },
-      sniperGate: {
-        enabled: config.sniperGateEnabled,
-        initialDelayMs: config.sniperGateInitialDelayMs,
-        recheckIntervalMs: config.sniperGateRecheckIntervalMs,
-        maxChecks: config.sniperGateMaxChecks,
-        sniperSlotThreshold: config.sniperGateSniperSlotThreshold,
-        minBotExitPercent: config.sniperGateMinBotExitPercent,
-        minOrganicBuyers: config.sniperGateMinOrganicBuyers,
-        logOnly: config.sniperGateLogOnly,
-      },
       researchScoreGate: {
         enabled: config.researchScoreGateEnabled,
         researchBotUrl: config.researchBotUrl,
@@ -797,6 +775,9 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
         checkpoint: config.researchScoreCheckpoint,
         logOnly: config.researchScoreLogOnly,
         modelRefreshIntervalMs: config.researchScoreModelRefreshInterval,
+        pollIntervalSeconds: config.researchScorePollIntervalSeconds,
+        signatureLimit: config.researchScoreSignatureLimit,
+        sniperSlotThreshold: config.researchScoreSniperSlotThreshold,
       },
       verbose: true,
     });
@@ -1485,7 +1466,6 @@ async function runListenPipelineAndBuy(
               compositeScore: result.context.deepFilters?.filterResults?.score,
               cheapGateDurationMs: stageDurations['cheap-gates'],
               deepFilterDurationMs: stageDurations['deep-filters'],
-              sniperGateDurationMs: stageDurations['sniper-gate'],
               researchGateDurationMs: stageDurations['research-score-gate'],
               stableGateDurationMs: stageDurations['stable-gate'],
               totalPipelineDurationMs: result.totalDurationMs,
@@ -1816,16 +1796,6 @@ function buildReport(
     PUMPFUN_MIN_SCORE_REQUIRED,
     PUMPFUN_DETECTION_COOLDOWN_MS,
     MAX_TOKEN_AGE_SECONDS,
-    // Sniper gate
-    SNIPER_GATE_ENABLED,
-    SNIPER_GATE_INITIAL_DELAY_MS,
-    SNIPER_GATE_RECHECK_INTERVAL_MS,
-    SNIPER_GATE_MAX_CHECKS,
-    SNIPER_GATE_SNIPER_SLOT_THRESHOLD,
-    SNIPER_GATE_MIN_BOT_EXIT_PERCENT,
-    SNIPER_GATE_MIN_ORGANIC_BUYERS,
-    SNIPER_GATE_LOG_ONLY,
-    SNIPER_GATE_SIGNATURE_LIMIT,
     // Stable gate
     STABLE_GATE_ENABLED,
     STABLE_GATE_LOG_ONLY,

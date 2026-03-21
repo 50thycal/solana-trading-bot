@@ -247,8 +247,8 @@ export class StableGateStage implements PipelineStage<PipelineContext, StableGat
       let sellCheckFailed = false;
 
       try {
-        const sniperSlotThreshold = context.sniperGate?.sniperSlotThreshold ?? 3;
-        const signatureLimit = context.sniperGate?.signatureLimit ?? 30;
+        const sniperSlotThreshold = 3;
+        const signatureLimit = 30;
         const analysis = await fetchAndAnalyzeTransactions(
           this.connection,
           context.detection.bondingCurve,

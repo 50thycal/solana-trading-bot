@@ -114,16 +114,13 @@ async function updatePipelineStats() {
   const bought = data.tokensBought || 0;
   const cheapGates = data.gateStats?.cheapGates || [];
   const deepFilters = data.gateStats?.deepFilters || [];
-  const sniperGate = data.gateStats?.sniperGate || [];
 
   const lastCG = cheapGates[cheapGates.length - 1];
   const lastDF = deepFilters[deepFilters.length - 1];
-  const lastSG = sniperGate[sniperGate.length - 1];
 
   setFunnelValue('funnel-detected', detected);
   setFunnelValue('funnel-cheap-gates', lastCG ? lastCG.passed : 0);
   setFunnelValue('funnel-deep-filters', lastDF ? lastDF.passed : 0);
-  setFunnelValue('funnel-momentum-gate', lastSG ? lastSG.passed : 0);
 
   const researchScoreGate = data.gateStats?.researchScoreGate || [];
   const lastRS = researchScoreGate[researchScoreGate.length - 1];
@@ -321,7 +318,7 @@ function updateTokenList() {
     const symbol = token.symbol ? `($${token.symbol})` : '';
     let metaHtml = `<div class="token-time">${time}</div>`;
     if (token.outcome === 'rejected' && token.rejectedAt) {
-      const gateLabels = { 'cheap-gates': 'Cheap Gates', 'deep-filters': 'Deep Filters', 'sniper-gate': 'Sniper Gate', 'research-score-gate': 'Research Score', 'stable-gate': 'Stable Gate' };
+      const gateLabels = { 'cheap-gates': 'Cheap Gates', 'deep-filters': 'Deep Filters', 'research-score-gate': 'Research Score', 'stable-gate': 'Stable Gate' };
       metaHtml += `<div class="token-gate-badge">${gateLabels[token.rejectedAt] || token.rejectedAt}</div>`;
     }
     if (token.outcome === 'rejected' && token.rejectionReason) {

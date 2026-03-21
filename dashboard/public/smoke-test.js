@@ -499,10 +499,6 @@ function renderBoughtTokenAnalysis(report) {
       <span class="smoke-meta-value">${fmtMs(pd.deepFilterDurationMs)}</span>
     </div>
     <div class="smoke-meta-item">
-      <span class="smoke-meta-label">Sniper Gate</span>
-      <span class="smoke-meta-value">${fmtMs(pd.sniperGateDurationMs)}</span>
-    </div>
-    <div class="smoke-meta-item">
       <span class="smoke-meta-label">Research Gate</span>
       <span class="smoke-meta-value">${fmtMs(pd.researchGateDurationMs)}</span>
     </div>
@@ -590,7 +586,6 @@ function renderPipelineRunOverview(report) {
     const gateDisplayNames = {
       'cheap-gates': 'Cheap Gates',
       'deep-filters': 'Deep Filters',
-      'sniper-gate': 'Sniper Gate',
       'research-score-gate': 'Research Gate',
       'stable-gate': 'Stable Gate',
     };
@@ -1339,7 +1334,6 @@ function buildReportText(report) {
     const fmtMs = (v) => v !== undefined ? `${Math.round(v)}ms` : '—';
     lines.push(`Cheap Gates:       ${fmtMs(pd.cheapGateDurationMs)}`);
     lines.push(`Deep Filters:      ${fmtMs(pd.deepFilterDurationMs)}`);
-    lines.push(`Sniper Gate:       ${fmtMs(pd.sniperGateDurationMs)}`);
     lines.push(`Research Gate:     ${fmtMs(pd.researchGateDurationMs)}`);
     lines.push(`Stable Gate:       ${fmtMs(pd.stableGateDurationMs)}`);
     lines.push(`Total Pipeline:    ${fmtMs(pd.totalPipelineDurationMs)}`);

@@ -139,97 +139,6 @@ export interface DeepFiltersData {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SNIPER GATE CHECK RESULT
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Per-poll result captured during sniper gate polling.
- * Stored in checkHistory for pattern analysis in dry_run / log_only mode.
- */
-export interface SniperGateCheckResult {
-  /** Poll number (1 = first check after initial delay) */
-  checkNumber: number;
-  /** Unix timestamp (ms) when this check was completed */
-  checkedAt: number;
-  botCount: number;
-  botExitCount: number;
-  botExitPercent: number;
-  organicCount: number;
-  totalBuys: number;
-  totalSells: number;
-  uniqueBuyWalletCount: number;
-  /** Whether pass conditions (bot exit + organic threshold) were met at this check */
-  passConditionsMet: boolean;
-  sniperWallets: string[];
-  organicWallets: string[];
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SNIPER GATE DATA
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Data produced by sniper gate stage
- *
- * The sniper gate classifies early wallets as bots vs organic buyers,
- * monitors for bot exits, and only passes when bots have dumped and
- * organic demand remains.
- */
-export interface SniperGateData {
-  /** How many bot wallets identified (bought within sniperSlotThreshold) */
-  sniperWalletCount: number;
-
-  /** How many bots exited (sold) */
-  sniperExitCount: number;
-
-  /** % of bots that exited */
-  sniperExitPercent: number;
-
-  /** Unique wallets from later slots (organic buyers) */
-  organicBuyerCount: number;
-
-  /** Total buy transactions seen */
-  totalBuys: number;
-
-  /** Total sell transactions seen */
-  totalSells: number;
-
-  /** Unique buyer wallets total */
-  uniqueBuyWalletCount: number;
-
-  /** How many polls before decision */
-  checksPerformed: number;
-
-  /** Total time spent in gate (ms) */
-  totalWaitMs: number;
-
-  /** Timestamp when gate check started */
-  checkStartedAt: number;
-
-  /** Identified bot wallet addresses */
-  sniperWallets: string[];
-
-  /** Organic wallet addresses */
-  organicWallets: string[];
-
-  /** Whether gate was running in log-only mode */
-  logOnly: boolean;
-
-  /** True when one or more RPC calls failed (e.g. 429 rate limit) and the gate
-   *  continued with partial data instead of rejecting. */
-  rpcDegraded: boolean;
-
-  /** Full time-series of every poll result — populated when the gate runs all maxChecks */
-  checkHistory: SniperGateCheckResult[];
-
-  /** Sniper slot threshold used for wallet classification (passed through for downstream re-fetch) */
-  sniperSlotThreshold: number;
-
-  /** Signature limit used per poll (passed through for downstream re-fetch) */
-  signatureLimit: number;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // RESEARCH SCORE GATE TYPES
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -365,9 +274,6 @@ export interface PipelineContext {
   /** Data from deep filters (if passed) */
   deepFilters?: DeepFiltersData;
 
-  /** Data from sniper gate (if passed) */
-  sniperGate?: SniperGateData;
-
   /** Data from research score gate (if passed) */
   researchScore?: ResearchScoreGateData;
 
@@ -438,11 +344,6 @@ export const RejectionReasons = {
 
   // Suspicious instruction
   SUSPICIOUS_INSTRUCTION: 'Suspicious instruction detected in transaction logs',
-
-  // Sniper Gate
-  SNIPER_GATE_TIMEOUT: 'Sniper gate timeout - bots did not exit in time',
-  SNIPER_GATE_LOW_ORGANIC: 'Insufficient organic buyers after bot exit',
-  SNIPER_GATE_RPC_FAILED: 'Failed to fetch transactions for sniper gate',
 
   // Research Score Gate
   RESEARCH_SCORE_LOW: 'Research score below threshold',

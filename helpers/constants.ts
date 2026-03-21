@@ -99,19 +99,6 @@ export const PUMPFUN_MIN_SCORE_REQUIRED = config.pumpfunMinScoreRequired;
 export const PUMPFUN_DETECTION_COOLDOWN_MS = config.pumpfunDetectionCooldownMs;
 
 // ============================================================================
-// SNIPER GATE
-// ============================================================================
-export const SNIPER_GATE_ENABLED = config.sniperGateEnabled;
-export const SNIPER_GATE_INITIAL_DELAY_MS = config.sniperGateInitialDelayMs;
-export const SNIPER_GATE_RECHECK_INTERVAL_MS = config.sniperGateRecheckIntervalMs;
-export const SNIPER_GATE_MAX_CHECKS = config.sniperGateMaxChecks;
-export const SNIPER_GATE_SNIPER_SLOT_THRESHOLD = config.sniperGateSniperSlotThreshold;
-export const SNIPER_GATE_MIN_BOT_EXIT_PERCENT = config.sniperGateMinBotExitPercent;
-export const SNIPER_GATE_MIN_ORGANIC_BUYERS = config.sniperGateMinOrganicBuyers;
-export const SNIPER_GATE_LOG_ONLY = config.sniperGateLogOnly;
-export const SNIPER_GATE_SIGNATURE_LIMIT = config.sniperGateSignatureLimit;
-
-// ============================================================================
 // STABLE GATE
 // ============================================================================
 export const STABLE_GATE_ENABLED = config.stableGateEnabled;

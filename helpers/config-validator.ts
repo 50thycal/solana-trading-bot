@@ -80,17 +80,6 @@ export interface ValidatedConfig {
   pumpfunMinScoreRequired: number;
   pumpfunDetectionCooldownMs: number;
 
-  // Sniper Gate (Pipeline Stage 4)
-  sniperGateEnabled: boolean;
-  sniperGateInitialDelayMs: number;
-  sniperGateRecheckIntervalMs: number;
-  sniperGateMaxChecks: number;
-  sniperGateSniperSlotThreshold: number;
-  sniperGateMinBotExitPercent: number;
-  sniperGateMinOrganicBuyers: number;
-  sniperGateLogOnly: boolean;
-  sniperGateSignatureLimit: number;
-
   // Trailing Stop Loss
   trailingStopEnabled: boolean;
   trailingStopActivationPercent: number;
@@ -98,12 +87,15 @@ export interface ValidatedConfig {
   hardTakeProfitPercent: number;
   costAdjustedExits: boolean;
 
-  // Research Score Gate (Pipeline Stage 5)
+  // Research Score Gate (Pipeline Stage 4)
   researchScoreGateEnabled: boolean;
   researchScoreThreshold: number;
   researchScoreCheckpoint: number;
   researchScoreLogOnly: boolean;
   researchScoreModelRefreshInterval: number;
+  researchScorePollIntervalSeconds: number;
+  researchScoreSignatureLimit: number;
+  researchScoreSniperSlotThreshold: number;
 
   // Stable Gate (Pipeline Stage 6)
   stableGateEnabled: boolean;
@@ -413,53 +405,8 @@ export function validateConfig(): ValidatedConfig {
   }
   const pumpfunDetectionCooldownMs = Math.round(pumpfunDetectionCooldownSeconds * 1000);
 
-  // === SNIPER GATE (Pipeline Stage 4) ===
-  // Identifies sniper bot wallets by slot delta, monitors for their exits,
-  // then evaluates organic demand.
-
-  const sniperGateEnabled = requireBoolean('SNIPER_GATE_ENABLED', true);
-
-  const sniperGateInitialDelaySeconds = requireNumber('SNIPER_GATE_INITIAL_DELAY_SECONDS', 0.5);
-  if (sniperGateInitialDelaySeconds < 0) {
-    errors.push({ variable: 'SNIPER_GATE_INITIAL_DELAY_SECONDS', message: 'cannot be negative' });
-  }
-  const sniperGateInitialDelayMs = Math.round(sniperGateInitialDelaySeconds * 1000);
-
-  const sniperGateRecheckIntervalSeconds = requireNumber('SNIPER_GATE_RECHECK_INTERVAL_SECONDS', 1);
-  if (sniperGateRecheckIntervalSeconds < 0.1) {
-    errors.push({ variable: 'SNIPER_GATE_RECHECK_INTERVAL_SECONDS', message: 'must be >= 0.1' });
-  }
-  const sniperGateRecheckIntervalMs = Math.round(sniperGateRecheckIntervalSeconds * 1000);
-
-  const sniperGateMaxChecks = requireNumber('SNIPER_GATE_MAX_CHECKS', 10);
-  if (sniperGateMaxChecks < 1) {
-    errors.push({ variable: 'SNIPER_GATE_MAX_CHECKS', message: 'must be >= 1' });
-  }
-
-  const sniperGateSniperSlotThreshold = requireNumber('SNIPER_GATE_SNIPER_SLOT_THRESHOLD', 3);
-  if (sniperGateSniperSlotThreshold < 0) {
-    errors.push({ variable: 'SNIPER_GATE_SNIPER_SLOT_THRESHOLD', message: 'cannot be negative' });
-  }
-
-  const sniperGateMinBotExitPercent = requireNumber('SNIPER_GATE_MIN_BOT_EXIT_PERCENT', 50);
-  if (sniperGateMinBotExitPercent < 0 || sniperGateMinBotExitPercent > 100) {
-    errors.push({ variable: 'SNIPER_GATE_MIN_BOT_EXIT_PERCENT', message: 'must be 0-100' });
-  }
-
-  const sniperGateMinOrganicBuyers = requireNumber('SNIPER_GATE_MIN_ORGANIC_BUYERS', 3);
-  if (sniperGateMinOrganicBuyers < 1) {
-    errors.push({ variable: 'SNIPER_GATE_MIN_ORGANIC_BUYERS', message: 'must be >= 1' });
-  }
-
-  const sniperGateLogOnly = requireBoolean('SNIPER_GATE_LOG_ONLY', false);
-
-  const sniperGateSignatureLimit = requireNumber('SNIPER_GATE_SIGNATURE_LIMIT', 30);
-  if (sniperGateSignatureLimit < 1 || sniperGateSignatureLimit > 100) {
-    errors.push({ variable: 'SNIPER_GATE_SIGNATURE_LIMIT', message: 'must be 1-100' });
-  }
-
-  // === RESEARCH SCORE GATE (Pipeline Stage 5) ===
-  // Applies the research bot's scoring model after the sniper gate.
+  // === RESEARCH SCORE GATE (Pipeline Stage 4) ===
+  // Polls transactions during checkpoint wait, then scores using research bot model.
   // Requires RESEARCH_BOT_URL to be set for model fetching.
 
   const researchScoreGateEnabled = requireBoolean('RESEARCH_SCORE_GATE_ENABLED', true);
@@ -479,6 +426,21 @@ export function validateConfig(): ValidatedConfig {
   const researchScoreModelRefreshInterval = requireNumber('RESEARCH_SCORE_MODEL_REFRESH_INTERVAL', 300000);
   if (researchScoreModelRefreshInterval < 0) {
     errors.push({ variable: 'RESEARCH_SCORE_MODEL_REFRESH_INTERVAL', message: 'cannot be negative' });
+  }
+
+  const researchScorePollIntervalSeconds = requireNumber('RESEARCH_SCORE_POLL_INTERVAL_SECONDS', 3);
+  if (researchScorePollIntervalSeconds < 0.5) {
+    errors.push({ variable: 'RESEARCH_SCORE_POLL_INTERVAL_SECONDS', message: 'must be >= 0.5' });
+  }
+
+  const researchScoreSignatureLimit = requireNumber('RESEARCH_SCORE_SIGNATURE_LIMIT', 40);
+  if (researchScoreSignatureLimit < 1 || researchScoreSignatureLimit > 100) {
+    errors.push({ variable: 'RESEARCH_SCORE_SIGNATURE_LIMIT', message: 'must be 1-100' });
+  }
+
+  const researchScoreSniperSlotThreshold = requireNumber('RESEARCH_SCORE_SNIPER_SLOT_THRESHOLD', 3);
+  if (researchScoreSniperSlotThreshold < 0) {
+    errors.push({ variable: 'RESEARCH_SCORE_SNIPER_SLOT_THRESHOLD', message: 'cannot be negative' });
   }
 
   // === STABLE GATE (Pipeline Stage 6) ===
@@ -689,20 +651,14 @@ export function validateConfig(): ValidatedConfig {
     pumpfunEnableMaxSolFilter,
     pumpfunMinScoreRequired,
     pumpfunDetectionCooldownMs,
-    sniperGateEnabled,
-    sniperGateInitialDelayMs,
-    sniperGateRecheckIntervalMs,
-    sniperGateMaxChecks,
-    sniperGateSniperSlotThreshold,
-    sniperGateMinBotExitPercent,
-    sniperGateMinOrganicBuyers,
-    sniperGateLogOnly,
-    sniperGateSignatureLimit,
     researchScoreGateEnabled,
     researchScoreThreshold,
     researchScoreCheckpoint,
     researchScoreLogOnly,
     researchScoreModelRefreshInterval,
+    researchScorePollIntervalSeconds,
+    researchScoreSignatureLimit,
+    researchScoreSniperSlotThreshold,
     stableGateEnabled,
     stableGateLogOnly,
     stableGateMaxRetries,

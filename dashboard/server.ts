@@ -458,11 +458,6 @@ export class DashboardServer {
             const id = pathname.substring('/api/pools/'.length);
             data = this.getApiPoolById(id);
           }
-          // Check for /api/sniper-gate/token/:mint pattern
-          else if (pathname.startsWith('/api/sniper-gate/token/')) {
-            const mint = pathname.substring('/api/sniper-gate/token/'.length);
-            data = this.getApiSniperGateToken(mint);
-          }
           // Check for /api/journal/:sessionId pattern
           else if (pathname.startsWith('/api/journal/') && !pathname.includes('/compact') && !pathname.includes('/notes')) {
             const sessionId = pathname.substring('/api/journal/'.length);
@@ -1010,19 +1005,6 @@ export class DashboardServer {
     }
 
     return pool;
-  }
-
-  /**
-   * GET /api/sniper-gate/token/:mint - Sniper gate observations for a specific token
-   */
-  private getApiSniperGateToken(mint: string) {
-    const stateStore = getStateStore();
-    if (!stateStore) {
-      return { error: 'State store not initialized', observations: [] };
-    }
-
-    const observations = stateStore.getSniperGateObservations(mint);
-    return { mint, observations };
   }
 
   /**
@@ -1880,7 +1862,6 @@ export class DashboardServer {
       { name: 'min-sol', displayName: 'Min SOL in Curve' },
       { name: 'max-sol', displayName: 'Max SOL in Curve' },
     ];
-    const SNIPER_GATE = [{ name: 'sniper', displayName: 'Sniper Gate' }];
     const RESEARCH_SCORE_GATE = [{ name: 'research-score', displayName: 'Research Score Gate' }];
     const STABLE_GATE = [{ name: 'stable', displayName: 'Stable Gate' }];
 
@@ -1890,7 +1871,6 @@ export class DashboardServer {
 
     const cheapGateStats = makeStats(CHEAP_GATES);
     const deepFilterStats = makeStats(DEEP_FILTERS);
-    const sniperGateStats = makeStats(SNIPER_GATE);
     const researchScoreGateStats = makeStats(RESEARCH_SCORE_GATE);
     const stableGateStats = makeStats(STABLE_GATE);
 
@@ -1949,7 +1929,7 @@ export class DashboardServer {
 
     // Helper to merge a report's gateStats snapshot into the aggregated counters
     const addGateStatsFromSnapshot = (
-      snapshot: { cheapGates: any[]; deepFilters: any[]; sniperGate: any[]; researchScoreGate: any[]; stableGate: any[] }
+      snapshot: { cheapGates: any[]; deepFilters: any[]; researchScoreGate: any[]; stableGate: any[] }
     ) => {
       const merge = (target: typeof cheapGateStats, source: any[]) => {
         for (const src of source) {
@@ -1963,7 +1943,6 @@ export class DashboardServer {
       };
       merge(cheapGateStats, snapshot.cheapGates || []);
       merge(deepFilterStats, snapshot.deepFilters || []);
-      merge(sniperGateStats, snapshot.sniperGate || []);
       merge(researchScoreGateStats, snapshot.researchScoreGate || []);
       merge(stableGateStats, snapshot.stableGate || []);
     };
@@ -1978,7 +1957,6 @@ export class DashboardServer {
         for (let i = 0; i < r.tokensPipelinePassed; i++) {
           incrementPassed(cheapGateStats);
           incrementPassed(deepFilterStats);
-          incrementPassed(sniperGateStats);
           incrementPassed(researchScoreGateStats);
           incrementPassed(stableGateStats);
         }
@@ -1988,19 +1966,13 @@ export class DashboardServer {
           } else if (rej.stage === 'deep-filters') {
             incrementPassed(cheapGateStats);
             incrementFailedAt(deepFilterStats, resolveDeepFilter(rej.reason));
-          } else if (rej.stage === 'sniper-gate') {
-            incrementPassed(cheapGateStats);
-            incrementPassed(deepFilterStats);
-            sniperGateStats[0].failed++; sniperGateStats[0].totalChecked++;
           } else if (rej.stage === 'research-score-gate') {
             incrementPassed(cheapGateStats);
             incrementPassed(deepFilterStats);
-            incrementPassed(sniperGateStats);
             researchScoreGateStats[0].failed++; researchScoreGateStats[0].totalChecked++;
           } else if (rej.stage === 'stable-gate') {
             incrementPassed(cheapGateStats);
             incrementPassed(deepFilterStats);
-            incrementPassed(sniperGateStats);
             incrementPassed(researchScoreGateStats);
             stableGateStats[0].failed++; stableGateStats[0].totalChecked++;
           }
@@ -2010,7 +1982,6 @@ export class DashboardServer {
         for (let i = 0; i < r.tokensPipelinePassed; i++) {
           incrementPassed(cheapGateStats);
           incrementPassed(deepFilterStats);
-          incrementPassed(sniperGateStats);
           incrementPassed(researchScoreGateStats);
           incrementPassed(stableGateStats);
         }
@@ -2021,19 +1992,13 @@ export class DashboardServer {
             } else if (stage === 'deep-filters') {
               incrementPassed(cheapGateStats);
               deepFilterStats[0].failed++; deepFilterStats[0].totalChecked++;
-            } else if (stage === 'sniper-gate') {
-              incrementPassed(cheapGateStats);
-              incrementPassed(deepFilterStats);
-              sniperGateStats[0].failed++; sniperGateStats[0].totalChecked++;
             } else if (stage === 'research-score-gate') {
               incrementPassed(cheapGateStats);
               incrementPassed(deepFilterStats);
-              incrementPassed(sniperGateStats);
               researchScoreGateStats[0].failed++; researchScoreGateStats[0].totalChecked++;
             } else if (stage === 'stable-gate') {
               incrementPassed(cheapGateStats);
               incrementPassed(deepFilterStats);
-              incrementPassed(sniperGateStats);
               incrementPassed(researchScoreGateStats);
               stableGateStats[0].failed++; stableGateStats[0].totalChecked++;
             }
@@ -2045,7 +2010,6 @@ export class DashboardServer {
     const gateStats = {
       cheapGates: cheapGateStats,
       deepFilters: deepFilterStats,
-      sniperGate: sniperGateStats,
       researchScoreGate: researchScoreGateStats,
       stableGate: stableGateStats,
     };
@@ -2374,7 +2338,6 @@ export class DashboardServer {
       if (e.hypothesis) lines.push(`Hypothesis: "${e.hypothesis}"`);
       lines.push(`Config: TP=${e.takeProfitPct}% SL=${e.stopLossPct}% HOLD=${e.maxHoldDurationS}s AMOUNT=${e.quoteAmountSol} SOL`);
       const gates: string[] = [];
-      if (e.sniperGateEnabled) gates.push('sniper_gate');
       if (e.trailingStopEnabled) gates.push('trailing_stop');
       if (gates.length) lines.push(`Gates: ${gates.join(', ')}`);
       lines.push(`Trades: ${e.totalTrades} | Wins: ${e.totalWins} | Losses: ${e.totalLosses} | Detections: ${e.totalDetections}`);

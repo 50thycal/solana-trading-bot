@@ -502,7 +502,6 @@ const runListener = async () => {
       takeProfitPct: config.takeProfit,
       stopLossPct: config.stopLoss,
       maxHoldDurationS: Math.round(config.maxHoldDurationMs / 1000),
-      sniperGateEnabled: config.sniperGateEnabled,
       trailingStopEnabled: config.trailingStopEnabled,
     });
 
@@ -553,17 +552,6 @@ const runListener = async () => {
       skipBondingCurveCheck: false,
       skipFilters: false,
     },
-    sniperGate: {
-      enabled: config.sniperGateEnabled,
-      initialDelayMs: config.sniperGateInitialDelayMs,
-      recheckIntervalMs: config.sniperGateRecheckIntervalMs,
-      maxChecks: config.sniperGateMaxChecks,
-      sniperSlotThreshold: config.sniperGateSniperSlotThreshold,
-      minBotExitPercent: config.sniperGateMinBotExitPercent,
-      minOrganicBuyers: config.sniperGateMinOrganicBuyers,
-      logOnly: config.sniperGateLogOnly,
-      signatureLimit: config.sniperGateSignatureLimit,
-    },
     researchScoreGate: {
       enabled: config.researchScoreGateEnabled,
       researchBotUrl: config.researchBotUrl,
@@ -571,6 +559,9 @@ const runListener = async () => {
       checkpoint: config.researchScoreCheckpoint,
       logOnly: config.researchScoreLogOnly,
       modelRefreshIntervalMs: config.researchScoreModelRefreshInterval,
+      pollIntervalSeconds: config.researchScorePollIntervalSeconds,
+      signatureLimit: config.researchScoreSignatureLimit,
+      sniperSlotThreshold: config.researchScoreSniperSlotThreshold,
     },
     stableGate: {
       enabled: config.stableGateEnabled,
@@ -840,41 +831,6 @@ const runListener = async () => {
 
     const pipelineResult = await pipeline.process(detectionEvent);
 
-    // Persist sniper gate per-check observations for pattern analysis.
-    // Works for both pass and reject outcomes — data lives in stageResults.data
-    // for rejections, and in context.sniperGate for passes.
-    if (stateStore) {
-      const sniperStageResult = pipelineResult.stageResults.find(
-        (s) => s.stage === 'sniper-gate',
-      );
-      const sniperData = (pipelineResult.context.sniperGate ?? sniperStageResult?.data) as
-        | import('./pipeline/types').SniperGateData
-        | undefined;
-
-      if (sniperData?.checkHistory && sniperData.checkHistory.length > 0) {
-        stateStore.recordSniperGateObservations({
-          tokenMint: baseMintStr,
-          bondingCurve: bondingCurveStr,
-          creationSlot: detectionEvent.slot,
-          logOnly: sniperData.logOnly,
-          checks: sniperData.checkHistory.map((c) => ({
-            checkNumber: c.checkNumber,
-            checkedAt: c.checkedAt,
-            botCount: c.botCount,
-            botExitCount: c.botExitCount,
-            botExitPercent: c.botExitPercent,
-            organicCount: c.organicCount,
-            totalBuys: c.totalBuys,
-            totalSells: c.totalSells,
-            uniqueBuyWallets: c.uniqueBuyWalletCount,
-            passConditionsMet: c.passConditionsMet,
-            sniperWallets: c.sniperWallets,
-            organicWallets: c.organicWallets,
-          })),
-        });
-      }
-    }
-
     const pipelineStats = getPipelineStats();
     if (pipelineStats) {
       pipelineStats.recordResult(pipelineResult);
@@ -1014,7 +970,6 @@ const runListener = async () => {
 
       const paperTracker = getPaperTradeTracker();
       if (paperTracker && pipelineResult.context.deepFilters?.bondingCurveState) {
-        const sg = pipelineResult.context.sniperGate;
         paperTracker.recordPaperTrade({
           mint: token.mint,
           bondingCurve: token.bondingCurve!,
@@ -1024,11 +979,6 @@ const runListener = async () => {
           symbol: token.symbol,
           signature: token.signature || 'unknown',
           pipelineDurationMs: pipelineResult.totalDurationMs,
-          sniperBotCount: sg?.sniperWalletCount,
-          sniperExitPercent: sg?.sniperExitPercent,
-          organicBuyerCount: sg?.organicBuyerCount,
-          sniperGateChecks: sg?.checksPerformed,
-          sniperGateWaitMs: sg?.totalWaitMs,
         });
       }
 
@@ -1175,8 +1125,6 @@ const runListener = async () => {
           entryTimestamp,
           buySignature: buyResult.signature || '',
           isToken2022,
-          // Pass sniper wallet metadata if gate ran (enables future sell pressure analysis)
-          sniperWallets: pipelineResult.context.sniperGate?.sniperWallets,
         });
 
         logger.info(

@@ -32,7 +32,6 @@ import {
   PoolDetectionQueryOptions,
   PoolDetectionStats,
   StoredFilterResult,
-  RecordSniperGateObservationsInput,
   RecordPaperTradeEntryInput,
   UpdatePaperTradeExitInput,
   RunJournalRecord,
@@ -1311,61 +1310,6 @@ export class StateStore {
    * Get database statistics
    */
   // ═══════════════════════════════════════════════════════════════
-  // SNIPER GATE OBSERVATIONS
-  // ═══════════════════════════════════════════════════════════════
-
-  /**
-   * Bulk-insert all poll observations for a single token's sniper gate run.
-   * Called after the gate completes (pass or reject) so the full check history
-   * is available. Uses a transaction for atomicity.
-   */
-  recordSniperGateObservations(input: RecordSniperGateObservationsInput): void {
-    if (!this.initialized) return;
-    if (input.checks.length === 0) return;
-
-    const insert = this.db.prepare(`
-      INSERT OR IGNORE INTO sniper_gate_observations (
-        id, token_mint, bonding_curve, observed_at, check_number,
-        creation_slot, bot_count, bot_exit_count, bot_exit_percent,
-        organic_count, total_buys, total_sells, unique_buy_wallets,
-        pass_conditions_met, log_only, sniper_wallets, organic_wallets
-      ) VALUES (
-        ?, ?, ?, ?, ?,
-        ?, ?, ?, ?,
-        ?, ?, ?, ?,
-        ?, ?, ?, ?
-      )
-    `);
-
-    const insertMany = this.db.transaction((checks: RecordSniperGateObservationsInput['checks']) => {
-      for (const check of checks) {
-        const id = `sgo_${input.tokenMint}_${check.checkNumber}_${check.checkedAt}`;
-        insert.run(
-          id,
-          input.tokenMint,
-          input.bondingCurve,
-          check.checkedAt,
-          check.checkNumber,
-          input.creationSlot,
-          check.botCount,
-          check.botExitCount,
-          check.botExitPercent,
-          check.organicCount,
-          check.totalBuys,
-          check.totalSells,
-          check.uniqueBuyWallets,
-          check.passConditionsMet ? 1 : 0,
-          input.logOnly ? 1 : 0,
-          JSON.stringify(check.sniperWallets),
-          JSON.stringify(check.organicWallets),
-        );
-      }
-    });
-
-    insertMany(input.checks);
-  }
-
-  // ═══════════════════════════════════════════════════════════════
   // PAPER TRADES
   // ═══════════════════════════════════════════════════════════════
 
@@ -1381,15 +1325,13 @@ export class StateStore {
         entry_virtual_sol_reserves, entry_virtual_token_reserves,
         entry_timestamp, hypothetical_sol_spent, entry_price_per_token,
         hypothetical_tokens_received, pipeline_duration_ms, signature,
-        status, sniper_bot_count, sniper_exit_percent, organic_buyer_count,
-        sniper_gate_checks, sniper_gate_wait_ms
+        status, sniper_bot_count, sniper_exit_percent, organic_buyer_count
       ) VALUES (
         ?, ?, ?, ?, ?,
         ?, ?,
         ?, ?, ?,
         ?, ?, ?,
-        'active', ?, ?, ?,
-        ?, ?
+        'active', ?, ?, ?
       )
     `).run(
       input.id,
@@ -1408,8 +1350,6 @@ export class StateStore {
       input.sniperBotCount ?? null,
       input.sniperExitPercent ?? null,
       input.organicBuyerCount ?? null,
-      input.sniperGateChecks ?? null,
-      input.sniperGateWaitMs ?? null,
     );
   }
 
@@ -1440,53 +1380,6 @@ export class StateStore {
       input.realizedPnlPercent,
       input.id,
     );
-  }
-
-  /**
-   * Retrieve all poll observations for a single token's sniper gate run.
-   * Returns rows ordered by check_number ASC for timeline display.
-   */
-  getSniperGateObservations(tokenMint: string): Array<{
-    checkNumber: number;
-    checkedAt: number;
-    botCount: number;
-    botExitCount: number;
-    botExitPercent: number;
-    organicCount: number;
-    totalBuys: number;
-    totalSells: number;
-    uniqueBuyWallets: number;
-    passConditionsMet: boolean;
-    logOnly: boolean;
-    sniperWallets: string[];
-    organicWallets: string[];
-  }> {
-    if (!this.initialized) return [];
-
-    const rows = this.db.prepare(`
-      SELECT check_number, observed_at, bot_count, bot_exit_count, bot_exit_percent,
-             organic_count, total_buys, total_sells, unique_buy_wallets,
-             pass_conditions_met, log_only, sniper_wallets, organic_wallets
-      FROM sniper_gate_observations
-      WHERE token_mint = ?
-      ORDER BY check_number ASC
-    `).all(tokenMint) as any[];
-
-    return rows.map(row => ({
-      checkNumber: row.check_number,
-      checkedAt: row.observed_at,
-      botCount: row.bot_count,
-      botExitCount: row.bot_exit_count,
-      botExitPercent: row.bot_exit_percent,
-      organicCount: row.organic_count,
-      totalBuys: row.total_buys,
-      totalSells: row.total_sells,
-      uniqueBuyWallets: row.unique_buy_wallets,
-      passConditionsMet: row.pass_conditions_met === 1,
-      logOnly: row.log_only === 1,
-      sniperWallets: JSON.parse(row.sniper_wallets || '[]'),
-      organicWallets: JSON.parse(row.organic_wallets || '[]'),
-    }));
   }
 
   getStats(): {
@@ -1543,9 +1436,9 @@ export class StateStore {
       INSERT INTO run_journal (
         session_id, started_at, hypothesis, config_snapshot, bot_mode,
         quote_amount_sol, take_profit_pct, stop_loss_pct, max_hold_duration_s,
-        sniper_gate_enabled, trailing_stop_enabled,
+        trailing_stop_enabled,
         run_number, total_runs
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId,
       now,
@@ -1556,7 +1449,6 @@ export class StateStore {
       input.takeProfitPct,
       input.stopLossPct,
       input.maxHoldDurationS,
-      input.sniperGateEnabled ? 1 : 0,
       input.trailingStopEnabled ? 1 : 0,
       input.runNumber ?? null,
       input.totalRuns ?? null,
@@ -1658,7 +1550,6 @@ export class StateStore {
       takeProfitPct: row.take_profit_pct,
       stopLossPct: row.stop_loss_pct,
       maxHoldDurationS: row.max_hold_duration_s,
-      sniperGateEnabled: row.sniper_gate_enabled === 1,
       trailingStopEnabled: row.trailing_stop_enabled === 1,
       totalDetections: row.total_detections || 0,
       totalTrades: row.total_trades || 0,
