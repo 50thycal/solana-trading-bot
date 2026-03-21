@@ -421,7 +421,7 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'RESEARCH_SCORE_CHECKPOINT', message: 'must be >= 1' });
   }
 
-  const researchScoreLogOnly = requireBoolean('RESEARCH_SCORE_LOG_ONLY', false);
+  const researchScoreLogOnly = requireBoolean('RESEARCH_SCORE_LOG_ONLY', true);
 
   const researchScoreModelRefreshInterval = requireNumber('RESEARCH_SCORE_MODEL_REFRESH_INTERVAL', 300000);
   if (researchScoreModelRefreshInterval < 0) {

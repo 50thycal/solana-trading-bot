@@ -41,10 +41,6 @@ const elements = {
   funnelResearchScoreGate: document.getElementById('funnel-research-score-gate'),
   stableGateStats: document.getElementById('stable-gate-stats'),
   funnelStableGate: document.getElementById('funnel-stable-gate'),
-  gate4FunnelLabel: document.getElementById('funnel-gate4-label'),
-  gate4PanelTitle: document.getElementById('gate4-panel-title'),
-  gate4PanelSubtitle: document.getElementById('gate4-panel-subtitle'),
-
   // Token list
   tokenList: document.getElementById('token-list'),
   tokenFilter: document.getElementById('token-filter'),
@@ -160,11 +156,6 @@ function updateFunnel(data) {
 
   const lastResearchScore = researchScoreGateStats[researchScoreGateStats.length - 1];
   const passedResearchScore = lastResearchScore ? lastResearchScore.passed : 0;
-
-  // Update funnel labels
-  if (elements.gate4FunnelLabel) {
-    elements.gate4FunnelLabel.textContent = 'Sniper Gate';
-  }
 
   // Update funnel values
   elements.funnelDetected.querySelector('.funnel-value').textContent = detected;
@@ -701,46 +692,6 @@ async function showTokenDetail(mint) {
     ? `at ${token.rejectedAt}: ${formatRejectionReason(token.rejectionReason)}`
     : `Pipeline completed in ${token.pipelineDurationMs}ms`;
 
-  // Build sniper gate summary section (from in-memory token data)
-  let sniperSummaryHtml = '';
-  if (token.sniperBotCount !== undefined || token.organicBuyerCount !== undefined) {
-    const botCount = token.sniperBotCount ?? 0;
-    const exitPercent = token.sniperExitPercent ?? 0;
-    const exitCount = Math.round(botCount * exitPercent / 100);
-    const organicCount = token.organicBuyerCount ?? 0;
-
-    sniperSummaryHtml = `
-      <div class="modal-section">
-        <h4>Sniper Gate Summary</h4>
-        <div class="sniper-stats-grid">
-          <div class="sniper-stat">
-            <div class="sniper-stat-label">Bots Detected</div>
-            <div class="sniper-stat-value bot-count">${botCount}</div>
-          </div>
-          <div class="sniper-stat">
-            <div class="sniper-stat-label">Bots Exited</div>
-            <div class="sniper-stat-value bot-exit">${exitCount} <span class="sniper-stat-pct">(${exitPercent.toFixed(0)}%)</span></div>
-          </div>
-          <div class="sniper-stat">
-            <div class="sniper-stat-label">Organic Buyers</div>
-            <div class="sniper-stat-value organic-count">${organicCount}</div>
-          </div>
-          <div class="sniper-stat">
-            <div class="sniper-stat-label">Gate Duration</div>
-            <div class="sniper-stat-value">${waitSec}s (${checks} checks)</div>
-          </div>${token.sniperRpcDegraded ? `
-          <div class="sniper-stat">
-            <div class="sniper-stat-label">RPC Status</div>
-            <div class="sniper-stat-value" style="color: var(--warning-color, #f59e0b);">DEGRADED</div>
-          </div>` : ''}
-        </div>
-        <div id="sniper-check-history">
-          <div class="loading">Loading check history...</div>
-        </div>
-      </div>
-    `;
-  }
-
   elements.tokenModalBody.innerHTML = `
     <div class="modal-section">
       <h4>Token Information</h4>
@@ -778,8 +729,6 @@ async function showTokenDetail(mint) {
         </div>
       </div>
     </div>
-
-    ${sniperSummaryHtml}
 
     ${token.researchScore !== undefined ? `
     <div class="modal-section">
@@ -843,55 +792,6 @@ async function showTokenDetail(mint) {
 
   elements.tokenModal.classList.add('open');
 
-  // Async: fetch and render sniper check history from DB if sniper section is shown
-  if (sniperSummaryHtml) {
-    const historyEl = document.getElementById('sniper-check-history');
-    if (historyEl) {
-      const data = await fetchApi(`/api/gate/token/${mint}`);
-      if (data && data.observations && data.observations.length > 0) {
-        historyEl.innerHTML = renderSniperCheckHistory(data.observations);
-      } else {
-        historyEl.innerHTML = '<div class="empty-state sniper-history-empty">No check history in database</div>';
-      }
-    }
-  }
-}
-
-function renderSniperCheckHistory(observations) {
-  const rows = observations.map(obs => {
-    const passClass = obs.passConditionsMet ? 'pass-yes' : 'pass-no';
-    const passText = obs.passConditionsMet ? '✓' : '—';
-    return `
-      <tr>
-        <td class="sniper-col-check">#${obs.checkNumber}</td>
-        <td class="sniper-col-bots">${obs.botCount}</td>
-        <td class="sniper-col-exits">${obs.botExitCount} <span class="sniper-pct">(${obs.botExitPercent.toFixed(0)}%)</span></td>
-        <td class="sniper-col-organic">${obs.organicCount}</td>
-        <td class="sniper-col-buys">${obs.totalBuys}</td>
-        <td class="sniper-col-sells">${obs.totalSells}</td>
-        <td class="sniper-col-pass ${passClass}">${passText}</td>
-      </tr>
-    `;
-  }).join('');
-
-  return `
-    <div class="sniper-check-table-wrap">
-      <table class="sniper-check-table">
-        <thead>
-          <tr>
-            <th>Check</th>
-            <th>Bots</th>
-            <th>Exits</th>
-            <th>Organic</th>
-            <th>Buys</th>
-            <th>Sells</th>
-            <th>Pass?</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  `;
 }
 
 function closeTokenModal() {
