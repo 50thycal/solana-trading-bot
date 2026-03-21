@@ -181,6 +181,47 @@ function buildFeatureVector(
 
   const holderConcentration = buyCount > 0 ? uniqueBuyers / buyCount : 0;
 
+  // Momentum freshness features derived from poll history
+  // Compute buy velocity at each poll snapshot, then find peak and trend
+  let timeSincePeakVelocity = secondsSinceCreation; // default: peak was at start (worst case)
+  let buyVelocityTrend = 0;
+
+  if (pollHistory.length >= 2) {
+    // Compute instantaneous buy velocity between consecutive polls
+    const velocitySnapshots: { velocity: number; secondsSinceCreation: number }[] = [];
+
+    for (let i = 1; i < pollHistory.length; i++) {
+      const dt = (pollHistory[i].checkedAt - pollHistory[i - 1].checkedAt) / 1000;
+      if (dt > 0) {
+        const velocity = (pollHistory[i].totalBuys - pollHistory[i - 1].totalBuys) / dt;
+        const elapsedSec = (pollHistory[i].checkedAt - detection.detectedAt) / 1000;
+        velocitySnapshots.push({ velocity, secondsSinceCreation: elapsedSec });
+      }
+    }
+
+    if (velocitySnapshots.length > 0) {
+      // Find when peak velocity occurred
+      let peakIdx = 0;
+      for (let i = 1; i < velocitySnapshots.length; i++) {
+        if (velocitySnapshots[i].velocity > velocitySnapshots[peakIdx].velocity) {
+          peakIdx = i;
+        }
+      }
+      timeSincePeakVelocity = secondsSinceCreation - velocitySnapshots[peakIdx].secondsSinceCreation;
+
+      // Compute velocity trend from last 2-3 snapshots (slope)
+      const recent = velocitySnapshots.slice(-3);
+      if (recent.length >= 2) {
+        const first = recent[0];
+        const last = recent[recent.length - 1];
+        const timeDiff = last.secondsSinceCreation - first.secondsSinceCreation;
+        buyVelocityTrend = timeDiff > 0
+          ? (last.velocity - first.velocity) / timeDiff
+          : 0;
+      }
+    }
+  }
+
   return {
     mint: detection.mint.toString(),
     checkpointSeconds: secondsSinceCreation,
@@ -200,6 +241,8 @@ function buildFeatureVector(
     buyAcceleration,
     txBurst,
     holderConcentration,
+    timeSincePeakVelocity,
+    buyVelocityTrend,
   };
 }
 
@@ -254,9 +297,9 @@ function scoreToken(
  */
 function classifySignal(score: number): 'strong_buy' | 'buy' | 'neutral' | 'avoid' {
   if (score >= 70) return 'strong_buy';
-  if (score >= 50) return 'buy';
-  if (score >= 30) return 'neutral';
-  return 'avoid';
+  if (score >= 55) return 'buy';
+  if (score < 35) return 'avoid';
+  return 'neutral';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -360,6 +403,7 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
     }
 
     this.cachedModel = {
+      schemaVersion: (model.schemaVersion as number) || 1,
       checkpointSeconds: (model.checkpointSeconds as number) || this.config.checkpoint,
       rules: validatedRules,
       sampleCount: (model.sampleCount as number) || 0,

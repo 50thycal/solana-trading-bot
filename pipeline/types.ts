@@ -169,6 +169,10 @@ export interface TokenFeatureVector {
   buyAcceleration: number;
   txBurst: number;
   holderConcentration: number;
+
+  // Momentum freshness features
+  timeSincePeakVelocity: number; // seconds between peak buy_velocity and checkpoint — shorter = momentum is live
+  buyVelocityTrend: number;      // slope of buy_velocity across last 2-3 snapshots — positive = accelerating, negative = decelerating
 }
 
 /**
@@ -188,6 +192,8 @@ export interface ScoringRule {
  * The complete scoring model fetched from the research bot.
  */
 export interface ScoringModel {
+  /** Schema version for validation by consumers (trading bot) */
+  schemaVersion: number;
   checkpointSeconds: number;
   rules: ScoringRule[];
   sampleCount: number;
