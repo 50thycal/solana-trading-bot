@@ -970,10 +970,16 @@ const runListener = async () => {
 
       const paperTracker = getPaperTradeTracker();
       if (paperTracker && pipelineResult.context.deepFilters?.bondingCurveState) {
+        // Fetch current bonding curve state at buy time so entry price reflects
+        // actual market price, not the stale state from the deep filter stage
+        // (which can be 30+ seconds old after research score polling).
+        const buyTimeBondingCurveState =
+          (await getBondingCurveState(connection, token.bondingCurve!)) ??
+          pipelineResult.context.deepFilters.bondingCurveState;
         paperTracker.recordPaperTrade({
           mint: token.mint,
           bondingCurve: token.bondingCurve!,
-          bondingCurveState: pipelineResult.context.deepFilters.bondingCurveState,
+          bondingCurveState: buyTimeBondingCurveState,
           hypotheticalSolSpent: tradeAmount,
           name: token.name,
           symbol: token.symbol,
