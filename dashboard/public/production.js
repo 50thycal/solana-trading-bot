@@ -173,41 +173,6 @@ function updateGateStats(containerId, gates) {
   }
 }
 
-/**
- * Group rejection reasons with numeric scores into ranges.
- */
-function groupRejectionsIntoRanges(reasons) {
-  const RANGE_SIZE = 10;
-  const grouped = [];
-  const scoreBuckets = {};
-
-  for (const item of reasons) {
-    const scoreMatch = item.reason.match(/score[=:]?\s*([\d.]+)/i);
-    if (scoreMatch) {
-      const score = parseFloat(scoreMatch[1]);
-      const low = Math.floor(score / RANGE_SIZE) * RANGE_SIZE;
-      const high = low + RANGE_SIZE - 1;
-      const key = `${low}-${high}`;
-      const baseLabel = item.reason.replace(/[:]\s*score.*$/i, '').trim();
-      if (!scoreBuckets[key]) {
-        scoreBuckets[key] = { low, high, count: 0, baseLabel };
-      }
-      scoreBuckets[key].count += item.count;
-    } else {
-      grouped.push({ label: formatRejectionReason(item.reason), count: item.count });
-    }
-  }
-
-  const bucketEntries = Object.values(scoreBuckets)
-    .sort((a, b) => b.count - a.count)
-    .map(b => ({
-      label: `${formatRejectionReason(b.baseLabel)} (${b.low}\u2013${b.high})`,
-      count: b.count,
-    }));
-
-  return grouped.concat(bucketEntries).sort((a, b) => b.count - a.count);
-}
-
 function updateRejectionReasons(reasons) {
   const el = document.getElementById('rejection-list');
   if (!el) return;
@@ -215,8 +180,15 @@ function updateRejectionReasons(reasons) {
     el.innerHTML = '<div class="empty-state">No rejections yet</div>';
     return;
   }
-  const grouped = groupRejectionsIntoRanges(reasons);
-  el.innerHTML = grouped.slice(0, 8).map(item => `
+  // Reasons are pre-bucketed by the backend; just format labels for display
+  const items = reasons
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8)
+    .map(item => ({
+      label: formatRejectionReason(item.reason),
+      count: item.count,
+    }));
+  el.innerHTML = items.map(item => `
     <div class="rejection-item">
       <span class="rejection-name">${escapeHtml(item.label)}</span>
       <span class="rejection-count">${item.count}</span>
