@@ -230,46 +230,6 @@ function renderGateStat(gate) {
   `;
 }
 
-/**
- * Group rejection reasons that contain numeric scores into ranges.
- * Reasons with scores (e.g. "Research score below threshold: score=29.1 ...") are
- * bucketed into ranges (0-9, 10-19, etc.) so they don't produce dozens of
- * single-count entries.  Non-score reasons are kept as-is.
- */
-function groupRejectionsIntoRanges(reasons) {
-  const RANGE_SIZE = 10;
-  const grouped = [];         // { label, count }
-  const scoreBuckets = {};    // rangeKey -> { low, high, count, baseLabel }
-
-  for (const item of reasons) {
-    const scoreMatch = item.reason.match(/score[=:]?\s*([\d.]+)/i);
-    if (scoreMatch) {
-      const score = parseFloat(scoreMatch[1]);
-      const low = Math.floor(score / RANGE_SIZE) * RANGE_SIZE;
-      const high = low + RANGE_SIZE - 1;
-      const key = `${low}-${high}`;
-      // Extract the base label before the score details
-      const baseLabel = item.reason.replace(/[:]\s*score.*$/i, '').trim();
-      if (!scoreBuckets[key]) {
-        scoreBuckets[key] = { low, high, count: 0, baseLabel };
-      }
-      scoreBuckets[key].count += item.count;
-    } else {
-      grouped.push({ label: formatRejectionReason(item.reason), count: item.count });
-    }
-  }
-
-  // Turn score buckets into entries
-  const bucketEntries = Object.values(scoreBuckets)
-    .sort((a, b) => b.count - a.count)
-    .map(b => ({
-      label: `${formatRejectionReason(b.baseLabel)} (${b.low}–${b.high})`,
-      count: b.count,
-    }));
-
-  // Merge and sort by count descending
-  return grouped.concat(bucketEntries).sort((a, b) => b.count - a.count);
-}
 
 function updateRejectionReasons(reasons) {
   if (!reasons || reasons.length === 0) {
@@ -277,9 +237,16 @@ function updateRejectionReasons(reasons) {
     return;
   }
 
-  const grouped = groupRejectionsIntoRanges(reasons);
+  // Reasons are pre-bucketed by the backend; just format labels for display
+  const items = reasons
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8)
+    .map(item => ({
+      label: formatRejectionReason(item.reason),
+      count: item.count,
+    }));
 
-  elements.rejectionList.innerHTML = grouped.slice(0, 8).map(item => `
+  elements.rejectionList.innerHTML = items.map(item => `
     <div class="rejection-item">
       <span class="rejection-name">${item.label}</span>
       <span class="rejection-count">${item.count}</span>

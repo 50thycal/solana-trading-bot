@@ -263,9 +263,10 @@ export class PipelineStats extends EventEmitter {
   private recordRejection(rejectedAt?: string, reason?: string): void {
     if (!rejectedAt || !reason) return;
 
-    // Track rejection reason
-    const currentCount = this.rejectionReasons.get(reason) || 0;
-    this.rejectionReasons.set(reason, currentCount + 1);
+    // Track rejection reason (bucket score-based reasons into ranges)
+    const normalizedReason = this.normalizeRejectionReason(reason);
+    const currentCount = this.rejectionReasons.get(normalizedReason) || 0;
+    this.rejectionReasons.set(normalizedReason, currentCount + 1);
 
     // Determine which gates passed before rejection
     if (rejectedAt === 'cheap-gates') {
@@ -309,6 +310,25 @@ export class PipelineStats extends EventEmitter {
       const stableStats = this.stableGateStats.get('stable')!;
       stableStats.failed++;
     }
+  }
+
+  /**
+   * Normalize score-based rejection reasons into range buckets so they
+   * aggregate instead of producing dozens of count-1 entries.
+   * e.g. "Research score below threshold: score=12.3 < threshold=35 (bearish)"
+   *    → "Research score below threshold (10–19)"
+   */
+  private normalizeRejectionReason(reason: string): string {
+    const RANGE_SIZE = 10;
+    const scoreMatch = reason.match(/^(.+?):\s*score[=:]\s*([\d.]+)/i);
+    if (scoreMatch) {
+      const baseLabel = scoreMatch[1].trim();
+      const score = parseFloat(scoreMatch[2]);
+      const low = Math.floor(score / RANGE_SIZE) * RANGE_SIZE;
+      const high = low + RANGE_SIZE - 1;
+      return `${baseLabel} (${low}–${high})`;
+    }
+    return reason;
   }
 
   /**
