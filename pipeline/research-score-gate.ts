@@ -92,6 +92,8 @@ interface PollSnapshot {
   uniqueBuyers: number;
   /** Sniper wallets that exited */
   uniqueSellers: number;
+  /** Per-wallet sell transaction counts (for topSellerConcentration) */
+  sellerTxCounts: Map<string, number>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -156,8 +158,20 @@ function buildFeatureVector(
   const realTokenReserves = currentBcs.realTokenReserves.toNumber();
   const marketCapSol = currentPriceSol * (currentVirtualTokens + realTokenReserves);
 
+  // Sell velocity and volume features
+  const sellVelocity = secondsSinceCreation > 0 ? sellCount / secondsSinceCreation : 0;
+
+  // volumeVelocitySol: change in realSolReserves over time (net SOL flow rate)
+  let volumeVelocitySol = 0;
+  if (freshBcs && secondsSinceCreation > 0) {
+    const initialRealSol = bnToSol(initialBcs.realSolReserves);
+    const currentRealSol = bnToSol(currentBcs.realSolReserves);
+    volumeVelocitySol = (currentRealSol - initialRealSol) / secondsSinceCreation;
+  }
+
   // Momentum features derived from poll history
   let buyAcceleration = 0;
+  let sellAcceleration = 0;
   let txBurst = 0;
 
   if (pollHistory.length >= 2) {
@@ -166,6 +180,7 @@ function buildFeatureVector(
     const timeDelta = (last.checkedAt - first.checkedAt) / 1000;
     if (timeDelta > 0) {
       buyAcceleration = (last.totalBuys - first.totalBuys) / timeDelta;
+      sellAcceleration = (last.totalSells - first.totalSells) / timeDelta;
     }
 
     // txBurst: max new transactions between consecutive polls
@@ -179,7 +194,15 @@ function buildFeatureVector(
     }
   }
 
-  const holderConcentration = buyCount > 0 ? uniqueBuyers / buyCount : 0;
+  // topSellerConcentration: fraction of sells from top 3 seller wallets
+  let topSellerConcentration = 0;
+  if (lastPoll && sellCount > 0 && lastPoll.sellerTxCounts.size > 0) {
+    const sortedCounts = [...lastPoll.sellerTxCounts.values()].sort((a, b) => b - a);
+    const top3Sum = sortedCounts.slice(0, 3).reduce((sum, c) => sum + c, 0);
+    topSellerConcentration = top3Sum / sellCount;
+  }
+
+  const sellDistribution = buyCount > 0 ? uniqueBuyers / buyCount : 0;
 
   // Momentum freshness features derived from poll history
   // Compute buy velocity at each poll snapshot, then find peak and trend
@@ -240,7 +263,11 @@ function buildFeatureVector(
     priceAcceleration,
     buyAcceleration,
     txBurst,
-    holderConcentration,
+    sellDistribution,
+    sellVelocity,
+    sellAcceleration,
+    topSellerConcentration,
+    volumeVelocitySol,
     timeSincePeakVelocity,
     buyVelocityTrend,
   };
@@ -455,6 +482,7 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
         totalSells: analysis.totalSells,
         uniqueBuyers: analysis.organicWallets.size,
         uniqueSellers: sniperExitCount,
+        sellerTxCounts: analysis.sellerTxCounts,
       };
     } catch (err) {
       logger.debug(

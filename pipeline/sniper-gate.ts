@@ -187,6 +187,8 @@ export interface WalletAnalysis {
   totalBuys: number;
   /** Total sell transactions */
   totalSells: number;
+  /** Per-wallet sell transaction counts (for topSellerConcentration) */
+  sellerTxCounts: Map<string, number>;
 }
 
 /**
@@ -211,6 +213,7 @@ export async function fetchAndAnalyzeTransactions(
   const sniperWallets = new Map<string, 'bought' | 'exited'>();
   const organicWallets = new Set<string>();
   const allBuyWallets = new Set<string>();
+  const sellerTxCounts = new Map<string, number>();
   let totalBuys = 0;
   let totalSells = 0;
 
@@ -222,7 +225,7 @@ export async function fetchAndAnalyzeTransactions(
   );
 
   if (signatures.length === 0) {
-    return { sniperWallets, organicWallets, allBuyWallets, totalBuys, totalSells };
+    return { sniperWallets, organicWallets, allBuyWallets, totalBuys, totalSells, sellerTxCounts };
   }
 
   // Build a slot lookup map: signature -> slot
@@ -331,6 +334,8 @@ export async function fetchAndAnalyzeTransactions(
 
     if (isSell) {
       totalSells++;
+      // Track per-wallet sell count for topSellerConcentration
+      sellerTxCounts.set(wallet, (sellerTxCounts.get(wallet) ?? 0) + 1);
       // If this seller was a sniper, mark them as exited
       if (sniperWallets.has(wallet)) {
         sniperWallets.set(wallet, 'exited');
@@ -338,7 +343,7 @@ export async function fetchAndAnalyzeTransactions(
     }
   }
 
-  return { sniperWallets, organicWallets, allBuyWallets, totalBuys, totalSells };
+  return { sniperWallets, organicWallets, allBuyWallets, totalBuys, totalSells, sellerTxCounts };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -444,6 +449,7 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
           allBuyWallets: new Set(),
           totalBuys: 0,
           totalSells: 0,
+          sellerTxCounts: new Map(),
         };
       }
 
@@ -569,6 +575,7 @@ export class SniperGateStage implements PipelineStage<PipelineContext, SniperGat
           allBuyWallets: new Set(),
           totalBuys: 0,
           totalSells: 0,
+          sellerTxCounts: new Map(),
         };
         // Skip remaining checks — no point polling again if RPC is rate-limited
         break;

@@ -168,7 +168,13 @@ export interface TokenFeatureVector {
   priceAcceleration: number;
   buyAcceleration: number;
   txBurst: number;
-  holderConcentration: number;
+  sellDistribution: number;
+
+  // Sell-pressure features (mirrors research bot PR #38)
+  sellVelocity: number;           // sells per second
+  sellAcceleration: number;       // rate of change in sell velocity between poll snapshots
+  topSellerConcentration: number; // fraction of sells from top 3 seller wallets
+  volumeVelocitySol: number;      // SOL volume per second (change in realSolReserves over time)
 
   // Momentum freshness features
   timeSincePeakVelocity: number; // seconds between peak buy_velocity and checkpoint — shorter = momentum is live
