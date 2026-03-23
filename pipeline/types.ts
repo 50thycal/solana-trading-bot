@@ -207,25 +207,49 @@ export interface ScoringModel {
 }
 
 /**
+ * Cache for both scoring models from the research bot.
+ * Supports the new dual-model API (opportunityModel + riskModel) as well as
+ * the legacy single-model API (backward compat).
+ */
+export interface ScoringModelCache {
+  /** Opportunity model — higher score = stronger buy signal */
+  opportunityModel: ScoringModel;
+  /** Risk model — higher score = higher dump risk (optional: absent when using legacy API) */
+  riskModel?: ScoringModel;
+}
+
+/**
  * Data produced by the research score gate stage.
  */
 export interface ResearchScoreGateData {
-  /** Computed score 0-100 */
-  score: number;
-  /** Signal classification */
+  /** Opportunity score 0-100 (higher = stronger buy signal) */
+  opportunityScore: number;
+  /** Risk score 0-100 (higher = more likely to dump). Undefined when using legacy single-model API. */
+  riskScore?: number;
+  /** Signal classification based on opportunity score */
   signal: 'strong_buy' | 'buy' | 'neutral' | 'avoid';
-  /** Threshold used for pass/fail */
-  scoreThreshold: number;
-  /** How many tokens the model was trained on */
+  /** Opportunity threshold used for pass/fail */
+  opportunityThreshold: number;
+  /** Risk threshold used for pass/fail (reject if riskScore > this). Undefined when no risk model. */
+  riskThreshold?: number;
+  /** How many tokens the opportunity model was trained on */
   modelSampleCount: number;
   /** Base 2x hit rate before filtering */
   modelBaseRate2x: number;
   /** The computed features (for logging/debugging) */
   features: TokenFeatureVector;
-  /** Per-feature score breakdown */
+  /** Per-feature score breakdown for the opportunity model */
   featureScores: Array<{ name: string; score: number; raw: number }>;
+  /** Per-feature score breakdown for the risk model (if available) */
+  riskFeatureScores?: Array<{ name: string; score: number; raw: number }>;
   /** Fresh bonding curve state fetched at scoring time (for price drift baseline) */
   freshBondingCurveState?: BondingCurveState;
+
+  // Legacy field — kept for backward compat with any consumers that read .score
+  /** @deprecated Use opportunityScore instead */
+  score: number;
+  /** @deprecated Use opportunityThreshold instead */
+  scoreThreshold: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

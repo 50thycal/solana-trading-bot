@@ -267,8 +267,10 @@ export interface SmokeTestReport {
   };
   /** Pipeline data for the specific token that was bought */
   boughtTokenPipelineData?: {
-    /** Research bot score (0-100) */
+    /** Research bot opportunity score (0-100) */
     researchScore?: number;
+    /** Research bot risk score (0-100, higher = more likely to dump) */
+    researchRiskScore?: number;
     /** Research signal classification */
     researchSignal?: string;
     /** Deep filter composite score */
@@ -772,6 +774,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
         enabled: config.researchScoreGateEnabled,
         researchBotUrl: config.researchBotUrl,
         scoreThreshold: config.researchScoreThreshold,
+        riskScoreThreshold: config.researchRiskScoreThreshold,
         checkpoint: config.researchScoreCheckpoint,
         logOnly: config.researchScoreLogOnly,
         modelRefreshIntervalMs: config.researchScoreModelRefreshInterval,
@@ -1381,7 +1384,7 @@ async function runListenPipelineAndBuy(
 
         // Track research scores for all tokens that reached the research gate
         if (result.context.researchScore) {
-          state.allResearchScores.push(result.context.researchScore.score);
+          state.allResearchScores.push(result.context.researchScore.opportunityScore);
         }
 
         if (!result.success) {
@@ -1461,7 +1464,8 @@ async function runListenPipelineAndBuy(
               stageDurations[sr.stage] = sr.durationMs;
             }
             state.boughtTokenPipelineData = {
-              researchScore: result.context.researchScore?.score,
+              researchScore: result.context.researchScore?.opportunityScore,
+              researchRiskScore: result.context.researchScore?.riskScore,
               researchSignal: result.context.researchScore?.signal,
               compositeScore: result.context.deepFilters?.filterResults?.score,
               cheapGateDurationMs: stageDurations['cheap-gates'],

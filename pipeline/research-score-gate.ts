@@ -25,6 +25,7 @@ import {
   TokenFeatureVector,
   ScoringRule,
   ScoringModel,
+  ScoringModelCache,
   ResearchScoreGateData,
 } from './types';
 import { logger, getBondingCurveState, BondingCurveState, sleep } from '../helpers';
@@ -41,8 +42,10 @@ export interface ResearchScoreGateConfig {
   researchBotUrl: string;
   /** How often to re-fetch the model in ms (default: 300000 = 5 min) */
   modelRefreshIntervalMs: number;
-  /** Minimum score to pass (default: 50) */
+  /** Minimum opportunity score to pass (default: 20) */
   scoreThreshold: number;
+  /** Maximum risk score allowed — reject if risk score exceeds this (default: 50) */
+  riskScoreThreshold: number;
   /** If true, always pass but log the score (default: false) */
   logOnly: boolean;
   /** Which checkpoint model to use in seconds (default: 30) */
@@ -59,7 +62,8 @@ const DEFAULT_CONFIG: ResearchScoreGateConfig = {
   enabled: true,
   researchBotUrl: '',
   modelRefreshIntervalMs: 300000,
-  scoreThreshold: 50,
+  scoreThreshold: 20,
+  riskScoreThreshold: 50,
   logOnly: false,
   checkpoint: 30,
   pollIntervalSeconds: 3,
@@ -338,7 +342,7 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
 
   private connection: Connection;
   private config: ResearchScoreGateConfig;
-  private cachedModel: ScoringModel | null = null;
+  private cachedModels: ScoringModelCache | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private lastFetchError: string | null = null;
   private noModelSkipCount: number = 0;
@@ -371,7 +375,9 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
   }
 
   /**
-   * Fetch the scoring model from the research bot API.
+   * Fetch the scoring model(s) from the research bot API.
+   * Supports both the new dual-model response ({ opportunityModel, riskModel, ... })
+   * and the legacy single-model response ({ model: { rules, ... }, ... }).
    */
   async fetchModel(): Promise<void> {
     const baseUrl = this.config.researchBotUrl.replace(/\/+$/, '');
@@ -389,78 +395,95 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
 
     const data = await response.json() as Record<string, unknown>;
 
-    // The API returns { model: { rules, checkpointSeconds, ... }, correlations, datasetStats }
-    // Extract the model object first
-    const model = (data.model as Record<string, unknown>) || data;
-
-    // Extract the scoring model from the response
-    if (!model.rules || !Array.isArray(model.rules)) {
-      throw new Error('Invalid model response: missing rules array');
-    }
-
-    // Validate each rule has required fields with correct types
-    const validatedRules: ScoringRule[] = [];
-    for (let i = 0; i < (model.rules as unknown[]).length; i++) {
-      const rule = (model.rules as unknown[])[i] as Record<string, unknown>;
-      if (
-        typeof rule?.featureName !== 'string' ||
-        typeof rule?.weight !== 'number' ||
-        typeof rule?.direction !== 'string' ||
-        typeof rule?.min !== 'number' ||
-        typeof rule?.max !== 'number'
-      ) {
-        logger.warn(
-          { ruleIndex: i, rule },
-          '[research-score-gate] Skipping invalid rule — missing or wrong-typed fields',
-        );
-        continue;
+    // ── Parse and validate a raw model object into a ScoringModel ────────────
+    const parseModel = (raw: Record<string, unknown>, label: string): ScoringModel => {
+      if (!raw.rules || !Array.isArray(raw.rules)) {
+        throw new Error(`Invalid ${label}: missing rules array`);
       }
-      if (rule.direction !== 'above' && rule.direction !== 'below') {
-        logger.warn(
-          { ruleIndex: i, direction: rule.direction },
-          '[research-score-gate] Skipping rule with invalid direction (must be "above" or "below")',
-        );
-        continue;
+
+      const validatedRules: ScoringRule[] = [];
+      for (let i = 0; i < (raw.rules as unknown[]).length; i++) {
+        const rule = (raw.rules as unknown[])[i] as Record<string, unknown>;
+        if (
+          typeof rule?.featureName !== 'string' ||
+          typeof rule?.weight !== 'number' ||
+          typeof rule?.direction !== 'string' ||
+          typeof rule?.min !== 'number' ||
+          typeof rule?.max !== 'number'
+        ) {
+          logger.warn(
+            { ruleIndex: i, rule, label },
+            '[research-score-gate] Skipping invalid rule — missing or wrong-typed fields',
+          );
+          continue;
+        }
+        if (rule.direction !== 'above' && rule.direction !== 'below') {
+          logger.warn(
+            { ruleIndex: i, direction: rule.direction, label },
+            '[research-score-gate] Skipping rule with invalid direction (must be "above" or "below")',
+          );
+          continue;
+        }
+        validatedRules.push(rule as unknown as ScoringRule);
       }
-      validatedRules.push(rule as unknown as ScoringRule);
-    }
 
-    if (validatedRules.length === 0) {
-      throw new Error('Invalid model response: no valid rules after validation');
-    }
+      if (validatedRules.length === 0) {
+        throw new Error(`Invalid ${label}: no valid rules after validation`);
+      }
 
-    this.cachedModel = {
-      schemaVersion: (model.schemaVersion as number) || 1,
-      checkpointSeconds: (model.checkpointSeconds as number) || this.config.checkpoint,
-      rules: validatedRules,
-      sampleCount: (model.sampleCount as number) || 0,
-      baseRate2x: (model.baseRate2x as number) || 0,
+      return {
+        schemaVersion: (raw.schemaVersion as number) || 1,
+        checkpointSeconds: (raw.checkpointSeconds as number) || this.config.checkpoint,
+        rules: validatedRules,
+        sampleCount: (raw.sampleCount as number) || 0,
+        baseRate2x: (raw.baseRate2x as number) || 0,
+      };
     };
 
+    // ── Detect response format: dual-model vs legacy ──────────────────────────
+    let opportunityModel: ScoringModel;
+    let riskModel: ScoringModel | undefined;
+
+    if (data.opportunityModel) {
+      // New dual-model format: { opportunityModel: {...}, riskModel: {...}, model: {...} }
+      opportunityModel = parseModel(data.opportunityModel as Record<string, unknown>, 'opportunityModel');
+      if (data.riskModel) {
+        riskModel = parseModel(data.riskModel as Record<string, unknown>, 'riskModel');
+      }
+      logger.info(
+        { hasDualModel: true, hasRiskModel: !!riskModel },
+        '[research-score-gate] Dual-model API response detected',
+      );
+    } else {
+      // Legacy format: { model: { rules, ... }, correlations, datasetStats }
+      const legacyModel = (data.model as Record<string, unknown>) || data;
+      opportunityModel = parseModel(legacyModel, 'model');
+      logger.info(
+        { hasDualModel: false },
+        '[research-score-gate] Legacy single-model API response — risk model unavailable',
+      );
+    }
+
+    this.cachedModels = { opportunityModel, riskModel };
     this.lastFetchError = null;
 
-    const totalWeight = this.cachedModel.rules.reduce((sum, r) => sum + r.weight, 0);
-    const theoreticalMax = Math.round(totalWeight * 100 * 100) / 100;
+    const oppWeight = opportunityModel.rules.reduce((sum, r) => sum + r.weight, 0);
+    const logPayload: Record<string, unknown> = {
+      checkpoint: opportunityModel.checkpointSeconds,
+      opportunityRuleCount: opportunityModel.rules.length,
+      opportunitySampleCount: opportunityModel.sampleCount,
+      opportunityBaseRate2x: opportunityModel.baseRate2x,
+      opportunityTotalWeight: Math.round(oppWeight * 10000) / 10000,
+      opportunityTheoreticalMax: Math.round(oppWeight * 100 * 100) / 100,
+    };
+    if (riskModel) {
+      const riskWeight = riskModel.rules.reduce((sum, r) => sum + r.weight, 0);
+      logPayload.riskRuleCount = riskModel.rules.length;
+      logPayload.riskTotalWeight = Math.round(riskWeight * 10000) / 10000;
+      logPayload.riskTheoreticalMax = Math.round(riskWeight * 100 * 100) / 100;
+    }
 
-    logger.info(
-      {
-        checkpoint: this.cachedModel.checkpointSeconds,
-        ruleCount: this.cachedModel.rules.length,
-        sampleCount: this.cachedModel.sampleCount,
-        baseRate2x: this.cachedModel.baseRate2x,
-        totalWeight: Math.round(totalWeight * 10000) / 10000,
-        theoreticalMaxScore: theoreticalMax,
-        ruleDetails: this.cachedModel.rules.map(r => ({
-          feature: r.featureName,
-          weight: r.weight,
-          direction: r.direction,
-          min: r.min,
-          max: r.max,
-          maxContribution: Math.round(r.weight * 100 * 100) / 100,
-        })),
-      },
-      '[research-score-gate] Model fetched successfully',
-    );
+    logger.info(logPayload, '[research-score-gate] Model(s) fetched successfully');
   }
 
   /**
@@ -589,7 +612,7 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
     }
 
     // If no model available (fetch failed), graceful degradation — pass
-    if (!this.cachedModel) {
+    if (!this.cachedModels) {
       this.noModelSkipCount++;
       const reason = `No model available (last error: ${this.lastFetchError || 'not yet fetched'})`;
       if (buf) {
@@ -630,47 +653,72 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       );
     }
 
-    // Build feature vector from pipeline context + polled data
+    // Build feature vector once — both models score against the same features
     const features = buildFeatureVector(context, freshBcs, pollHistory);
 
-    // Score the token
-    const { score, featureScores } = scoreToken(this.cachedModel, features);
-    const signal = classifySignal(score);
+    // ─── Score against opportunity model ─────────────────────────────
+    const { score: opportunityScore, featureScores } = scoreToken(this.cachedModels.opportunityModel, features);
+    const signal = classifySignal(opportunityScore);
+
+    // ─── Score against risk model (if available) ──────────────────────
+    let riskScore: number | undefined;
+    let riskFeatureScores: Array<{ name: string; score: number; raw: number }> | undefined;
+    if (this.cachedModels.riskModel) {
+      const riskResult = scoreToken(this.cachedModels.riskModel, features);
+      riskScore = riskResult.score;
+      riskFeatureScores = riskResult.featureScores;
+    }
+
+    const { opportunityModel } = this.cachedModels;
 
     const gateData: ResearchScoreGateData = {
-      score,
+      opportunityScore,
+      riskScore,
       signal,
-      scoreThreshold: this.config.scoreThreshold,
-      modelSampleCount: this.cachedModel.sampleCount,
-      modelBaseRate2x: this.cachedModel.baseRate2x,
+      opportunityThreshold: this.config.scoreThreshold,
+      riskThreshold: this.cachedModels.riskModel ? this.config.riskScoreThreshold : undefined,
+      modelSampleCount: opportunityModel.sampleCount,
+      modelBaseRate2x: opportunityModel.baseRate2x,
       features,
       featureScores,
+      riskFeatureScores,
       freshBondingCurveState: freshBcs,
+      // Legacy compat
+      score: opportunityScore,
+      scoreThreshold: this.config.scoreThreshold,
     };
 
     // Log the score breakdown at info level for diagnostics
     const sortedFeatures = [...featureScores].sort((a, b) => b.score - a.score);
+    const opportunityPasses = opportunityScore >= this.config.scoreThreshold;
+    const riskPasses = riskScore === undefined || riskScore <= this.config.riskScoreThreshold;
+
     logger.info(
       {
         stage: this.name,
         mint: mintStr,
-        score,
+        opportunityScore,
+        riskScore,
         signal,
-        threshold: this.config.scoreThreshold,
-        passed: score >= this.config.scoreThreshold,
+        opportunityThreshold: this.config.scoreThreshold,
+        riskThreshold: riskScore !== undefined ? this.config.riskScoreThreshold : undefined,
+        passed: opportunityPasses && riskPasses,
         pollSnapshots: pollHistory.length,
         featureBreakdown: sortedFeatures.map((f) => `${f.name}=${f.raw}(${f.score})`),
       },
       '[research-score-gate] Score breakdown',
     );
 
-    const passed = score >= this.config.scoreThreshold;
+    const passed = opportunityPasses && riskPasses;
 
     // In log-only mode, always pass
     if (this.config.logOnly) {
-      const passReason = `Log-only mode: score=${score} signal=${signal} threshold=${this.config.scoreThreshold}`;
+      const scoreStr = riskScore !== undefined
+        ? `opportunity=${opportunityScore}, risk=${riskScore}`
+        : `opportunity=${opportunityScore}`;
+      const passReason = `Log-only mode: ${scoreStr} signal=${signal}`;
       if (buf) {
-        buf.info(`Research score gate: PASSED (log-only) - ${passReason}`);
+        buf.info(`Research score gate: PASSED (log-only) - Research score: ${scoreStr} → PASSED (log-only)`);
       }
       return {
         pass: true,
@@ -682,12 +730,15 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
     }
 
     if (passed) {
-      const passReason = `Score ${score} >= ${this.config.scoreThreshold} (${signal})`;
+      const scoreStr = riskScore !== undefined
+        ? `opportunity=${opportunityScore}, risk=${riskScore}`
+        : `opportunity=${opportunityScore}`;
+      const passReason = `Research score: ${scoreStr} → PASSED`;
       if (buf) {
         buf.info(`Research score gate: PASSED - ${passReason}`);
       } else {
         logger.info(
-          { stage: this.name, mint: mintStr, score, signal, threshold: this.config.scoreThreshold },
+          { stage: this.name, mint: mintStr, opportunityScore, riskScore, signal },
           '[pipeline] Research score gate passed',
         );
       }
@@ -700,13 +751,26 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       };
     }
 
-    // Rejected
-    const rejectReason = `${RejectionReasons.RESEARCH_SCORE_LOW}: score=${score} < threshold=${this.config.scoreThreshold} (${signal})`;
+    // Rejected — build a clear reason explaining which score(s) failed
+    let rejectDetail: string;
+    if (!opportunityPasses && riskScore !== undefined && !riskPasses) {
+      rejectDetail = `opportunity=${opportunityScore} < threshold=${this.config.scoreThreshold}, risk=${riskScore} > threshold=${this.config.riskScoreThreshold}`;
+    } else if (!opportunityPasses) {
+      rejectDetail = `opportunity=${opportunityScore} < threshold=${this.config.scoreThreshold}`;
+    } else {
+      rejectDetail = `risk=${riskScore} > threshold=${this.config.riskScoreThreshold}`;
+    }
+
+    const scoreStr = riskScore !== undefined
+      ? `opportunity=${opportunityScore}, risk=${riskScore}`
+      : `opportunity=${opportunityScore}`;
+
+    const rejectReason = `${RejectionReasons.RESEARCH_SCORE_LOW}: Research score: ${scoreStr} → REJECTED (${rejectDetail})`;
     if (buf) {
-      buf.info(`Research score gate: REJECTED - ${rejectReason}`);
+      buf.info(`Research score gate: REJECTED - Research score: ${scoreStr} → REJECTED (${rejectDetail})`);
     } else {
       logger.info(
-        { stage: this.name, mint: mintStr, score, signal, threshold: this.config.scoreThreshold },
+        { stage: this.name, mint: mintStr, opportunityScore, riskScore, signal },
         `[pipeline] Rejected: ${rejectReason}`,
       );
     }
@@ -735,10 +799,10 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
   }
 
   /**
-   * Get the cached model (for testing/debugging)
+   * Get the cached models (for testing/debugging)
    */
-  getModel(): ScoringModel | null {
-    return this.cachedModel;
+  getModel(): ScoringModelCache | null {
+    return this.cachedModels;
   }
 
   /**

@@ -447,11 +447,19 @@ export const ENV_CATEGORIES: EnvCategory[] = [
       },
       {
         name: 'RESEARCH_SCORE_THRESHOLD',
-        label: 'Score Threshold',
+        label: 'Opportunity Threshold',
+        type: 'number',
+        defaultValue: '20',
+        description: 'Minimum opportunity score to pass (0-100) — reject if below this',
+        hint: '0-100',
+      },
+      {
+        name: 'RESEARCH_RISK_SCORE_THRESHOLD',
+        label: 'Risk Threshold',
         type: 'number',
         defaultValue: '50',
-        description: 'Minimum score to pass (0-100)',
-        hint: '0-100',
+        description: 'Maximum risk score allowed (0-100) — reject if risk score exceeds this',
+        hint: '0-100, higher risk score = more likely to dump',
       },
       {
         name: 'RESEARCH_SCORE_CHECKPOINT',

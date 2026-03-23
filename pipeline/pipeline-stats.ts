@@ -73,6 +73,7 @@ export interface RecentToken {
   pipelineDurationMs: number;
   /** Research score gate fields */
   researchScore?: number;
+  researchRiskScore?: number;
   researchSignal?: string;
   /** Stable gate fields */
   stableAttempt?: number;
@@ -200,7 +201,8 @@ export class PipelineStats extends EventEmitter {
       rejectedAt: result.rejectedAt,
       rejectionReason: result.rejectionReason,
       pipelineDurationMs: result.totalDurationMs,
-      researchScore: rs?.score,
+      researchScore: rs?.opportunityScore,
+      researchRiskScore: rs?.riskScore,
       researchSignal: rs?.signal,
       stableAttempt: result.context.stableGate?.attemptNumber,
       stableTotalAttempts: result.context.stableGate?.totalAttempts,
