@@ -556,6 +556,7 @@ const runListener = async () => {
       enabled: config.researchScoreGateEnabled,
       researchBotUrl: config.researchBotUrl,
       scoreThreshold: config.researchScoreThreshold,
+      riskThreshold: config.researchRiskScoreThreshold,
       checkpoint: config.researchScoreCheckpoint,
       logOnly: config.researchScoreLogOnly,
       modelRefreshIntervalMs: config.researchScoreModelRefreshInterval,

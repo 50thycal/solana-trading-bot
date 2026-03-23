@@ -90,6 +90,7 @@ export interface ValidatedConfig {
   // Research Score Gate (Pipeline Stage 4)
   researchScoreGateEnabled: boolean;
   researchScoreThreshold: number;
+  researchRiskScoreThreshold: number;
   researchScoreCheckpoint: number;
   researchScoreLogOnly: boolean;
   researchScoreModelRefreshInterval: number;
@@ -416,6 +417,11 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'RESEARCH_SCORE_THRESHOLD', message: 'must be 0-100' });
   }
 
+  const researchRiskScoreThreshold = requireNumber('RESEARCH_RISK_SCORE_THRESHOLD', 50);
+  if (researchRiskScoreThreshold < 0 || researchRiskScoreThreshold > 100) {
+    errors.push({ variable: 'RESEARCH_RISK_SCORE_THRESHOLD', message: 'must be 0-100' });
+  }
+
   const researchScoreCheckpoint = requireNumber('RESEARCH_SCORE_CHECKPOINT', 30);
   if (researchScoreCheckpoint < 1) {
     errors.push({ variable: 'RESEARCH_SCORE_CHECKPOINT', message: 'must be >= 1' });
@@ -653,6 +659,7 @@ export function validateConfig(): ValidatedConfig {
     pumpfunDetectionCooldownMs,
     researchScoreGateEnabled,
     researchScoreThreshold,
+    researchRiskScoreThreshold,
     researchScoreCheckpoint,
     researchScoreLogOnly,
     researchScoreModelRefreshInterval,

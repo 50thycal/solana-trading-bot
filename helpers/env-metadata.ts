@@ -454,6 +454,14 @@ export const ENV_CATEGORIES: EnvCategory[] = [
         hint: '0-100',
       },
       {
+        name: 'RESEARCH_RISK_SCORE_THRESHOLD',
+        label: 'Risk Score Threshold',
+        type: 'number',
+        defaultValue: '50',
+        description: 'Max dump risk score (0-100). Tokens with risk score above this are rejected.',
+        hint: '0-100',
+      },
+      {
         name: 'RESEARCH_SCORE_CHECKPOINT',
         label: 'Checkpoint (s)',
         type: 'number',

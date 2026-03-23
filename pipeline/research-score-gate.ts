@@ -43,6 +43,8 @@ export interface ResearchScoreGateConfig {
   modelRefreshIntervalMs: number;
   /** Minimum score to pass (default: 50) */
   scoreThreshold: number;
+  /** Maximum risk score to pass (default: 50) */
+  riskThreshold: number;
   /** If true, always pass but log the score (default: false) */
   logOnly: boolean;
   /** Which checkpoint model to use in seconds (default: 30) */
@@ -60,6 +62,7 @@ const DEFAULT_CONFIG: ResearchScoreGateConfig = {
   researchBotUrl: '',
   modelRefreshIntervalMs: 300000,
   scoreThreshold: 50,
+  riskThreshold: 50,
   logOnly: false,
   checkpoint: 30,
   pollIntervalSeconds: 3,
@@ -339,6 +342,7 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
   private connection: Connection;
   private config: ResearchScoreGateConfig;
   private cachedModel: ScoringModel | null = null;
+  private cachedRiskModel: ScoringModel | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private lastFetchError: string | null = null;
   private noModelSkipCount: number = 0;
@@ -389,53 +393,27 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
 
     const data = await response.json() as Record<string, unknown>;
 
-    // The API returns { model: { rules, checkpointSeconds, ... }, correlations, datasetStats }
-    // Extract the model object first
-    const model = (data.model as Record<string, unknown>) || data;
+    // Dual-model format (research bot PR #39): { opportunityModel: {...}, riskModel: {...} }
+    // Legacy single-model format: { model: { rules, ... }, ... } or { rules, ... }
+    const isDualFormat = data.opportunityModel && data.riskModel;
 
-    // Extract the scoring model from the response
-    if (!model.rules || !Array.isArray(model.rules)) {
-      throw new Error('Invalid model response: missing rules array');
+    const opportunityModelRaw = isDualFormat
+      ? (data.opportunityModel as Record<string, unknown>)
+      : ((data.model as Record<string, unknown>) || data);
+
+    const riskModelRaw = isDualFormat
+      ? (data.riskModel as Record<string, unknown>)
+      : null;
+
+    // Parse opportunity model (required)
+    this.cachedModel = this.parseModelPayload(opportunityModelRaw, 'opportunity');
+
+    // Parse risk model (optional — null for legacy single-model format)
+    if (riskModelRaw) {
+      this.cachedRiskModel = this.parseModelPayload(riskModelRaw, 'risk');
+    } else {
+      this.cachedRiskModel = null;
     }
-
-    // Validate each rule has required fields with correct types
-    const validatedRules: ScoringRule[] = [];
-    for (let i = 0; i < (model.rules as unknown[]).length; i++) {
-      const rule = (model.rules as unknown[])[i] as Record<string, unknown>;
-      if (
-        typeof rule?.featureName !== 'string' ||
-        typeof rule?.weight !== 'number' ||
-        typeof rule?.direction !== 'string' ||
-        typeof rule?.min !== 'number' ||
-        typeof rule?.max !== 'number'
-      ) {
-        logger.warn(
-          { ruleIndex: i, rule },
-          '[research-score-gate] Skipping invalid rule — missing or wrong-typed fields',
-        );
-        continue;
-      }
-      if (rule.direction !== 'above' && rule.direction !== 'below') {
-        logger.warn(
-          { ruleIndex: i, direction: rule.direction },
-          '[research-score-gate] Skipping rule with invalid direction (must be "above" or "below")',
-        );
-        continue;
-      }
-      validatedRules.push(rule as unknown as ScoringRule);
-    }
-
-    if (validatedRules.length === 0) {
-      throw new Error('Invalid model response: no valid rules after validation');
-    }
-
-    this.cachedModel = {
-      schemaVersion: (model.schemaVersion as number) || 1,
-      checkpointSeconds: (model.checkpointSeconds as number) || this.config.checkpoint,
-      rules: validatedRules,
-      sampleCount: (model.sampleCount as number) || 0,
-      baseRate2x: (model.baseRate2x as number) || 0,
-    };
 
     this.lastFetchError = null;
 
@@ -444,8 +422,10 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
 
     logger.info(
       {
+        dualModel: !!this.cachedRiskModel,
         checkpoint: this.cachedModel.checkpointSeconds,
         ruleCount: this.cachedModel.rules.length,
+        riskRuleCount: this.cachedRiskModel?.rules.length ?? 0,
         sampleCount: this.cachedModel.sampleCount,
         baseRate2x: this.cachedModel.baseRate2x,
         totalWeight: Math.round(totalWeight * 10000) / 10000,
@@ -461,6 +441,53 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       },
       '[research-score-gate] Model fetched successfully',
     );
+  }
+
+  /**
+   * Parse and validate a model payload (used for both opportunity and risk models).
+   */
+  private parseModelPayload(model: Record<string, unknown>, label: string): ScoringModel {
+    if (!model.rules || !Array.isArray(model.rules)) {
+      throw new Error(`Invalid ${label} model response: missing rules array`);
+    }
+
+    const validatedRules: ScoringRule[] = [];
+    for (let i = 0; i < (model.rules as unknown[]).length; i++) {
+      const rule = (model.rules as unknown[])[i] as Record<string, unknown>;
+      if (
+        typeof rule?.featureName !== 'string' ||
+        typeof rule?.weight !== 'number' ||
+        typeof rule?.direction !== 'string' ||
+        typeof rule?.min !== 'number' ||
+        typeof rule?.max !== 'number'
+      ) {
+        logger.warn(
+          { ruleIndex: i, rule },
+          `[research-score-gate] Skipping invalid ${label} rule — missing or wrong-typed fields`,
+        );
+        continue;
+      }
+      if (rule.direction !== 'above' && rule.direction !== 'below') {
+        logger.warn(
+          { ruleIndex: i, direction: rule.direction },
+          `[research-score-gate] Skipping ${label} rule with invalid direction (must be "above" or "below")`,
+        );
+        continue;
+      }
+      validatedRules.push(rule as unknown as ScoringRule);
+    }
+
+    if (validatedRules.length === 0) {
+      throw new Error(`Invalid ${label} model response: no valid rules after validation`);
+    }
+
+    return {
+      schemaVersion: (model.schemaVersion as number) || 1,
+      checkpointSeconds: (model.checkpointSeconds as number) || this.config.checkpoint,
+      rules: validatedRules,
+      sampleCount: (model.sampleCount as number) || 0,
+      baseRate2x: (model.baseRate2x as number) || 0,
+    };
   }
 
   /**
@@ -633,12 +660,21 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
     // Build feature vector from pipeline context + polled data
     const features = buildFeatureVector(context, freshBcs, pollHistory);
 
-    // Score the token
-    const { score, featureScores } = scoreToken(this.cachedModel, features);
-    const signal = classifySignal(score);
+    // Score the token against opportunity model
+    const { score: opportunityScore, featureScores } = scoreToken(this.cachedModel, features);
+    const signal = classifySignal(opportunityScore);
+
+    // Score against risk model if available (dual-model format)
+    let riskScore: number | null = null;
+    let riskFeatureScores: Array<{ name: string; score: number; raw: number }> | null = null;
+    if (this.cachedRiskModel) {
+      const riskResult = scoreToken(this.cachedRiskModel, features);
+      riskScore = riskResult.score;
+      riskFeatureScores = riskResult.featureScores;
+    }
 
     const gateData: ResearchScoreGateData = {
-      score,
+      score: opportunityScore,
       signal,
       scoreThreshold: this.config.scoreThreshold,
       modelSampleCount: this.cachedModel.sampleCount,
@@ -654,21 +690,34 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       {
         stage: this.name,
         mint: mintStr,
-        score,
+        opportunityScore,
+        riskScore,
         signal,
-        threshold: this.config.scoreThreshold,
-        passed: score >= this.config.scoreThreshold,
+        opportunityThreshold: this.config.scoreThreshold,
+        riskThreshold: this.config.riskThreshold,
+        dualModel: riskScore !== null,
         pollSnapshots: pollHistory.length,
         featureBreakdown: sortedFeatures.map((f) => `${f.name}=${f.raw}(${f.score})`),
+        riskBreakdown: riskFeatureScores
+          ? [...riskFeatureScores].sort((a, b) => b.score - a.score).map((f) => `${f.name}=${f.raw}(${f.score})`)
+          : undefined,
       },
       '[research-score-gate] Score breakdown',
     );
 
-    const passed = score >= this.config.scoreThreshold;
+    // Pass condition: opportunity >= threshold AND (no risk model OR risk <= riskThreshold)
+    const opportunityPassed = opportunityScore >= this.config.scoreThreshold;
+    const riskPassed = riskScore === null || riskScore <= this.config.riskThreshold;
+    const passed = opportunityPassed && riskPassed;
+
+    // Build descriptive score string for log messages
+    const scoreStr = riskScore !== null
+      ? `opportunity=${opportunityScore}, risk=${riskScore}`
+      : `score=${opportunityScore}`;
 
     // In log-only mode, always pass
     if (this.config.logOnly) {
-      const passReason = `Log-only mode: score=${score} signal=${signal} threshold=${this.config.scoreThreshold}`;
+      const passReason = `Log-only mode: ${scoreStr} signal=${signal} threshold=${this.config.scoreThreshold}`;
       if (buf) {
         buf.info(`Research score gate: PASSED (log-only) - ${passReason}`);
       }
@@ -682,12 +731,14 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
     }
 
     if (passed) {
-      const passReason = `Score ${score} >= ${this.config.scoreThreshold} (${signal})`;
+      const passReason = riskScore !== null
+        ? `opportunity=${opportunityScore} >= ${this.config.scoreThreshold}, risk=${riskScore} <= ${this.config.riskThreshold} (${signal})`
+        : `Score ${opportunityScore} >= ${this.config.scoreThreshold} (${signal})`;
       if (buf) {
         buf.info(`Research score gate: PASSED - ${passReason}`);
       } else {
         logger.info(
-          { stage: this.name, mint: mintStr, score, signal, threshold: this.config.scoreThreshold },
+          { stage: this.name, mint: mintStr, opportunityScore, riskScore, signal, threshold: this.config.scoreThreshold, riskThreshold: this.config.riskThreshold },
           '[pipeline] Research score gate passed',
         );
       }
@@ -700,13 +751,21 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       };
     }
 
-    // Rejected
-    const rejectReason = `${RejectionReasons.RESEARCH_SCORE_LOW}: score=${score} < threshold=${this.config.scoreThreshold} (${signal})`;
+    // Rejected — determine which condition failed
+    let rejectDetail: string;
+    if (!opportunityPassed && (riskScore !== null && !riskPassed)) {
+      rejectDetail = `opportunity ${opportunityScore} < threshold ${this.config.scoreThreshold} AND risk ${riskScore} > threshold ${this.config.riskThreshold}`;
+    } else if (!opportunityPassed) {
+      rejectDetail = `opportunity ${opportunityScore} < threshold ${this.config.scoreThreshold}`;
+    } else {
+      rejectDetail = `risk ${riskScore} > threshold ${this.config.riskThreshold}`;
+    }
+    const rejectReason = `${RejectionReasons.RESEARCH_SCORE_LOW}: ${rejectDetail} (${signal})`;
     if (buf) {
-      buf.info(`Research score gate: REJECTED - ${rejectReason}`);
+      buf.info(`Research score gate: REJECTED - ${scoreStr} → ${rejectDetail}`);
     } else {
       logger.info(
-        { stage: this.name, mint: mintStr, score, signal, threshold: this.config.scoreThreshold },
+        { stage: this.name, mint: mintStr, opportunityScore, riskScore, signal, threshold: this.config.scoreThreshold, riskThreshold: this.config.riskThreshold },
         `[pipeline] Rejected: ${rejectReason}`,
       );
     }

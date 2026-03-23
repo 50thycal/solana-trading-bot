@@ -772,6 +772,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
         enabled: config.researchScoreGateEnabled,
         researchBotUrl: config.researchBotUrl,
         scoreThreshold: config.researchScoreThreshold,
+        riskThreshold: config.researchRiskScoreThreshold,
         checkpoint: config.researchScoreCheckpoint,
         logOnly: config.researchScoreLogOnly,
         modelRefreshIntervalMs: config.researchScoreModelRefreshInterval,
@@ -1809,6 +1810,7 @@ function buildReport(
     // Research score gate (from config)
     RESEARCH_SCORE_GATE_ENABLED: config.researchScoreGateEnabled,
     RESEARCH_SCORE_THRESHOLD: config.researchScoreThreshold,
+    RESEARCH_RISK_SCORE_THRESHOLD: config.researchRiskScoreThreshold,
     RESEARCH_SCORE_CHECKPOINT: config.researchScoreCheckpoint,
     RESEARCH_SCORE_LOG_ONLY: config.researchScoreLogOnly,
     // Trailing stop
