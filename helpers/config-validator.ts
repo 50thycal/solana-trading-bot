@@ -96,6 +96,7 @@ export interface ValidatedConfig {
   researchScorePollIntervalSeconds: number;
   researchScoreSignatureLimit: number;
   researchScoreSniperSlotThreshold: number;
+  researchRiskScoreThreshold: number;
 
   // Stable Gate (Pipeline Stage 6)
   stableGateEnabled: boolean;
@@ -443,6 +444,11 @@ export function validateConfig(): ValidatedConfig {
     errors.push({ variable: 'RESEARCH_SCORE_SNIPER_SLOT_THRESHOLD', message: 'cannot be negative' });
   }
 
+  const researchRiskScoreThreshold = requireNumber('RESEARCH_RISK_SCORE_THRESHOLD', 50);
+  if (researchRiskScoreThreshold < 0 || researchRiskScoreThreshold > 100) {
+    errors.push({ variable: 'RESEARCH_RISK_SCORE_THRESHOLD', message: 'must be 0-100' });
+  }
+
   // === STABLE GATE (Pipeline Stage 6) ===
   // Final buy-readiness check: price stabilization, curve re-validation, sell ratio.
   // Retries up to maxRetries times before rejecting.
@@ -659,6 +665,7 @@ export function validateConfig(): ValidatedConfig {
     researchScorePollIntervalSeconds,
     researchScoreSignatureLimit,
     researchScoreSniperSlotThreshold,
+    researchRiskScoreThreshold,
     stableGateEnabled,
     stableGateLogOnly,
     stableGateMaxRetries,

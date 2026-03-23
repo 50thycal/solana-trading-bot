@@ -496,6 +496,14 @@ export const ENV_CATEGORIES: EnvCategory[] = [
         description: 'Buys within this many slots of creation are flagged as sniper bots',
         hint: 'Slots are ~400ms each',
       },
+      {
+        name: 'RESEARCH_RISK_SCORE_THRESHOLD',
+        label: 'Risk Score Threshold',
+        type: 'number',
+        defaultValue: '50',
+        description: 'Max dump risk score (0-100). Tokens with risk score above this are rejected.',
+        hint: '0-100',
+      },
     ],
   },
   {

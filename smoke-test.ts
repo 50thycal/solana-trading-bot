@@ -772,6 +772,7 @@ async function runSingleSmokeTest(runNumber: number, totalRuns: number): Promise
         enabled: config.researchScoreGateEnabled,
         researchBotUrl: config.researchBotUrl,
         scoreThreshold: config.researchScoreThreshold,
+        riskThreshold: config.researchRiskScoreThreshold,
         checkpoint: config.researchScoreCheckpoint,
         logOnly: config.researchScoreLogOnly,
         modelRefreshIntervalMs: config.researchScoreModelRefreshInterval,
