@@ -92,6 +92,9 @@ export interface ValidatedConfig {
   researchScoreThreshold: number;
   researchRiskScoreThreshold: number;
   researchScoreCheckpoint: number;
+  researchRequestTimeoutMs: number;
+  researchRetries: number;
+  researchFailMode: 'open' | 'closed';
   researchScoreLogOnly: boolean;
   researchScoreModelRefreshInterval: number;
   researchScorePollIntervalSeconds: number;
@@ -133,6 +136,39 @@ export interface ValidatedConfig {
 interface ValidationError {
   variable: string;
   message: string;
+}
+
+export interface ParsedResearchConfig {
+  checkpointSeconds: number;
+  minOpportunityScore: number;
+  maxRiskScore: number;
+  requestTimeoutMs: number;
+  retries: number;
+  failMode: 'open' | 'closed';
+}
+
+export function parseResearchConfigFromEnv(env: NodeJS.ProcessEnv): ParsedResearchConfig {
+  const parseNum = (value: string | undefined, fallback: number): number => {
+    if (value === undefined || value === '') return fallback;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  };
+
+  const checkpointSeconds = parseNum(env.RESEARCH_CHECKPOINT_SECONDS || env.RESEARCH_SCORE_CHECKPOINT, 30);
+  const minOpportunityScore = parseNum(env.RESEARCH_MIN_OPPORTUNITY_SCORE || env.RESEARCH_SCORE_THRESHOLD, 60);
+  const maxRiskScore = parseNum(env.RESEARCH_MAX_RISK_SCORE || env.RESEARCH_RISK_SCORE_THRESHOLD, 45);
+  const requestTimeoutMs = parseNum(env.RESEARCH_REQUEST_TIMEOUT_MS, 1500);
+  const retries = parseNum(env.RESEARCH_RETRIES, 2);
+  const failMode = env.RESEARCH_FAIL_MODE === 'open' ? 'open' : 'closed';
+
+  return {
+    checkpointSeconds,
+    minOpportunityScore,
+    maxRiskScore,
+    requestTimeoutMs,
+    retries,
+    failMode,
+  };
 }
 
 const VALID_COMMITMENTS: Commitment[] = ['processed', 'confirmed', 'finalized'];
@@ -412,20 +448,31 @@ export function validateConfig(): ValidatedConfig {
 
   const researchScoreGateEnabled = requireBoolean('RESEARCH_SCORE_GATE_ENABLED', true);
 
-  const researchScoreThreshold = requireNumber('RESEARCH_SCORE_THRESHOLD', 50);
+  const parsedResearch = parseResearchConfigFromEnv(process.env);
+
+  const researchScoreThreshold = parsedResearch.minOpportunityScore;
   if (researchScoreThreshold < 0 || researchScoreThreshold > 100) {
-    errors.push({ variable: 'RESEARCH_SCORE_THRESHOLD', message: 'must be 0-100' });
+    errors.push({ variable: 'RESEARCH_MIN_OPPORTUNITY_SCORE', message: 'must be 0-100' });
   }
 
-  const researchRiskScoreThreshold = requireNumber('RESEARCH_RISK_SCORE_THRESHOLD', 50);
+  const researchRiskScoreThreshold = parsedResearch.maxRiskScore;
   if (researchRiskScoreThreshold < 0 || researchRiskScoreThreshold > 100) {
-    errors.push({ variable: 'RESEARCH_RISK_SCORE_THRESHOLD', message: 'must be 0-100' });
+    errors.push({ variable: 'RESEARCH_MAX_RISK_SCORE', message: 'must be 0-100' });
   }
 
-  const researchScoreCheckpoint = requireNumber('RESEARCH_SCORE_CHECKPOINT', 30);
+  const researchScoreCheckpoint = parsedResearch.checkpointSeconds;
   if (researchScoreCheckpoint < 1) {
-    errors.push({ variable: 'RESEARCH_SCORE_CHECKPOINT', message: 'must be >= 1' });
+    errors.push({ variable: 'RESEARCH_CHECKPOINT_SECONDS', message: 'must be >= 1' });
   }
+  const researchRequestTimeoutMs = parsedResearch.requestTimeoutMs;
+  if (researchRequestTimeoutMs < 100) {
+    errors.push({ variable: 'RESEARCH_REQUEST_TIMEOUT_MS', message: 'must be >= 100' });
+  }
+  const researchRetries = parsedResearch.retries;
+  if (researchRetries < 0) {
+    errors.push({ variable: 'RESEARCH_RETRIES', message: 'cannot be negative' });
+  }
+  const researchFailMode = parsedResearch.failMode;
 
   const researchScoreLogOnly = requireBoolean('RESEARCH_SCORE_LOG_ONLY', true);
 
@@ -661,6 +708,9 @@ export function validateConfig(): ValidatedConfig {
     researchScoreThreshold,
     researchRiskScoreThreshold,
     researchScoreCheckpoint,
+    researchRequestTimeoutMs,
+    researchRetries,
+    researchFailMode,
     researchScoreLogOnly,
     researchScoreModelRefreshInterval,
     researchScorePollIntervalSeconds,
