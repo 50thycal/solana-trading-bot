@@ -126,6 +126,40 @@ In case TX fails, no fee will be taken from your account.
 
 ## Common issues
 
+## Research Dual Scoring Integration
+
+The research gate now uses **dual scoring** from `solana_research_bot`:
+- `opportunityScore` (higher is better)
+- `riskScore` (lower is better)
+
+### Environment variables
+
+- `RESEARCH_BOT_URL` (required for score API)
+- `RESEARCH_CHECKPOINT_SECONDS` (default `30`)
+- `RESEARCH_MIN_OPPORTUNITY_SCORE` (default `60`)
+- `RESEARCH_MAX_RISK_SCORE` (default `45`)
+- `RESEARCH_REQUEST_TIMEOUT_MS` (default `1500`)
+- `RESEARCH_RETRIES` (default `2`)
+- `RESEARCH_FAIL_MODE` (`open` or `closed`, default `closed`)
+
+### Migration note
+
+Legacy `score` is still accepted for backward compatibility, but **dual scoring is now primary**.
+
+### Example logs
+
+```text
+[research-score-client] Score payload received stage=research-score-gate mint=... checkpointSeconds=30 latencyMs=182 attempts=1 opportunityScore=74 riskScore=29 signal=buy
+[research-score-gate] Metric emitted metric=research_gate_pass mint=... opportunityScore=74 riskScore=29 checkpointSeconds=30 count=42
+```
+
+### Sample decision trace
+
+```text
+research gate decision: opportunity=74 (min=60), risk=29 (max=45) => PASS
+research gate decision: opportunity=78 (min=60), risk=66 (max=45) => REJECT (risk_high)
+```
+
 If you have an error which is not listed here, please create a new issue in this repository.
 To collect more information on an issue, please change `LOG_LEVEL` to `debug`.
 

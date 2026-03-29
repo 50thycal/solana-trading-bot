@@ -29,6 +29,8 @@ import {
 } from './types';
 import { logger, getBondingCurveState, BondingCurveState, sleep } from '../helpers';
 import { fetchAndAnalyzeTransactions, WalletAnalysis } from './sniper-gate';
+import { ResearchFailMode, ResearchScoreClient, ResearchScoreResponse } from './research-score-client';
+import { decideResearchGate } from './research-score-decision';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -55,6 +57,12 @@ export interface ResearchScoreGateConfig {
   sniperSlotThreshold: number;
   /** Max signatures to fetch per poll (default: 40) */
   signatureLimit: number;
+  /** Request timeout for score API */
+  requestTimeoutMs: number;
+  /** Retry count for score API */
+  retries: number;
+  /** Fallback mode when API errors */
+  failMode: ResearchFailMode;
 }
 
 const DEFAULT_CONFIG: ResearchScoreGateConfig = {
@@ -68,6 +76,9 @@ const DEFAULT_CONFIG: ResearchScoreGateConfig = {
   pollIntervalSeconds: 3,
   sniperSlotThreshold: 3,
   signatureLimit: 40,
+  requestTimeoutMs: 1500,
+  retries: 2,
+  failMode: 'closed',
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -346,32 +357,44 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private lastFetchError: string | null = null;
   private noModelSkipCount: number = 0;
+  private readonly scoreClient: ResearchScoreClient;
+  private readonly scoreMemo = new Map<string, Promise<ResearchScoreResponse>>();
+  private readonly metricCounters = new Map<string, number>();
 
   constructor(connection: Connection, config: Partial<ResearchScoreGateConfig> = {}) {
     this.connection = connection;
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.scoreClient = new ResearchScoreClient({
+      baseUrl: this.config.researchBotUrl,
+      timeoutMs: this.config.requestTimeoutMs,
+      retries: this.config.retries,
+      checkpointSeconds: this.config.checkpoint,
+    });
+  }
 
-    if (this.config.enabled && this.config.researchBotUrl) {
-      // Fetch model on startup (non-blocking)
-      this.fetchModel().catch((err) => {
-        logger.warn(
-          { error: err instanceof Error ? err.message : String(err) },
-          '[research-score-gate] Initial model fetch failed — will retry on refresh',
-        );
+  private incrementMetric(name: string, metadata: Record<string, unknown>): void {
+    const next = (this.metricCounters.get(name) || 0) + 1;
+    this.metricCounters.set(name, next);
+    logger.info(
+      { stage: this.name, metric: name, count: next, ...metadata },
+      '[research-score-gate] Metric emitted',
+    );
+  }
+
+  private getOrFetchScore(mint: string): Promise<ResearchScoreResponse> {
+    const key = `${mint}:${this.config.checkpoint}`;
+    const existing = this.scoreMemo.get(key);
+    if (existing) return existing;
+
+    const requestPromise = this.scoreClient
+      .getScore(mint)
+      .then((result) => result.response)
+      .finally(() => {
+        this.scoreMemo.delete(key);
       });
 
-      // Set up periodic refresh
-      if (this.config.modelRefreshIntervalMs > 0) {
-        this.refreshTimer = setInterval(() => {
-          this.fetchModel().catch((err) => {
-            logger.warn(
-              { error: err instanceof Error ? err.message : String(err) },
-              '[research-score-gate] Model refresh failed — using cached model',
-            );
-          });
-        }, this.config.modelRefreshIntervalMs);
-      }
-    }
+    this.scoreMemo.set(key, requestPromise);
+    return requestPromise;
   }
 
   /**
@@ -615,109 +638,51 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       };
     }
 
-    // If no model available (fetch failed), graceful degradation — pass
-    if (!this.cachedModel) {
-      this.noModelSkipCount++;
-      const reason = `No model available (last error: ${this.lastFetchError || 'not yet fetched'})`;
+    let payload: ResearchScoreResponse;
+    try {
+      payload = await this.getOrFetchScore(mintStr);
+    } catch (error) {
+      this.incrementMetric('research_gate_error', {
+        mint: mintStr,
+        checkpointSeconds: this.config.checkpoint,
+      });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const failOpen = this.config.failMode === 'open';
+      const reason = `Research score request failed (${errorMessage}); failMode=${this.config.failMode}`;
       if (buf) {
-        buf.info(`Research score gate: PASSED (graceful degradation) - ${reason}`);
-      } else {
-        logger.warn(
-          { stage: this.name, mint: mintStr, lastFetchError: this.lastFetchError, noModelSkipCount: this.noModelSkipCount },
-          '[research-score-gate] No model available — passing token (graceful degradation)',
-        );
+        buf.info(`Research score gate: ${failOpen ? 'PASSED' : 'REJECTED'} - ${reason}`);
       }
       return {
-        pass: true,
+        pass: failOpen,
         reason,
         stage: this.name,
         durationMs: Date.now() - startTime,
       };
     }
 
-    // ─── Wait for checkpoint age while polling transactions ───────────
-    const pollHistory = await this.waitAndPoll(context);
-
-    // ─── Fetch fresh bonding curve state at checkpoint age ────────────
-    let freshBcs: BondingCurveState | undefined;
-    try {
-      const result = await getBondingCurveState(this.connection, context.detection.bondingCurve);
-      if (result) {
-        freshBcs = result;
-      } else {
-        logger.debug(
-          { stage: this.name, mint: mintStr },
-          '[research-score-gate] Fresh bonding curve fetch returned null — using initial state only',
-        );
-      }
-    } catch (err) {
-      logger.debug(
-        { stage: this.name, mint: mintStr, error: err instanceof Error ? err.message : String(err) },
-        '[research-score-gate] Fresh bonding curve fetch failed — using initial state only',
-      );
-    }
-
-    // Build feature vector from pipeline context + polled data
-    const features = buildFeatureVector(context, freshBcs, pollHistory);
-
-    // Score the token against opportunity model
-    const { score: opportunityScore, featureScores } = scoreToken(this.cachedModel, features);
-    const signal = classifySignal(opportunityScore);
-
-    // Score against risk model if available (dual-model format)
-    let riskScore: number | null = null;
-    let riskFeatureScores: Array<{ name: string; score: number; raw: number }> | null = null;
-    if (this.cachedRiskModel) {
-      const riskResult = scoreToken(this.cachedRiskModel, features);
-      riskScore = riskResult.score;
-      riskFeatureScores = riskResult.featureScores;
-    }
+    const decision = decideResearchGate({
+      payload,
+      minOpportunityScore: this.config.scoreThreshold,
+      maxRiskScore: this.config.riskThreshold,
+    });
 
     const gateData: ResearchScoreGateData = {
-      score: opportunityScore,
-      signal,
+      score: decision.opportunityScore,
+      signal: decision.signal,
       scoreThreshold: this.config.scoreThreshold,
-      modelSampleCount: this.cachedModel.sampleCount,
-      modelBaseRate2x: this.cachedModel.baseRate2x,
-      features,
-      featureScores,
-      freshBondingCurveState: freshBcs,
+      modelSampleCount: payload.opportunityModel?.sampleCount ?? 0,
+      modelBaseRate2x: payload.opportunityModel?.baseRate2x ?? 0,
+      featureScores: payload.featureScores || [],
+      opportunityScore: decision.opportunityScore,
+      riskScore: decision.riskScore,
+      checkpointSeconds: this.config.checkpoint,
+      usedLegacyFallback: decision.usedLegacyFallback,
     };
-
-    // Log the score breakdown at info level for diagnostics
-    const sortedFeatures = [...featureScores].sort((a, b) => b.score - a.score);
-    logger.info(
-      {
-        stage: this.name,
-        mint: mintStr,
-        opportunityScore,
-        riskScore,
-        signal,
-        opportunityThreshold: this.config.scoreThreshold,
-        riskThreshold: this.config.riskThreshold,
-        dualModel: riskScore !== null,
-        pollSnapshots: pollHistory.length,
-        featureBreakdown: sortedFeatures.map((f) => `${f.name}=${f.raw}(${f.score})`),
-        riskBreakdown: riskFeatureScores
-          ? [...riskFeatureScores].sort((a, b) => b.score - a.score).map((f) => `${f.name}=${f.raw}(${f.score})`)
-          : undefined,
-      },
-      '[research-score-gate] Score breakdown',
-    );
-
-    // Pass condition: opportunity >= threshold AND (no risk model OR risk <= riskThreshold)
-    const opportunityPassed = opportunityScore >= this.config.scoreThreshold;
-    const riskPassed = riskScore === null || riskScore <= this.config.riskThreshold;
-    const passed = opportunityPassed && riskPassed;
-
-    // Build descriptive score string for log messages
-    const scoreStr = riskScore !== null
-      ? `opportunity=${opportunityScore}, risk=${riskScore}`
-      : `score=${opportunityScore}`;
+    const scoreStr = `opportunity=${decision.opportunityScore}, risk=${decision.riskScore ?? 'n/a'}`;
 
     // In log-only mode, always pass
     if (this.config.logOnly) {
-      const passReason = `Log-only mode: ${scoreStr} signal=${signal} threshold=${this.config.scoreThreshold}`;
+      const passReason = `Log-only mode: ${scoreStr} signal=${decision.signal} minOpportunity=${this.config.scoreThreshold} maxRisk=${this.config.riskThreshold}`;
       if (buf) {
         buf.info(`Research score gate: PASSED (log-only) - ${passReason}`);
       }
@@ -730,15 +695,19 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       };
     }
 
-    if (passed) {
-      const passReason = riskScore !== null
-        ? `opportunity=${opportunityScore} >= ${this.config.scoreThreshold}, risk=${riskScore} <= ${this.config.riskThreshold} (${signal})`
-        : `Score ${opportunityScore} >= ${this.config.scoreThreshold} (${signal})`;
+    if (decision.pass) {
+      const passReason = `opportunity=${decision.opportunityScore} >= ${this.config.scoreThreshold} AND risk=${decision.riskScore ?? 'n/a'} <= ${this.config.riskThreshold} (${decision.signal})`;
+      this.incrementMetric('research_gate_pass', {
+        mint: mintStr,
+        opportunityScore: decision.opportunityScore,
+        riskScore: decision.riskScore,
+        checkpointSeconds: this.config.checkpoint,
+      });
       if (buf) {
         buf.info(`Research score gate: PASSED - ${passReason}`);
       } else {
         logger.info(
-          { stage: this.name, mint: mintStr, opportunityScore, riskScore, signal, threshold: this.config.scoreThreshold, riskThreshold: this.config.riskThreshold },
+          { stage: this.name, mint: mintStr, opportunityScore: decision.opportunityScore, riskScore: decision.riskScore, signal: decision.signal, threshold: this.config.scoreThreshold, riskThreshold: this.config.riskThreshold },
           '[pipeline] Research score gate passed',
         );
       }
@@ -751,21 +720,28 @@ export class ResearchScoreGateStage implements PipelineStage<PipelineContext, Re
       };
     }
 
-    // Rejected — determine which condition failed
-    let rejectDetail: string;
-    if (!opportunityPassed && (riskScore !== null && !riskPassed)) {
-      rejectDetail = `opportunity ${opportunityScore} < threshold ${this.config.scoreThreshold} AND risk ${riskScore} > threshold ${this.config.riskThreshold}`;
-    } else if (!opportunityPassed) {
-      rejectDetail = `opportunity ${opportunityScore} < threshold ${this.config.scoreThreshold}`;
-    } else {
-      rejectDetail = `risk ${riskScore} > threshold ${this.config.riskThreshold}`;
+    if (decision.rejectReason === 'opportunity_low') {
+      this.incrementMetric('research_gate_reject_opportunity_low', {
+        mint: mintStr,
+        opportunityScore: decision.opportunityScore,
+        riskScore: decision.riskScore,
+        checkpointSeconds: this.config.checkpoint,
+      });
+    } else if (decision.rejectReason === 'risk_high') {
+      this.incrementMetric('research_gate_reject_risk_high', {
+        mint: mintStr,
+        opportunityScore: decision.opportunityScore,
+        riskScore: decision.riskScore,
+        checkpointSeconds: this.config.checkpoint,
+      });
     }
-    const rejectReason = `${RejectionReasons.RESEARCH_SCORE_LOW}: ${rejectDetail} (${signal})`;
+    const rejectDetail = `opportunity=${decision.opportunityScore} (min=${this.config.scoreThreshold}), risk=${decision.riskScore ?? 'n/a'} (max=${this.config.riskThreshold})`;
+    const rejectReason = `${RejectionReasons.RESEARCH_SCORE_LOW}: ${rejectDetail} (${decision.signal})`;
     if (buf) {
       buf.info(`Research score gate: REJECTED - ${scoreStr} → ${rejectDetail}`);
     } else {
       logger.info(
-        { stage: this.name, mint: mintStr, opportunityScore, riskScore, signal, threshold: this.config.scoreThreshold, riskThreshold: this.config.riskThreshold },
+        { stage: this.name, mint: mintStr, opportunityScore: decision.opportunityScore, riskScore: decision.riskScore, signal: decision.signal, threshold: this.config.scoreThreshold, riskThreshold: this.config.riskThreshold },
         `[pipeline] Rejected: ${rejectReason}`,
       );
     }

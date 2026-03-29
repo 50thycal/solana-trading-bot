@@ -212,6 +212,14 @@ export interface ScoringModel {
 export interface ResearchScoreGateData {
   /** Computed score 0-100 */
   score: number;
+  /** Primary score from dual scoring payload */
+  opportunityScore?: number;
+  /** Risk score from dual scoring payload */
+  riskScore?: number | null;
+  /** Checkpoint used for scoring request */
+  checkpointSeconds?: number;
+  /** True when gate had to use legacy `score` fallback */
+  usedLegacyFallback?: boolean;
   /** Signal classification */
   signal: 'strong_buy' | 'buy' | 'neutral' | 'avoid';
   /** Threshold used for pass/fail */
@@ -221,9 +229,9 @@ export interface ResearchScoreGateData {
   /** Base 2x hit rate before filtering */
   modelBaseRate2x: number;
   /** The computed features (for logging/debugging) */
-  features: TokenFeatureVector;
+  features?: TokenFeatureVector;
   /** Per-feature score breakdown */
-  featureScores: Array<{ name: string; score: number; raw: number }>;
+  featureScores?: Array<{ name: string; score: number; raw: number }>;
   /** Fresh bonding curve state fetched at scoring time (for price drift baseline) */
   freshBondingCurveState?: BondingCurveState;
 }
